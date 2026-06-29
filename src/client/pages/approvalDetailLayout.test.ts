@@ -5,8 +5,9 @@ import { describe, expect, it } from "vitest";
 const source = fs.readFileSync(path.resolve("src/client/pages/ApprovalDetailPage.tsx"), "utf8");
 const annotationSidePanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/AnnotationSidePanel.tsx"), "utf8");
 const floatingSupportPanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/FloatingSupportPanel.tsx"), "utf8");
+const pdmMetadataPanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/PdmMetadataPanel.tsx"), "utf8");
 const signaturePanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/SignaturePanel.tsx"), "utf8");
-const combinedSource = [source, annotationSidePanelSource, floatingSupportPanelSource, signaturePanelSource].join("\n");
+const combinedSource = [source, annotationSidePanelSource, floatingSupportPanelSource, pdmMetadataPanelSource, signaturePanelSource].join("\n");
 const workspaceSource = fs.readFileSync(path.resolve("src/client/widgets/PdfAnnotationWorkspace.tsx"), "utf8");
 const layerSource = fs.readFileSync(path.resolve("src/client/widgets/PdfAnnotationLayer.tsx"), "utf8");
 
@@ -64,6 +65,23 @@ describe("approval detail page layout structure", () => {
   it("uses task-focused copy for review and signed PDF output", () => {
     expect(source).toContain("审核与签审");
     expect(combinedSource).toContain("左侧保留原始 PDF，签后 PDF 用于正式打印。");
+  });
+
+  it("shows compact PDM metadata, repair controls, and publish retry in the side panel", () => {
+    const sidePanel = sidePanelSource();
+
+    expect(source).toContain("PdmMetadataPanel");
+    expect(sidePanel).toContain("<PdmMetadataPanel");
+    expect(source).toContain("repairApprovalPdmMetadata");
+    expect(source).toContain("publishApprovalToPdm");
+    expect(combinedSource).toContain("PDM 信息");
+    expect(combinedSource).toContain("体系文件号");
+    expect(combinedSource).toContain("管家婆物料号");
+    expect(combinedSource).toContain("图纸名称");
+    expect(combinedSource).toContain("PDM 发布状态");
+    expect(combinedSource).toContain("关联零件档案");
+    expect(combinedSource).toContain("补录 PDM 信息");
+    expect(combinedSource).toContain("发布到 PDM");
   });
 
   it("loads and displays drawing annotations in the approval detail workspace", () => {

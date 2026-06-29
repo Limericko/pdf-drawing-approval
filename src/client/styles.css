@@ -2395,6 +2395,49 @@ input[type="file"] {
   font-size: 13px;
 }
 
+.pdm-metadata-panel {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 14px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+
+.pdm-metadata-panel h2 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+
+.pdm-metadata-list {
+  grid-template-columns: 96px minmax(0, 1fr);
+}
+
+.pdm-repair-form {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pdm-repair-form label {
+  display: grid;
+  gap: 6px;
+  color: #334451;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pdm-repair-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 .print-settings-backdrop {
   position: fixed;
   inset: 0;

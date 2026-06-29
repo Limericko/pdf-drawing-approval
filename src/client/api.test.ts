@@ -280,6 +280,43 @@ describe("PDM part library API", () => {
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer token value" }) })
     );
   });
+
+  it("repairs approval PDM metadata and retries publishing", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ status: "published" });
+    const pdmApi = api as unknown as {
+      repairApprovalPdmMetadata?: (approvalId: number, input: unknown) => Promise<unknown>;
+      publishApprovalToPdm?: (approvalId: number) => Promise<unknown>;
+    };
+
+    expect(pdmApi.repairApprovalPdmMetadata).toBeTypeOf("function");
+    expect(pdmApi.publishApprovalToPdm).toBeTypeOf("function");
+
+    await pdmApi.repairApprovalPdmMetadata!(9, {
+      documentCode: "MP300A000072",
+      materialCode: "0102A00700883",
+      drawingName: "400A按键"
+    });
+    await pdmApi.publishApprovalToPdm!(9);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/pdm/approvals/9/repair-metadata",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          documentCode: "MP300A000072",
+          materialCode: "0102A00700883",
+          drawingName: "400A按键"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/pdm/approvals/9/publish",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
 });
 
 describe("system cleanup API", () => {

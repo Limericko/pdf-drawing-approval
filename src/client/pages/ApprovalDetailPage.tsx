@@ -27,8 +27,10 @@ import {
   listApprovalOperationLogs,
   listSignaturePlacements,
   markPrinted,
+  publishApprovalToPdm,
   rebindApprovalFile,
   resetApprovalAnnotations,
+  repairApprovalPdmMetadata,
   resolveApprovalAnnotation,
   resolveApprovalComment,
   retryGenerateSignedPdf,
@@ -69,6 +71,7 @@ import { statusLabel } from "../widgets/status.ts";
 import { StatusChip } from "../widgets/StatusChip.tsx";
 import { AnnotationSidePanel } from "./approvalDetail/AnnotationSidePanel.tsx";
 import { FloatingSupportPanel, type SupportTab } from "./approvalDetail/FloatingSupportPanel.tsx";
+import { PdmMetadataPanel, type PdmRepairDraft } from "./approvalDetail/PdmMetadataPanel.tsx";
 import { SignaturePanel } from "./approvalDetail/SignaturePanel.tsx";
 import {
   canRegenerateSignedPdf,
@@ -132,6 +135,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [collaborationKind, setCollaborationKind] = useState<"comment" | "issue">("comment");
   const [repairPath, setRepairPath] = useState("");
   const [voidReason, setVoidReason] = useState("");
+  const [pdmRepairDraft, setPdmRepairDraft] = useState<PdmRepairDraft>(() => emptyPdmRepairDraft());
+  const [pdmRepairEditing, setPdmRepairEditing] = useState(false);
   const [signaturePlacements, setSignaturePlacements] = useState<SignaturePlacement[]>(() => defaultSignaturePlacements());
   const [placementEditing, setPlacementEditing] = useState(false);
   const [templateName, setTemplateName] = useState("");
@@ -162,6 +167,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     ]);
     if (!isCurrent()) return;
     setApproval(next);
+    setPdmRepairDraft(pdmRepairDraftFromApproval(next));
+    setPdmRepairEditing(false);
     setTemplateName((current) => current || `${next.projectName}-${next.partName}`);
     setOperationLogs(logs);
     setApprovalComments(comments);
@@ -221,6 +228,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   async function afterApprovalChanged(next: Approval, nextMessage: string) {
     const previous = approval;
     setApproval(next);
+    setPdmRepairDraft(pdmRepairDraftFromApproval(next));
+    setPdmRepairEditing(false);
     setMessage(nextMessage);
     const [logs, comments, annotations] = await Promise.all([
       listApprovalOperationLogs(next.id),
@@ -507,6 +516,42 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       await afterApprovalChanged(next, action === "void" ? "图纸已作废。" : "图纸记录已修复，已回到待审核。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function savePdmMetadata() {
+    if (!approval) return;
+    setError("");
+    setMessage("");
+    setBusyAction("pdm-repair");
+    try {
+      await repairApprovalPdmMetadata(approval.id, {
+        documentCode: pdmRepairDraft.documentCode,
+        materialCode: pdmRepairDraft.materialCode,
+        drawingName: pdmRepairDraft.drawingName
+      });
+      await reload();
+      setMessage("PDM 信息已补录。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDM 信息补录失败");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function retryPdmPublish() {
+    if (!approval) return;
+    setError("");
+    setMessage("");
+    setBusyAction("pdm-publish");
+    try {
+      const result = await publishApprovalToPdm(approval.id);
+      await reload();
+      setMessage(result.status === "published" ? "已发布到 PDM 零件库。" : result.error ?? result.reason ?? "PDM 发布已提交。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDM 发布失败");
     } finally {
       setBusyAction("");
     }
@@ -827,6 +872,24 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
               其它版本 <span>{historyItems.length}</span>
             </button>
           </div>
+          <PdmMetadataPanel
+            approval={approval}
+            user={user}
+            draft={pdmRepairDraft}
+            editing={pdmRepairEditing}
+            busyAction={busyAction}
+            onDraftChange={setPdmRepairDraft}
+            onStartEdit={() => {
+              setPdmRepairDraft(pdmRepairDraftFromApproval(approval));
+              setPdmRepairEditing(true);
+            }}
+            onCancelEdit={() => {
+              setPdmRepairDraft(pdmRepairDraftFromApproval(approval));
+              setPdmRepairEditing(false);
+            }}
+            onSaveRepair={savePdmMetadata}
+            onRetryPublish={retryPdmPublish}
+          />
           {showAnnotations && (
             <AnnotationSidePanel
               approval={approval}
@@ -1309,6 +1372,18 @@ const paperSizeOptions: Array<{ value: PrintSettings["paperSize"]; label: string
 
 function isRepairable(status: Approval["status"]) {
   return status === "file_missing" || status === "invalid_pdf" || status === "filename_invalid";
+}
+
+function emptyPdmRepairDraft(): PdmRepairDraft {
+  return { documentCode: "", materialCode: "", drawingName: "" };
+}
+
+function pdmRepairDraftFromApproval(approval: Approval): PdmRepairDraft {
+  return {
+    documentCode: approval.documentCode ?? "",
+    materialCode: approval.materialCode ?? "",
+    drawingName: approval.drawingName ?? approval.partName
+  };
 }
 
 function annotationReadonlyCopy(user: Pick<User, "role">, approval: Pick<Approval, "status">) {

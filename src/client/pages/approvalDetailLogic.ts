@@ -1,4 +1,12 @@
-import type { Approval, ApprovalAnnotation, ApprovalAnnotationKind, OperationLog, User } from "../api.ts";
+import type {
+  Approval,
+  ApprovalAnnotation,
+  ApprovalAnnotationKind,
+  OperationLog,
+  PdmMetadataStatus,
+  PdmPublishStatus,
+  User
+} from "../api.ts";
 
 export const timelinePreviewLimit = 5;
 
@@ -25,6 +33,42 @@ export function canRegenerateSignedPdf(
 
 export function canSaveSignatureTemplate(user: Pick<User, "role">) {
   return user.role === "admin" || user.role === "designer";
+}
+
+export function canRepairPdmMetadata(
+  user: Pick<User, "id" | "role">,
+  approval: Pick<Approval, "submittedByUserId" | "pdmMetadataStatus" | "pdmPublishStatus">
+) {
+  if (!canMaintainPdmApproval(user, approval)) return false;
+  return isPdmMaintenancePending(approval);
+}
+
+export function canRetryPdmPublish(
+  user: Pick<User, "id" | "role">,
+  approval: Pick<Approval, "submittedByUserId" | "materialCode" | "pdmPublishStatus">
+) {
+  if (!canMaintainPdmApproval(user, approval)) return false;
+  if (!approval.materialCode?.trim()) return false;
+  return approval.pdmPublishStatus === "pending" || approval.pdmPublishStatus === "metadata_pending" || approval.pdmPublishStatus === "failed";
+}
+
+export function pdmMetadataStatusCopy(status: PdmMetadataStatus | undefined) {
+  return {
+    complete: "完整",
+    missing_material_code: "待补物料号",
+    missing_document_code: "体系文件号待补",
+    missing_required: "关键信息待补"
+  }[status ?? "complete"];
+}
+
+export function pdmPublishStatusCopy(status: PdmPublishStatus | undefined) {
+  return {
+    not_applicable: "不适用",
+    metadata_pending: "待补录",
+    pending: "待发布",
+    published: "已发布",
+    failed: "发布失败"
+  }[status ?? "not_applicable"];
 }
 
 export function canCreateAnnotation(user: Pick<User, "role">, approval: Pick<Approval, "status">) {
@@ -104,4 +148,20 @@ export function detailReloadErrorMessage(error: unknown) {
 
 function isAnnotationReadonlyApproval(approval: Pick<Approval, "status">) {
   return approval.status === "printed_archived" || approval.status === "voided";
+}
+
+function canMaintainPdmApproval(
+  user: Pick<User, "id" | "role">,
+  approval: Pick<Approval, "submittedByUserId">
+) {
+  if (user.role === "admin") return true;
+  return user.role === "designer" && approval.submittedByUserId !== null && approval.submittedByUserId === user.id;
+}
+
+function isPdmMaintenancePending(approval: Pick<Approval, "pdmMetadataStatus" | "pdmPublishStatus">) {
+  return (
+    approval.pdmMetadataStatus !== undefined && approval.pdmMetadataStatus !== "complete" ||
+    approval.pdmPublishStatus === "metadata_pending" ||
+    approval.pdmPublishStatus === "failed"
+  );
 }
