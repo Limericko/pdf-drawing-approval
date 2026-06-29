@@ -4,6 +4,7 @@ import {
   Download,
   FileText,
   LogOut,
+  PackageSearch,
   PanelLeftClose,
   PanelLeftOpen,
   PenLine,
@@ -37,6 +38,8 @@ type Route =
   | { name: "profile" }
   | { name: "approvals" }
   | { name: "settings" }
+  | { name: "pdm" }
+  | { name: "pdmDetail"; id: number }
   | { name: "detail"; id: number };
 
 const pageLoaders = {
@@ -46,6 +49,8 @@ const pageLoaders = {
   profile: () => import("./pages/ProfilePage.tsx"),
   approvals: () => import("./pages/ApprovalsPage.tsx"),
   settings: () => import("./pages/SettingsPage.tsx"),
+  pdm: () => import("./pages/PdmPartsPage.tsx"),
+  pdmDetail: () => import("./pages/PdmPartDetailPage.tsx"),
   detail: () => import("./pages/ApprovalDetailPage.tsx")
 };
 
@@ -55,6 +60,8 @@ const MySignaturePage = lazy(() => pageLoaders.signature().then((module) => ({ d
 const ProfilePage = lazy(() => pageLoaders.profile().then((module) => ({ default: module.ProfilePage })));
 const ApprovalsPage = lazy(() => pageLoaders.approvals().then((module) => ({ default: module.ApprovalsPage })));
 const SettingsPage = lazy(() => pageLoaders.settings().then((module) => ({ default: module.SettingsPage })));
+const PdmPartsPage = lazy(() => pageLoaders.pdm().then((module) => ({ default: module.PdmPartsPage })));
+const PdmPartDetailPage = lazy(() => pageLoaders.pdmDetail().then((module) => ({ default: module.PdmPartDetailPage })));
 const ApprovalDetailPage = lazy(() => pageLoaders.detail().then((module) => ({ default: module.ApprovalDetailPage })));
 
 export function preloadRoute(route: AppRouteName) {
@@ -77,12 +84,15 @@ function decodeUserFromToken(): User | null {
 export function routeFromHash(hashValue: string): Route {
   const hash = hashValue.replace(/^#/, "").split("?")[0];
   const detail = /^\/approvals\/(\d+)$/.exec(hash);
+  const pdmDetail = /^\/pdm\/parts\/(\d+)$/.exec(hash);
   if (detail) return { name: "detail", id: Number(detail[1]) };
+  if (pdmDetail) return { name: "pdmDetail", id: Number(pdmDetail[1]) };
   if (hash === "/settings") return { name: "settings" };
   if (hash === "/submit") return { name: "submit" };
   if (hash === "/signature") return { name: "signature" };
   if (hash === "/profile") return { name: "profile" };
   if (hash === "/approvals") return { name: "approvals" };
+  if (hash === "/pdm") return { name: "pdm" };
   return { name: "tasks" };
 }
 
@@ -447,6 +457,8 @@ export function App() {
             {routeAllowed && route.name === "submit" && <SubmitDrawingPage />}
             {routeAllowed && route.name === "approvals" && <ApprovalsPage user={user} />}
             {routeAllowed && route.name === "detail" && <ApprovalDetailPage id={route.id} user={user} />}
+            {routeAllowed && route.name === "pdm" && <PdmPartsPage user={user} />}
+            {routeAllowed && route.name === "pdmDetail" && <PdmPartDetailPage id={route.id} />}
             {routeAllowed && route.name === "signature" && <MySignaturePage onSignatureUpdated={applySignatureState} />}
             {routeAllowed && route.name === "profile" && <ProfilePage onUserUpdated={setUser} />}
             {routeAllowed && route.name === "settings" && <SettingsPage />}
@@ -602,7 +614,9 @@ function navIconForRoute(route: AppRouteName): LucideIcon {
     profile: UserRound,
     approvals: FileText,
     settings: SettingsIcon,
-    detail: FileText
+    pdm: PackageSearch,
+    detail: FileText,
+    pdmDetail: PackageSearch
   }[route];
 }
 
@@ -638,7 +652,9 @@ function routeLabel(routeName: AppRouteName) {
     profile: "我的资料",
     approvals: "全部图纸",
     settings: "系统管理",
-    detail: "图纸详情"
+    pdm: "零件库",
+    detail: "图纸详情",
+    pdmDetail: "零件详情"
   }[routeName];
 }
 

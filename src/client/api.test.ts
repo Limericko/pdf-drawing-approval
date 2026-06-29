@@ -222,6 +222,66 @@ describe("approval list API", () => {
   });
 });
 
+describe("PDM part library API", () => {
+  it("requests paged PDM parts with library filters", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ items: [], total: 0, page: 2, pageSize: 20 });
+    const pdmApi = api as unknown as {
+      listPdmParts?: (params: {
+        page: number;
+        pageSize: number;
+        keyword?: string;
+        projectName?: string;
+        isCommon?: boolean;
+        hasCurrentRevision?: boolean;
+      }) => Promise<unknown>;
+    };
+
+    expect(pdmApi.listPdmParts).toBeTypeOf("function");
+    await pdmApi.listPdmParts!({
+      page: 2,
+      pageSize: 20,
+      keyword: "400A",
+      projectName: "项目A",
+      isCommon: true,
+      hasCurrentRevision: true
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/parts?page=2&pageSize=20&keyword=400A&projectName=%E9%A1%B9%E7%9B%AEA&isCommon=1&hasCurrentRevision=1",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
+
+  it("loads PDM part detail and pending metadata queues", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ items: [] });
+    const pdmApi = api as unknown as {
+      getPdmPart?: (id: number) => Promise<unknown>;
+      listPendingPdmMetadata?: () => Promise<unknown>;
+    };
+
+    expect(pdmApi.getPdmPart).toBeTypeOf("function");
+    expect(pdmApi.listPendingPdmMetadata).toBeTypeOf("function");
+
+    await pdmApi.getPdmPart!(8);
+    await pdmApi.listPendingPdmMetadata!();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/pdm/parts/8",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer token value" }) })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/pdm/pending-metadata",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer token value" }) })
+    );
+  });
+});
+
 describe("system cleanup API", () => {
   it("previews and executes cleanup operations", async () => {
     api.setToken("token value");

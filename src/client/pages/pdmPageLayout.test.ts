@@ -1,0 +1,136 @@
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type { PdmPartDetail, PdmPartListItem, PdmPendingMetadataApproval } from "../api.ts";
+import {
+  pdmLibraryDescription,
+  pdmLibraryEmptyText,
+  pdmMetadataStatusLabel,
+  pdmPartStatusLabel,
+  pdmUsageProjectsText
+} from "./PdmPartsPage.tsx";
+import {
+  pdmRevisionStatusLabel,
+  pdmRevisionSummary,
+  pdmTraceabilityLabel
+} from "./PdmPartDetailPage.tsx";
+
+const listSource = fs.readFileSync(path.resolve("src/client/pages/PdmPartsPage.tsx"), "utf8");
+const detailSource = fs.readFileSync(path.resolve("src/client/pages/PdmPartDetailPage.tsx"), "utf8");
+
+describe("PDM part library page layout", () => {
+  it("uses part-library copy and keeps PDM visible to all workflow roles", () => {
+    expect(pdmLibraryDescription("designer")).toBe("查询受控图纸版本，补齐自己提交图纸的 PDM 信息。");
+    expect(pdmLibraryDescription("supervisor")).toBe("查询当前有效版本、历史版本和共用项目，辅助审核判断。");
+    expect(pdmLibraryDescription("process")).toBe("查询当前有效版本、历史版本和共用项目，辅助工艺审查。");
+    expect(pdmLibraryDescription("admin")).toBe("维护 PDM 待补录和发布异常，追溯零件图纸版本。");
+  });
+
+  it("renders the required list fields for controlled part lookup", () => {
+    expect(listSource).toContain("管家婆物料号");
+    expect(listSource).toContain("图纸名称");
+    expect(listSource).toContain("当前有效版本");
+    expect(listSource).toContain("体系文件号");
+    expect(listSource).toContain("使用项目");
+    expect(listSource).toContain("状态");
+    expect(listSource).toContain("listPdmParts");
+    expect(listSource).toContain("listPendingPdmMetadata");
+  });
+
+  it("formats usage projects and status badges for scan-friendly rows", () => {
+    const item = partItem({ usageProjectCount: 3, usageProjects: ["项目A", "项目B", "项目C"], isCommon: true });
+
+    expect(pdmUsageProjectsText(item)).toBe("项目A、项目B、项目C");
+    expect(pdmPartStatusLabel(item)).toBe("共用件");
+    expect(pdmPartStatusLabel(partItem({ currentVersion: null, currentRevisionId: null }))).toBe("待发布");
+    expect(pdmMetadataStatusLabel("missing_material_code")).toBe("待补物料号");
+    expect(pdmMetadataStatusLabel("missing_document_code")).toBe("体系文件号待补");
+  });
+
+  it("uses clear empty-state and pending metadata copy", () => {
+    expect(pdmLibraryEmptyText(false)).toBe("暂无 PDM 零件档案。审批通过并发布后会自动进入这里。");
+    expect(pdmLibraryEmptyText(true)).toBe("没有匹配的零件档案，请调整关键词或筛选条件。");
+
+    const pending: PdmPendingMetadataApproval = {
+      approvalId: 9,
+      projectName: "项目A",
+      partName: "旧格式零件",
+      version: "a0A0",
+      documentCode: null,
+      materialCode: null,
+      drawingName: "旧格式零件",
+      metadataStatus: "missing_material_code",
+      publishStatus: "metadata_pending",
+      publishError: null,
+      submittedByUserId: 1,
+      submittedAt: "2026-06-29T01:00:00.000Z"
+    };
+
+    expect(listSource).toContain("PDM 待补录");
+    expect(listSource).toContain("补录后才能进入正式零件库");
+    expect(pdmMetadataStatusLabel(pending.metadataStatus)).toBe("待补物料号");
+  });
+});
+
+describe("PDM part detail page layout", () => {
+  it("shows current revision, revision history, usage projects, and trace links", () => {
+    expect(detailSource).toContain("当前有效版本");
+    expect(detailSource).toContain("历史版本");
+    expect(detailSource).toContain("使用项目");
+    expect(detailSource).toContain("审批记录");
+    expect(detailSource).toContain("getPdmPart");
+  });
+
+  it("summarizes revision state without hiding superseded versions", () => {
+    const detail: PdmPartDetail = {
+      part: partItem({ id: 3, currentRevisionId: 12 }),
+      currentRevision: {
+        id: 12,
+        partId: 3,
+        materialCode: "0102A00700883",
+        documentCode: "MP300A000072",
+        drawingName: "400A按键",
+        version: "a1A0",
+        minorVersion: "a1",
+        majorVersion: "A0",
+        approvalId: 22,
+        releaseStatus: "released",
+        originalFilePath: "original.pdf",
+        originalFileHash: "hash-1",
+        signedFilePath: "signed.pdf",
+        signedFileHash: "hash-2",
+        annotatedFilePath: null,
+        releasedAt: "2026-06-29T01:00:00.000Z",
+        createdAt: "2026-06-29T01:00:00.000Z",
+        updatedAt: "2026-06-29T01:00:00.000Z"
+      },
+      revisions: [],
+      usages: []
+    };
+
+    expect(pdmRevisionSummary(detail)).toBe("当前 a1A0 / 体系文件号 MP300A000072");
+    expect(pdmRevisionStatusLabel("released")).toBe("当前有效");
+    expect(pdmRevisionStatusLabel("superseded")).toBe("历史版本");
+    expect(pdmTraceabilityLabel(22)).toBe("查看审批 #22");
+  });
+});
+
+function partItem(overrides: Partial<PdmPartListItem> = {}): PdmPartListItem {
+  return {
+    id: 1,
+    materialCode: "0102A00700883",
+    name: "400A按键",
+    isCommon: false,
+    currentRevisionId: 10,
+    createdFromApprovalId: 7,
+    createdAt: "2026-06-29T01:00:00.000Z",
+    updatedAt: "2026-06-29T01:00:00.000Z",
+    currentVersion: "a0A0",
+    currentDocumentCode: "MP300A000072",
+    currentApprovalId: 7,
+    currentReleasedAt: "2026-06-29T01:00:00.000Z",
+    usageProjectCount: 1,
+    usageProjects: ["项目A"],
+    ...overrides
+  };
+}

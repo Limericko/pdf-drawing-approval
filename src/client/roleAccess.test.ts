@@ -10,9 +10,10 @@ describe("role access", () => {
   it("keeps designers out of the review queue while allowing submission and printing work", () => {
     const labels = navigationForRole(user("designer")).map((item) => item.label);
 
-    expect(labels).toEqual(["提交图纸", "全部图纸", "我的签名", "我的资料"]);
+    expect(labels).toEqual(["提交图纸", "全部图纸", "零件库", "我的签名", "我的资料"]);
     expect(routeAllowedForRole(user("designer"), "tasks")).toBe(false);
     expect(routeAllowedForRole(user("designer"), "submit")).toBe(true);
+    expect(routeAllowedForRole(user("designer"), "pdm")).toBe(true);
     expect(routeAllowedForRole(user("designer"), "profile")).toBe(true);
     expect(defaultRouteForRole(user("designer"))).toBe("submit");
   });
@@ -21,18 +22,21 @@ describe("role access", () => {
     const supervisorLabels = navigationForRole(user("supervisor")).map((item) => item.label);
     const processLabels = navigationForRole(user("process")).map((item) => item.label);
 
-    expect(supervisorLabels).toEqual(["待我审核", "全部图纸", "我的签名", "我的资料"]);
-    expect(processLabels).toEqual(["待我审核", "全部图纸", "我的签名", "我的资料"]);
+    expect(supervisorLabels).toEqual(["待我审核", "全部图纸", "零件库", "我的签名", "我的资料"]);
+    expect(processLabels).toEqual(["待我审核", "全部图纸", "零件库", "我的签名", "我的资料"]);
     expect(routeAllowedForRole(user("supervisor"), "submit")).toBe(false);
+    expect(routeAllowedForRole(user("supervisor"), "pdm")).toBe(true);
     expect(routeAllowedForRole(user("process"), "profile")).toBe(true);
+    expect(routeAllowedForRole(user("process"), "pdmDetail")).toBe(true);
     expect(defaultRouteForRole(user("process"))).toBe("tasks");
   });
 
   it("keeps admins focused on operations and drawing maintenance", () => {
-    expect(navigationForRole(user("admin")).map((item) => item.label)).toEqual(["系统管理", "全部图纸", "我的资料"]);
+    expect(navigationForRole(user("admin")).map((item) => item.label)).toEqual(["系统管理", "全部图纸", "零件库", "我的资料"]);
     expect(defaultRouteForRole(user("admin"))).toBe("settings");
     expect(routeAllowedForRole(user("admin"), "settings")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "approvals")).toBe(true);
+    expect(routeAllowedForRole(user("admin"), "pdm")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "profile")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "submit")).toBe(false);
     expect(routeAllowedForRole(user("admin"), "signature")).toBe(false);
