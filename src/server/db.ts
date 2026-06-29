@@ -25,6 +25,7 @@ export function migrateDatabase(db: DatabaseConnection) {
   migrateUserPreferences(db);
   migrateApprovalStatusConstraint(db);
   migrateApprovalV3Columns(db);
+  migratePdmFoundation(db);
   migrateApprovalIndexes(db);
   migrateOperationLogIndexes(db);
   migrateSignatureTemplates(db);
@@ -39,6 +40,8 @@ function migrateApprovalIndexes(db: DatabaseConnection) {
     CREATE INDEX IF NOT EXISTS idx_approvals_project_part_submitted ON approvals(project_name, part_name, submitted_at, id);
     CREATE INDEX IF NOT EXISTS idx_approvals_current_file_path ON approvals(current_file_path);
     CREATE INDEX IF NOT EXISTS idx_approvals_submitted_by_user ON approvals(submitted_by_user_id, submitted_at, id);
+    CREATE INDEX IF NOT EXISTS idx_approvals_pdm_metadata_status ON approvals(pdm_metadata_status, pdm_publish_status, submitted_at, id);
+    CREATE INDEX IF NOT EXISTS idx_approvals_material_version ON approvals(material_code, version);
   `);
 }
 
@@ -144,6 +147,91 @@ function migrateApprovalV3Columns(db: DatabaseConnection) {
       db.exec(migration.sql);
     }
   }
+}
+
+function migratePdmFoundation(db: DatabaseConnection) {
+  const columns = db.prepare("PRAGMA table_info(approvals)").all() as Array<{ name: string }>;
+  const existing = new Set(columns.map((column) => column.name));
+
+  const approvalMigrations: Array<{ name: string; sql: string }> = [
+    { name: "document_code", sql: "ALTER TABLE approvals ADD COLUMN document_code TEXT" },
+    { name: "material_code", sql: "ALTER TABLE approvals ADD COLUMN material_code TEXT" },
+    { name: "drawing_name", sql: "ALTER TABLE approvals ADD COLUMN drawing_name TEXT" },
+    { name: "pdm_revision_id", sql: "ALTER TABLE approvals ADD COLUMN pdm_revision_id INTEGER" },
+    {
+      name: "pdm_metadata_status",
+      sql: "ALTER TABLE approvals ADD COLUMN pdm_metadata_status TEXT NOT NULL DEFAULT 'missing_material_code' CHECK (pdm_metadata_status IN ('complete', 'missing_material_code', 'missing_document_code', 'missing_required'))"
+    },
+    {
+      name: "pdm_publish_status",
+      sql: "ALTER TABLE approvals ADD COLUMN pdm_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK (pdm_publish_status IN ('not_applicable', 'metadata_pending', 'pending', 'published', 'failed'))"
+    },
+    { name: "pdm_publish_error", sql: "ALTER TABLE approvals ADD COLUMN pdm_publish_error TEXT" }
+  ];
+
+  for (const migration of approvalMigrations) {
+    if (!existing.has(migration.name)) {
+      db.exec(migration.sql);
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS pdm_parts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      material_code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      is_common INTEGER NOT NULL DEFAULT 0,
+      current_revision_id INTEGER,
+      created_from_approval_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pdm_parts_name ON pdm_parts(name);
+    CREATE INDEX IF NOT EXISTS idx_pdm_parts_current_revision ON pdm_parts(current_revision_id);
+
+    CREATE TABLE IF NOT EXISTS pdm_drawing_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      part_id INTEGER NOT NULL,
+      material_code TEXT NOT NULL,
+      document_code TEXT,
+      drawing_name TEXT NOT NULL,
+      version TEXT NOT NULL,
+      minor_version TEXT NOT NULL,
+      major_version TEXT NOT NULL,
+      approval_id INTEGER NOT NULL UNIQUE,
+      release_status TEXT NOT NULL DEFAULT 'released' CHECK (release_status IN ('released', 'superseded', 'voided')),
+      original_file_path TEXT NOT NULL,
+      original_file_hash TEXT,
+      signed_file_path TEXT,
+      signed_file_hash TEXT,
+      annotated_file_path TEXT,
+      released_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(material_code, version),
+      FOREIGN KEY (part_id) REFERENCES pdm_parts(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pdm_revisions_part_released ON pdm_drawing_revisions(part_id, released_at, id);
+    CREATE INDEX IF NOT EXISTS idx_pdm_revisions_material_status ON pdm_drawing_revisions(material_code, release_status);
+
+    CREATE TABLE IF NOT EXISTS pdm_part_usages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      part_id INTEGER NOT NULL,
+      material_code TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      first_approval_id INTEGER NOT NULL,
+      last_approval_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(material_code, project_name),
+      FOREIGN KEY (part_id) REFERENCES pdm_parts(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pdm_usages_part_project ON pdm_part_usages(part_id, project_name);
+    CREATE INDEX IF NOT EXISTS idx_pdm_usages_project ON pdm_part_usages(project_name, material_code);
+  `);
 }
 
 function migrateSignatureTemplates(db: DatabaseConnection) {
