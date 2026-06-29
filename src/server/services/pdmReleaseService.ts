@@ -79,7 +79,7 @@ export class PdmReleaseService {
       return { status: "metadata_pending", reason: "missing_material_code", error: message };
     }
 
-    if (approval.status !== "approved_for_print") {
+    if (approval.status !== "approved_for_print" && approval.status !== "printed_archived") {
       return { status: "skipped", reason: "approval_not_approved_for_print" };
     }
 

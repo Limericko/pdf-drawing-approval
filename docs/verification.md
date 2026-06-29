@@ -3964,3 +3964,44 @@ Invoke-WebRequest -UseBasicParsing http://192.168.0.62:8080/updates/latest.yml
 
 - `0.9.0` 及更早客户端没有内置 `electron-updater`，无法自动升级到 `0.9.1`；团队电脑需要手动安装一次 `PDF图纸审批客户端-安装包-0.9.1.exe`。
 - 从 `0.9.1` 之后，客户端启动时才会自动检查后续新版，自动下载完成后仍由用户打开安装包并按安装向导升级，不执行静默安装或自动重启。
+
+## 2026-06-29 PDM V1 Foundation 验证
+
+范围：
+
+- 新增 PDM 标准图纸文件名解析，支持 `体系文件号 《管家婆物料号 图纸名称》 版本.pdf`，并兼容体系文件号后补和物料号缺失待补齐。
+- 新增 PDM 零件、图纸版本、项目使用记录、审批来源链接和元数据修复数据模型。
+- 审批通过后自动发布 PDM 图纸版本，保证同一管家婆物料号全局唯一、同一物料号同一版本不重复发布。
+- 新增零件库页面、零件详情页、审批详情 PDM 信息和元数据修复入口。
+- 新增 PDM 历史回填维护服务，可扫描已通过或已打印归档审批，将标准文件名且有效 PDF 的历史图纸补发布到零件库。
+
+命令：
+
+```powershell
+npm test -- --run src/server/services/pdmBackfillService.test.ts
+npm test
+npm run build
+npm run desktop:test
+```
+
+结果：
+
+```text
+PDM 回填聚焦测试: 1 个测试文件，2 个用例通过。
+npm test: 95 个测试文件，528 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+npm run desktop:test: 3 个测试文件，11 个用例通过。
+```
+
+构建说明：
+
+```text
+Vite 构建仍提示 assets/pdf-CJRVEglZ.js 约 531.35 kB 超过 500 kB。
+该文件是 PDF.js 预览依赖的独立 chunk，当前不阻断构建；后续如继续压缩首屏体积，可再拆分 PDF 预览加载时机或调整 manualChunks。
+```
+
+已知限制：
+
+- PDM 历史回填当前是维护服务能力，尚未做管理员页面按钮；需要接入运维入口时可复用 `PdmBackfillService.backfillApprovedDrawings()`。
+- 标准 PDM 发布以管家婆物料号为主键；缺失物料号的历史审批不会自动发布，需要先通过元数据修复补齐。
+- 缺失体系文件号允许发布，后续可通过元数据修复补齐。
