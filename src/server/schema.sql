@@ -55,14 +55,6 @@ CREATE TABLE IF NOT EXISTS approvals (
   UNIQUE(project_name, part_name, version)
 );
 
-CREATE INDEX IF NOT EXISTS idx_approvals_status_submitted ON approvals(status, submitted_at, id);
-CREATE INDEX IF NOT EXISTS idx_approvals_signature_status_submitted ON approvals(signature_status, submitted_at, id);
-CREATE INDEX IF NOT EXISTS idx_approvals_project_part_submitted ON approvals(project_name, part_name, submitted_at, id);
-CREATE INDEX IF NOT EXISTS idx_approvals_current_file_path ON approvals(current_file_path);
-CREATE INDEX IF NOT EXISTS idx_approvals_submitted_by_user ON approvals(submitted_by_user_id, submitted_at, id);
-CREATE INDEX IF NOT EXISTS idx_approvals_pdm_metadata_status ON approvals(pdm_metadata_status, pdm_publish_status, submitted_at, id);
-CREATE INDEX IF NOT EXISTS idx_approvals_material_version ON approvals(material_code, version);
-
 CREATE TABLE IF NOT EXISTS pdm_parts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   material_code TEXT NOT NULL UNIQUE,
