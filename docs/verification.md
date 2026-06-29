@@ -4005,3 +4005,42 @@ Vite 构建仍提示 assets/pdf-CJRVEglZ.js 约 531.35 kB 超过 500 kB。
 - PDM 历史回填当前是维护服务能力，尚未做管理员页面按钮；需要接入运维入口时可复用 `PdmBackfillService.backfillApprovedDrawings()`。
 - 标准 PDM 发布以管家婆物料号为主键；缺失物料号的历史审批不会自动发布，需要先通过元数据修复补齐。
 - 缺失体系文件号允许发布，后续可通过元数据修复补齐。
+
+## 2026-06-29 PDM 工作台布局优化验证
+
+范围：
+
+- 零件库首页从普通台账调整为“PDM 工作台”：顶部主搜索、筛选区、统计条、零件主表和待补录问题队列。
+- 零件详情页从信息面板调整为“零件主档案”：主键、当前有效版本、体系文件号、共用状态、使用项目、版本历史和审批追溯更集中。
+- 窄屏下 PDM 主表改为卡片式展示，避免不同窗口尺寸下横向挤压。
+
+命令：
+
+```powershell
+npm test -- --run src/client/pages/pdmPageLayout.test.ts
+npm test -- --run src/client/styles.test.ts
+npm run build
+```
+
+结果：
+
+```text
+PDM 页面布局测试: 1 个测试文件，7 个用例通过。
+样式规则测试: 1 个测试文件，15 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+```
+
+浏览器冒烟：
+
+```text
+Chrome headless 打开 http://127.0.0.1:5173/#/pdm，使用 admin / admin123 登录。
+桌面 1440x950: PDM 工作台、4 个统计卡、主表和待补录队列正常渲染，无横向溢出，控制台无 error。
+移动 390x840: 工作台单列展示，PDM 表格卡片化，thead 隐藏，无横向溢出，控制台无 error。
+零件详情 #/pdm/parts/1: 零件主档案、5 个关键字段和详情布局正常渲染，无横向溢出，控制台无 error。
+```
+
+说明：
+
+```text
+构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 页面优化。
+```

@@ -52,49 +52,41 @@ export function PdmPartDetailPage({ id }: { id: number }) {
   }
 
   const { part, currentRevision, revisions, usages } = detail;
+  const overviewFacts = pdmDetailOverviewFacts(detail);
 
   return (
     <section className="pdm-detail-page">
-      <div className="page-heading row">
+      <header className="pdm-record-hero">
         <div>
           <a className="table-action-link" href="#/pdm">
             <ArrowLeft size={14} strokeWidth={2} aria-hidden="true" />
             返回零件库
           </a>
-          <span className="eyebrow">PART TRACEABILITY</span>
+          <span className="eyebrow">零件主档案</span>
           <h1>{part.name}</h1>
           <p>{pdmRevisionSummary(detail)}</p>
         </div>
-        <div className="pdm-detail-key">
+        <div className="pdm-record-code">
           <span>管家婆物料号</span>
           <strong>{part.materialCode}</strong>
+          <em>全局唯一零件主键</em>
         </div>
-      </div>
+      </header>
 
-      <div className="drawing-meta-strip">
-        <div>
-          <span>当前有效版本</span>
-          <strong>{currentRevision?.version ?? "待发布"}</strong>
-        </div>
-        <div>
-          <span>体系文件号</span>
-          <strong>{currentRevision?.documentCode ?? "待补"}</strong>
-        </div>
-        <div>
-          <span>共用状态</span>
-          <strong>{part.isCommon ? "共用件" : "普通零件"}</strong>
-        </div>
-        <div>
-          <span>使用项目</span>
-          <strong>{usages.length > 0 ? usages.map((usage) => usage.projectName).join("、") : "未记录"}</strong>
-        </div>
+      <div className="pdm-detail-rail" aria-label="PDM 零件主档案">
+        {overviewFacts.map((fact) => (
+          <div key={fact.label}>
+            <span>{fact.label}</span>
+            <strong>{fact.value}</strong>
+          </div>
+        ))}
       </div>
 
       <div className="pdm-detail-grid">
-        <section className="pdm-panel">
+        <section className="pdm-panel pdm-current-panel">
           <div className="section-title-row">
             <div>
-              <span className="eyebrow">CURRENT</span>
+              <span className="eyebrow">当前版本</span>
               <h2>当前有效版本</h2>
             </div>
             {currentRevision && (
@@ -111,12 +103,13 @@ export function PdmPartDetailPage({ id }: { id: number }) {
           )}
         </section>
 
-        <section className="pdm-panel">
+        <aside className="pdm-panel pdm-usage-panel">
           <div className="section-title-row">
             <div>
-              <span className="eyebrow">USAGE</span>
+              <span className="eyebrow">项目复用</span>
               <h2>使用项目</h2>
             </div>
+            <span className="muted-inline">{usages.length} 个项目</span>
           </div>
           {usages.length > 0 ? (
             <div className="pdm-usage-list">
@@ -130,20 +123,20 @@ export function PdmPartDetailPage({ id }: { id: number }) {
           ) : (
             <div className="empty compact-empty">暂无项目使用记录。</div>
           )}
-        </section>
+        </aside>
       </div>
 
-      <section className="pdm-panel">
+      <section className="pdm-panel pdm-history-panel">
         <div className="section-title-row">
           <div>
-            <span className="eyebrow">HISTORY</span>
+            <span className="eyebrow">版本关系</span>
             <h2>历史版本</h2>
           </div>
           <span className="muted-inline">共 {revisions.length} 个版本</span>
         </div>
         {revisions.length > 0 ? (
           <div className="table-surface pdm-table-surface">
-            <table className="data-table pdm-table">
+            <table className="data-table pdm-table pdm-history-table">
               <thead>
                 <tr>
                   <th>版本</th>
@@ -186,7 +179,7 @@ export function PdmPartDetailPage({ id }: { id: number }) {
 
 function RevisionFacts({ revision }: { revision: PdmDrawingRevision }) {
   return (
-    <dl className="compact-dl">
+    <dl className="compact-dl pdm-revision-facts">
       <div>
         <dt>版本</dt>
         <dd>{revision.version}</dd>
@@ -213,6 +206,16 @@ function RevisionFacts({ revision }: { revision: PdmDrawingRevision }) {
       </div>
     </dl>
   );
+}
+
+export function pdmDetailOverviewFacts(detail: PdmPartDetail) {
+  return [
+    { label: "管家婆物料号", value: detail.part.materialCode },
+    { label: "当前有效版本", value: detail.currentRevision?.version ?? "待发布" },
+    { label: "体系文件号", value: detail.currentRevision?.documentCode ?? "待补" },
+    { label: "共用状态", value: detail.part.isCommon ? "共用件" : "普通零件" },
+    { label: "使用项目", value: detail.usages.length > 0 ? detail.usages.map((usage) => usage.projectName).join("、") : "未记录" }
+  ];
 }
 
 export function pdmRevisionSummary(detail: PdmPartDetail) {

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PdmPartDetail, PdmPartListItem, PdmPendingMetadataApproval } from "../api.ts";
 import {
+  buildPdmLibraryStats,
   pdmLibraryDescription,
   pdmLibraryEmptyText,
   pdmMetadataStatusLabel,
@@ -10,6 +11,7 @@ import {
   pdmUsageProjectsText
 } from "./PdmPartsPage.tsx";
 import {
+  pdmDetailOverviewFacts,
   pdmRevisionStatusLabel,
   pdmRevisionSummary,
   pdmTraceabilityLabel
@@ -70,10 +72,27 @@ describe("PDM part library page layout", () => {
     expect(listSource).toContain("补录后才能进入正式零件库");
     expect(pdmMetadataStatusLabel(pending.metadataStatus)).toBe("待补物料号");
   });
+
+  it("uses a PDM workbench shell with scan-friendly summary and issue queue", () => {
+    expect(listSource).toContain("PDM 工作台");
+    expect(listSource).toContain("pdm-stat-strip");
+    expect(listSource).toContain("pdm-workbench-grid");
+    expect(listSource).toContain("pdm-issue-panel");
+
+    expect(buildPdmLibraryStats([partItem({ isCommon: true }), partItem({ currentRevisionId: null, currentVersion: null })], 42, 3)).toEqual([
+      { label: "零件总数", value: "42", note: "按当前筛选统计" },
+      { label: "当前页有效", value: "1", note: "已发布当前版本" },
+      { label: "待补录", value: "3", note: "需补齐物料号或发布异常" },
+      { label: "当前页共用件", value: "1", note: "跨项目复用" }
+    ]);
+  });
 });
 
 describe("PDM part detail page layout", () => {
   it("shows current revision, revision history, usage projects, and trace links", () => {
+    expect(detailSource).toContain("pdm-record-hero");
+    expect(detailSource).toContain("pdm-detail-rail");
+    expect(detailSource).toContain("零件主档案");
     expect(detailSource).toContain("当前有效版本");
     expect(detailSource).toContain("历史版本");
     expect(detailSource).toContain("使用项目");
@@ -112,6 +131,13 @@ describe("PDM part detail page layout", () => {
     expect(pdmRevisionStatusLabel("released")).toBe("当前有效");
     expect(pdmRevisionStatusLabel("superseded")).toBe("历史版本");
     expect(pdmTraceabilityLabel(22)).toBe("查看审批 #22");
+    expect(pdmDetailOverviewFacts(detail)).toEqual([
+      { label: "管家婆物料号", value: "0102A00700883" },
+      { label: "当前有效版本", value: "a1A0" },
+      { label: "体系文件号", value: "MP300A000072" },
+      { label: "共用状态", value: "普通零件" },
+      { label: "使用项目", value: "未记录" }
+    ]);
   });
 });
 
