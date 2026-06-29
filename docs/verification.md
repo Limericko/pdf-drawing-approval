@@ -1,0 +1,3966 @@
+# 验证记录
+
+## 当前状态
+
+已完成第一版代码搭建，并在本机完成依赖安装、自动化测试、构建和服务启动验证。
+
+## 已尝试命令
+
+```powershell
+npm install
+```
+
+结果：命令超时。
+
+随后按权限规则请求联网安装依赖，被当时的沙箱策略拒绝。
+
+用户在本机执行安装时，`better-sqlite3` 因 Windows 缺少 Visual Studio C++ 构建工具失败。已将数据库层改为 Node 24 内置 `node:sqlite`，移除 `better-sqlite3` 原生依赖。
+
+```powershell
+npm install --registry=https://registry.npmmirror.com
+```
+
+结果：安装成功。
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+> pdf-approval@0.1.0 test
+> vitest run
+
+Test Files  8 passed (8)
+Tests       24 passed (24)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/health'
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+```powershell
+POST http://127.0.0.1:8080/api/auth/login
+```
+
+使用 `admin / admin123` 登录，结果：HTTP 200，返回管理员用户。
+
+服务监听：
+
+```text
+0.0.0.0:8080
+```
+
+## 待执行人工验收
+
+手工验证：
+
+1. 使用 `admin / admin123` 登录。
+2. 配置坚果云本地根目录。
+3. 放入 `图纸审批\01-待提交\测试项目\测试零件-a0A0.pdf`。
+4. 确认系统生成审批单，并移动到 `02-审批中`。
+5. 主管和工艺分别登录审批。
+6. 两人通过后确认移动到 `04-已通过待打印`。
+7. 提交 `测试零件-a1A0.pdf` 并驳回，确认移动到 `03-已驳回` 且保留意见。
+
+## 风险
+
+- 邮件通知需要有效 SMTP 和审核人邮箱数据。
+
+## 2026-06-16 可用性增强验证
+
+改动：
+
+- 配置页新增“选择文件夹”按钮。
+- 后端新增 `POST /api/settings/select-folder`，在运行审批服务的 Windows 电脑上弹出本地文件夹选择窗口。
+- 页面布局优化为左侧导航 + 工作台内容区。
+- 待办页增加待处理数量。
+- 详情页增加主管/工艺状态摘要。
+- 配置页增加服务器本地选择说明。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  9 passed (9)
+Tests       25 passed (25)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/health'
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+当前服务监听：
+
+```text
+0.0.0.0:8080
+```
+
+当前监听进程：
+
+```text
+2060
+```
+
+## 2026-06-16 前端设计方向重构验证
+
+背景：
+
+- 用户要求阅读 LobeHub 技能 `affaan-m-everything-claude-code-frontend-design` 并安装后遵循。
+- `https://lobehub.com/skills/affaan-m-everything-claude-code-frontend-design/skill.md` 被 Vercel 安全检查拦截。
+- `@lobehub/market-cli` 安装路径要求凭据，未继续注册或使用凭据。
+- 使用公开仓库安装器安装同源技能集合中的 `frontend-design-direction`：
+
+```powershell
+npx -y skills add affaan-m/everything-claude-code --skill frontend-design-direction --agent codex
+```
+
+安装位置：
+
+```text
+.agents\skills\frontend-design-direction\SKILL.md
+```
+
+设计方向：
+
+- 目的：机械图纸 PDF 审批工作台。
+- 受众：设计师、主管、工艺、打印人员，重复高频使用。
+- 语气：工业化、安静、密集、可扫描。
+- 记忆点：工程蓝图感的左侧导航、状态芯片、版本徽标、图纸元信息条。
+- 约束：不引入新 UI 依赖；沿用 React + CSS；保持局域网工具的低维护成本。
+
+改动：
+
+- 新增 `StatusChip` 状态芯片组件。
+- 表格增加状态芯片、版本徽标、空态说明和外层表格容器。
+- 登录页从单表单改成产品化登录面板。
+- 工作台导航增加当前页面高亮。
+- 待审页增加双指标摘要。
+- 图纸详情页增加图纸元信息条、状态摘要和更清晰的审核区。
+- CSS 调整为更稳定的内部工具布局，包含桌面和移动端约束。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  9 passed (9)
+Tests       25 passed (25)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/health'
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+当前服务监听：
+
+```text
+0.0.0.0:8080
+```
+
+当前监听进程：
+
+```text
+28828
+```
+
+## 2026-06-16 文件夹选择排查与修复
+
+问题：
+
+- 配置页点击“选择文件夹”后，Windows 文件夹选择窗口未弹出。
+
+排查结论：
+
+- 前端按钮和认证链路正常。
+- 旧接口 `POST /api/settings/select-folder` 会同步等待 PowerShell `FolderBrowserDialog` 返回。
+- 通过接口调用时，请求会超时，服务端 PowerShell 选择进程停留在 pending。
+- 根因是：从后台启动的服务进程再启动 WinForms 文件夹窗口，在 Windows 桌面会话中不可靠，窗口可能无法显示到前台，且旧实现会导致 HTTP 请求一直等待。
+
+修复：
+
+- 将文件夹选择接口改为非阻塞：
+  - `POST /api/settings/select-folder` 只启动独立选择进程并立即返回 `pickerId`。
+  - `GET /api/settings/select-folder/:pickerId` 轮询选择结果。
+  - PowerShell 弹窗增加 TopMost owner 窗口，尽量置顶显示。
+- 增加稳定备用方案：
+  - 新增 `GET /api/settings/directories`，由服务端列出服务器电脑上的盘符和目录。
+  - 配置页新增“浏览服务器目录”，可从盘符开始逐级进入目录，并用“使用当前目录”填入 `watch_root`。
+  - 该方案不依赖 Windows 系统弹窗，远程浏览器访问也可用。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  9 passed (9)
+Tests       26 passed (26)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+GET http://127.0.0.1:8080/api/settings/directories
+```
+
+结果：可返回服务器盘符：
+
+```json
+["C:\\", "D:\\", "E:\\", "G:\\"]
+```
+
+当前服务监听：
+
+```text
+0.0.0.0:8080
+```
+
+当前监听进程：
+
+```text
+7828
+```
+
+## 2026-06-16 配置重启按钮验证
+
+背景：
+
+- Windows 文件夹选择弹窗在后台服务模型下仍可能不显示到前台。
+- 配置 `watch_root` 后需要重启服务才会重新建立目录监听。
+
+改动：
+
+- 配置页提示改为推荐使用“浏览服务器目录”，不再把系统弹窗作为主路径。
+- 配置页新增“重启服务”按钮。
+- 后端新增 `POST /api/system/restart`，管理员可触发应用重启。
+- `npm run dev` 改为运行 `scripts/dev-server.mjs` supervisor。
+- 应用进程以退出码 `42` 退出时，supervisor 会自动拉起新的服务进程。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  10 passed (10)
+Tests       27 passed (27)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+POST http://127.0.0.1:8080/api/system/restart
+```
+
+结果：
+
+```json
+{"restarting":true}
+```
+
+随后轮询：
+
+```powershell
+GET http://127.0.0.1:8080/health
+```
+
+结果：
+
+```text
+HEALTH_OK
+```
+
+当前服务监听：
+
+```text
+0.0.0.0:8080
+```
+
+当前监听进程：
+
+```text
+29972
+```
+
+## 2026-06-16 监听根目录 PDF 排查与修复
+
+问题：
+
+- 用户设置审批根目录为：
+
+```text
+G:\Personal documents\code\PDF审批\test
+```
+
+- 直接放入：
+
+```text
+G:\Personal documents\code\PDF审批\test\301新光纤-a0A0.pdf
+```
+
+- 系统未生成审批单。
+
+排查结论：
+
+- `watch_root` 已正确保存为测试目录。
+- 审批列表为空。
+- 文件命名符合 `零件名-a数字A数字.pdf`。
+- 第一层原因：旧业务规则只接收 `01-待提交\项目名\*.pdf`，不接收根目录直接 PDF。
+- 第二层原因：项目使用 `chokidar@4.0.3`，旧的 `**/*.pdf` glob 监听方式不可靠，需监听根目录后在代码中过滤 PDF。
+
+修复：
+
+- 支持两种提交方式：
+  - 标准方式：`审批根目录\01-待提交\项目名\零件名-a0A0.pdf`
+  - 简化方式：`审批根目录\零件名-a0A0.pdf`
+- 简化方式自动归入“默认项目”。
+- watcher 改为监听整个审批根目录，并在 `add` 事件中按 `.pdf` 后缀过滤。
+- 已管理状态目录中的文件不会被重复处理。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  10 passed (10)
+Tests       29 passed (29)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+重启后审批列表返回：
+
+```json
+{
+  "projectName": "默认项目",
+  "partName": "301新光纤",
+  "version": "a0A0",
+  "status": "pending",
+  "currentFilePath": "G:\\Personal documents\\code\\PDF审批\\test\\02-审批中\\默认项目\\301新光纤-a0A0.pdf"
+}
+```
+
+文件已移动到：
+
+```text
+G:\Personal documents\code\PDF审批\test\02-审批中\默认项目\301新光纤-a0A0.pdf
+```
+
+## 2026-06-16 管理端与目录标准化验证
+
+改动：
+
+- 设置页升级为“系统管理”，包含目录与通知、用户管理、服务日志三个标签页。
+- 新增目录健康状态：监听根目录、标准目录是否就绪、配置生效提示。
+- 新增 `POST /api/settings/prepare-folders`，可在审批根目录下幂等创建：
+  - `01-待提交`
+  - `02-审批中`
+  - `03-已驳回`
+  - `04-已通过待打印`
+  - `05-已打印归档`
+- 新增 `GET /api/settings/watch-root/status`，用于页面检查根目录和标准目录状态。
+- 新增前端“浏览器选择”按钮，使用 File System Access API 做本机目录辅助选择，并明确提示该 API 不返回后端监听所需的 Windows 绝对路径。
+- 新增 `GET /api/system/logs`，管理员可查看 `server.log` 和 `server.err.log` 尾部内容。
+- 新增 `/api/users` 管理接口和页面：
+  - 用户列表
+  - 新增用户
+  - 编辑姓名、邮箱、角色、启用状态
+  - 重置密码
+  - 防止停用最后一个管理员
+- watcher 启动和处理 PDF 时增加服务日志输出。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  11 passed (11)
+Tests       32 passed (32)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+接口验证：
+
+```text
+GET /health -> ok
+GET /api/settings/watch-root/status -> rootExists=True
+POST /api/settings/prepare-folders -> created=4, existing=1, ready=True
+GET /api/users -> users=4
+GET /api/system/logs?lines=20 -> logs=2
+```
+
+浏览器验证：
+
+- 使用 `admin / admin123` 登录。
+- 系统管理页正常渲染，中文无乱码。
+- 目录状态显示“已就绪”。
+- 用户管理标签页显示用户表和新增用户表单。
+- 服务日志标签页显示 `server.log` 与 `server.err.log`。
+- 浏览器控制台无 error。
+
+## 2026-06-16 PDF 预览加载错误排查与修复
+
+问题：
+
+- 图纸详情页 PDF 预览区域显示加载错误，无法加载 PDF。
+
+排查结论：
+
+- 后端文件接口地址和鉴权正常。
+- 当前审批单文件路径存在：
+
+```text
+G:\Personal documents\code\PDF审批\test\02-审批中\默认项目\301新光纤-a0A0.pdf
+```
+
+- 文件接口原先返回 HTTP 200 和 `application/pdf`。
+- 但磁盘文件头不是标准 PDF 头 `%PDF-`，实际开头字节为：
+
+```text
+18-1B-03-1A-15-10-19-7C
+```
+
+- 根因：系统只按 `.pdf` 扩展名判断文件类型，导致扩展名为 PDF、但内容不是有效 PDF 的文件进入预览。
+
+修复：
+
+- 新增 PDF 文件头校验。
+- `/api/approvals/:id/file` 在文件内容不是有效 PDF 时返回：
+
+```json
+{
+  "error": "INVALID_PDF_FILE",
+  "message": "文件扩展名是 PDF，但文件内容不是有效 PDF。请检查坚果云是否已完成同步，或重新导出 PDF。"
+}
+```
+
+- 详情页加载 iframe 前先用 `HEAD` 检查文件状态。
+- 无效文件不再直接进入浏览器 PDF 预览器，而是显示中文诊断和服务器文件路径。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  11 passed (11)
+Tests       33 passed (33)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+接口验证：
+
+```text
+GET /api/approvals/1/file -> 422 INVALID_PDF_FILE
+```
+
+浏览器验证：
+
+- 详情页显示“文件不是有效 PDF，无法预览”。
+- 显示当前文件路径，便于排查坚果云同步或 CAD 导出问题。
+- 浏览器控制台无 error。
+
+## 2026-06-16 删除同步、漏检兜底与通知去重验证
+
+问题：
+
+- 已进入审核中的 PDF 被手动删除后，审批单仍留在“待我审核”。
+- 新加入监听目录的文件偶发没有检测到。
+- 每次进入待审核页面都会弹一次桌面通知。
+
+排查结论：
+
+- watcher 原先只处理 `add` 事件，没有处理 `unlink`，文件删除不会反映到数据库。
+- 只依赖 chokidar 对坚果云同步目录不够稳，新增文件事件可能被同步客户端行为影响。
+- 待办页每次加载只要有待办就调用 `new Notification(...)`，没有按审批 ID 去重。
+
+修复：
+
+- 新增审批状态 `file_missing`，保留记录但不再进入审核队列。
+- watcher 新增 `unlink` 处理：待审文件被删除时标记为 `file_missing`。
+- watcher 新增 10 秒兜底扫描：
+  - 扫描未处理的 PDF，补偿漏掉的 add 事件。
+  - 扫描 pending 审批单的当前文件路径，补偿服务离线期间的删除。
+- 待办页通知按审批 ID 使用 `localStorage` 去重，同一浏览器内只对新增待办弹通知。
+
+验证：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  12 passed (12)
+Tests       39 passed (39)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+现场验证：
+
+```text
+当前监听目录：G:\Personal documents\code\PDF审批\test
+新增文件：01-待提交\现场验证\现场验证141035-a0A0.pdf
+检测结果：已生成审批单并移动到 02-审批中\现场验证
+删除移动后的文件：状态变为 file_missing
+```
+
+## 2026-06-16 第二版功能验证
+
+范围：
+
+- 新增异常状态：`invalid_pdf`、`voided`。
+- 新增操作日志和审批详情时间线。
+- 新增手动修复 API：作废、重新绑定文件、重新校验 PDF。
+- 提交时识别无效 PDF。
+- 新增手动扫描 API 和扫描记录。
+- 新增 SMTP 测试 API。
+- 系统管理页新增扫描维护、SMTP 测试、操作日志。
+- 新增数据库备份脚本。
+
+自动化测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  15 passed (15)
+Tests       66 passed (66)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built in 1.02s
+```
+
+备份脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\backup-database.ps1
+```
+
+结果：
+
+```text
+Backup created: backups\pdf-approval-20260616-160059
+Files: pdf-approval.sqlite, pdf-approval.sqlite-wal, pdf-approval.sqlite-shm
+```
+
+服务健康与重启验证：
+
+```text
+临时端口：18081
+GET /health -> ok
+POST /api/system/restart -> restarting
+重启后 GET /health -> RESTART_HEALTH_OK
+```
+
+浏览器烟测：
+
+- 使用默认管理员登录。
+- 系统管理页可显示目录扫描、邮件测试、清除本机通知记录。
+- 操作日志页可显示日志表头和刷新按钮。
+- 异常审批详情页可显示异常处理面板、替换 PDF、重新校验、作废和操作时间线。
+- 浏览器控制台无 error。
+
+人工/自动化验收覆盖：
+
+1. 正常 PDF 提交流程：由 watcher 测试覆盖。
+2. 主管审批：由审批路由测试覆盖。
+3. 工艺审批：由审批路由测试覆盖。
+4. 双人通过后进入待打印：由审批路由测试覆盖。
+5. 打印归档：由审批路由测试覆盖。
+6. 无效 PDF 创建 `invalid_pdf`：由 watcher 测试覆盖。
+7. 无效 PDF 重新绑定为有效 PDF 后回到 `pending`：由审批路由测试覆盖。
+8. 删除 pending 文件后变为 `file_missing`：由 watcher 测试覆盖。
+9. `file_missing` 重新绑定：由审批路由测试覆盖。
+10. 作废审批：由审批路由测试覆盖。
+11. 操作时间线：由浏览器烟测覆盖。
+12. 手动扫描和扫描记录：由系统路由测试覆盖。
+13. SMTP 测试成功/失败：由设置路由和邮件 helper 测试覆盖。
+14. 备份脚本创建备份文件：由脚本命令验证覆盖。
+
+剩余限制：
+
+- 本次未连接真实 SMTP 服务发送外部邮件；自动化测试使用注入 transport 验证成功和失败路径。
+- 浏览器烟测使用临时本地数据库，不影响实际生产数据。
+- 真实坚果云同步行为仍建议在现场部署后按实际目录做一次提交和删除文件验证。
+
+## 2026-06-16 第三版运维增强验证
+
+范围：
+
+- 新增系统健康诊断服务与管理员接口：
+  - 数据库读写检查。
+  - 监听根目录存在性。
+  - 五个标准目录存在性。
+  - 标准目录写入权限。
+  - 最近扫描记录。
+  - 最近备份记录。
+- 新增 `backup_runs` 表、备份仓库、备份服务与管理员接口：
+  - 复制 `pdf-approval.sqlite`。
+  - 复制可选 `pdf-approval.sqlite-wal`、`pdf-approval.sqlite-shm`。
+  - 记录成功与失败备份。
+  - 操作日志记录备份成功/失败。
+- 系统管理页“运维追溯”新增：
+  - 系统健康诊断面板。
+  - 数据库备份面板。
+  - 签名配置概览。
+  - 保留追溯报表和全局操作日志。
+
+后端目标测试：
+
+```powershell
+npm test -- src/server/services/diagnostics.test.ts src/server/repositories/backups.test.ts src/server/services/backupService.test.ts src/server/routes/system.test.ts
+```
+
+结果：
+
+```text
+Test Files  4 passed (4)
+Tests       12 passed (12)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built in 984ms
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  30 passed (30)
+Tests       124 passed (124)
+```
+
+服务启动验证：
+
+```powershell
+GET http://127.0.0.1:8080/health
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+当前监听：
+
+```text
+0.0.0.0:8080
+```
+
+浏览器烟测：
+
+- 使用现有管理员登录态打开 `http://127.0.0.1:8080/#/settings`。
+- 切换到“运维追溯”。
+- 页面显示“系统健康诊断”，当前状态为“运行正常”。
+- 数据库显示“可读写”。
+- 监听根目录显示 `G:\Personal documents\code\PDF审批\test`。
+- 标准目录显示 `5/5`。
+- 写入权限显示 `5/5`。
+- 页面显示“数据库备份”“签名配置”“追溯报表”“操作日志”模块。
+- 浏览器控制台无 error。
+
+说明：
+
+- 浏览器烟测未点击“立即备份”，避免在人工查看页面时额外制造备份记录。
+- 备份创建、备份文件复制、备份记录列表和操作日志由自动化测试覆盖。
+
+## 2026-06-16 第三版收尾回归验证
+
+范围：
+
+- 第三版实现总结文档。
+- Windows 局域网部署文档 V3 上线说明。
+- 全量自动化测试。
+- 生产构建。
+- 服务健康检查。
+- 管理端、提交图纸页、我的签名页浏览器冒烟。
+- 运维诊断、数据库备份、CSV 报表接口验证。
+
+文档更新：
+
+- 新增 `docs/v3-implementation-summary.md`。
+- 更新 `docs/deploy-windows-lan.md`，补充：
+  - 第三版上线检查。
+  - 网页提交图纸。
+  - 签名配置。
+  - 自动签名。
+  - 打印归档。
+  - 运维追溯。
+  - 备份恢复。
+  - 常见问题。
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  30 passed (30)
+Tests       124 passed (124)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built in 1.07s
+```
+
+服务健康：
+
+```powershell
+GET http://127.0.0.1:8080/health
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+当前监听：
+
+```text
+0.0.0.0:8080
+```
+
+当前服务进程：
+
+```text
+node.exe ...node_modules\tsx...
+```
+
+浏览器冒烟：
+
+- 打开 `http://127.0.0.1:8080/#/settings`。
+- 当前为管理员登录态。
+- “运维追溯”显示：
+  - 系统健康诊断。
+  - 数据库可读写。
+  - 监听根目录。
+  - 标准目录 `5/5`。
+  - 写入权限 `5/5`。
+  - 数据库备份。
+  - 签名配置。
+  - 追溯报表。
+  - 操作日志。
+- 打开 `#/submit`，页面显示“提交图纸”和 PDF 上传相关控件。
+- 打开 `#/signature`，页面显示“我的签名”和上传/手写相关控件。
+- 浏览器控制台无 error。
+
+运维接口验证：
+
+```powershell
+POST /api/auth/login
+GET /api/system/diagnostics
+POST /api/system/backup
+GET /api/reports/approvals.csv
+```
+
+结果：
+
+```json
+{
+  "diagnosticsStatus": "ok",
+  "backupStatus": "completed",
+  "backupPath": "G:\\Personal documents\\code\\PDF审批\\backups\\pdf-approval-20260616-205212",
+  "csvStatus": 200,
+  "csvContentType": "text/csv; charset=utf-8",
+  "csvFirstLine": "审批单ID,项目,零件,版本,状态,提交人,提交时间,主管状态,主管时间,工艺状态,工艺时间,签名状态,签后文件,原始哈希,签后哈希,归档时间"
+}
+```
+
+未做的现场项：
+
+- 未用真实机械图纸完成一次人工端到端签审。
+- 未现场确认三方签名在真实图框中的最终视觉位置。
+- 未连接真实 SMTP 向外部邮箱发送通知。
+- 未在真实坚果云同步目录中做多人并发试运行。
+
+这些项目需要在正式上线前由管理员按 `docs/deploy-windows-lan.md` 的第三版上线检查执行。
+
+## 2026-06-16 第三版签名位置补录验证
+
+范围：
+
+- 新增审批详情页签名位置加载、编辑、重置和保存入口。
+- 新增审批单签名位置查询和保存 API。
+- 目录监听提交的审批单可由设计师或管理员后补签名框。
+- 已通过双审的审批单在保存签名框后会立即尝试生成签后 PDF。
+- 更新第三版实现总结和 Windows 局域网部署说明。
+
+回归测试先确认红灯：
+
+```powershell
+npm test -- src/server/routes/approvals.test.ts
+```
+
+结果：新增场景 `generates a signed PDF after placements are saved on an already approved approval` 先失败，返回 `pending` 而不是 `generated`。
+
+局部验证：
+
+```powershell
+npm test -- src/client/pages/approvalDetailLogic.test.ts src/server/routes/approvals.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       26 passed (26)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  31 passed (31)
+Tests       132 passed (132)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built in 1.05s
+```
+
+服务重启与健康检查：
+
+```powershell
+POST /api/system/restart -> {"restarting":true}
+GET  /health -> HEALTH_OK
+```
+
+浏览器冒烟：
+
+- 打开 `http://127.0.0.1:8080/#/approvals/1`。
+- 审批详情页正常渲染，标题为 `PDF 图纸审批`。
+- 当前本机数据库没有 `placement_required` 记录，因此未额外创建业务数据。
+- 浏览器控制台 error 数量为 0。
+
+## 2026-06-17 权限拆分、提交预览滚动和打印角色调整验证
+
+范围：
+
+- 按角色拆分前端导航和后端接口权限。
+- 设计师不再显示“待我审核”，主管/工艺不再显示“提交图纸”。
+- 打印归档改为设计师或管理员执行。
+- 新增和修改用户时不再允许选择 `printer`，历史 `printer` 仅兼容旧数据。
+- 提交页 PDF 预览容器改为可滚动，避免上传后预览超出屏幕看不全。
+- 签名框最小宽高和标签字号下调，支持更小位置框。
+
+局部回归：
+
+```powershell
+npm test -- src/client/roleAccess.test.ts src/client/widgets/SignaturePlacementEditor.test.ts src/server/routes/approvals.test.ts src/server/routes/users.test.ts
+```
+
+结果：
+
+```text
+Test Files  4 passed (4)
+Tests       33 passed (33)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  33 passed (33)
+Tests       141 passed (141)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built in 1.37s
+```
+
+服务重启与健康检查：
+
+```powershell
+npm run dev
+GET /health -> {"ok":true}
+```
+
+运行日志显示：
+
+```text
+PDF approval watcher active: G:\Personal documents\code\PDF审批\test
+PDF approval server listening on http://0.0.0.0:8080
+```
+
+浏览器冒烟：
+
+- 打开 `http://127.0.0.1:8080/#/approvals`，当前管理员会话正常渲染。
+- 打开 `#/submit`，页面正常显示“提交图纸”。
+- 已加载样式确认 `.placement-stage` 为 `overflow: auto`。
+- 已加载样式确认 `.signature-placement-layer` 不拦截空白区滚动，`.signature-box` 自身仍可拖拽。
+- 已加载样式确认签名框最小尺寸为 `18px x 14px`，标签字号为 `9px`。
+
+未覆盖项：
+
+- 本次未重新上传真实机械图纸做人工端到端签审。
+- 未使用账号密码重新登录所有角色逐个截图确认；角色权限由新增自动化测试覆盖。
+
+## 2026-06-17 第三版缺口补齐验证
+
+范围：
+
+- 打印归档时移动签后 PDF 到 `05-已打印归档` 并更新 `signed_file_path`。
+- CSV 追溯报表增加“最近问题/评论摘要”字段。
+- 系统诊断增加服务启动时间和服务日志可读状态。
+- PDF 签名框增加多页 PDF 的页码选择能力。
+- 前端兼容旧诊断响应：服务未重启时，旧后端未返回 `service/logs` 也不会导致运维追溯页白屏。
+
+红灯验证：
+
+```powershell
+npm test -- src/server/routes/approvals.test.ts
+npm test -- src/server/routes/reports.test.ts src/server/services/diagnostics.test.ts src/client/widgets/SignaturePlacementEditor.test.ts
+npm test -- src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：新增用例先失败，分别暴露签后 PDF 未归档、CSV 缺少摘要列、诊断缺少日志/启动时间字段、签名框缺少页码切换函数。
+
+局部回归：
+
+```powershell
+npm test -- src/server/routes/approvals.test.ts
+npm test -- src/server/routes/reports.test.ts src/server/services/diagnostics.test.ts src/client/widgets/SignaturePlacementEditor.test.ts
+npm test -- src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：
+
+```text
+Test Files  5 passed (5)
+Tests       44 passed (44)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  40 passed (40)
+Tests       173 passed (173)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+服务重启与浏览器烟测：
+
+```powershell
+POST /api/system/restart -> {"restarting":true}
+GET  /health -> HEALTH_OK
+```
+
+浏览器验证：
+
+- 打开 `http://127.0.0.1:8080/#/submit`，提交图纸页正常渲染。
+- 打开 `#/settings` 并切换到“运维追溯”，页面显示系统健康诊断。
+- 运维诊断卡片显示数据库、监听根目录、标准目录、写入权限、服务启动、服务日志。
+- 服务重启后显示服务启动时间，服务日志显示 `2/2`。
+- 刷新后的浏览器控制台无新增 error。
+
+仍需现场验证：
+
+- 用真实机械图纸确认三方签名视觉位置。
+- 在真实坚果云同步目录做上传、审核、签名、打印归档完整试运行。
+
+## 2026-06-17 V4.1 签名模板验证
+
+范围：
+
+- 新增签名模板表、仓库和 API。
+- 审批详情页支持将当前设计、主管、工艺三类签名框保存为模板。
+- 提交图纸页支持选择并套用签名模板。
+- 系统管理页增加签名模板管理表，可维护模板名称、适用项目并删除模板。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/server/routes/approvals.test.ts
+npm test -- --run src/client/api.test.ts src/client/pages/submitDrawingLayout.test.ts src/client/pages/approvalDetailLogic.test.ts
+npm test -- --run src/server/routes/signatureTemplates.test.ts
+```
+
+结果：新增用例先失败，分别暴露审批详情另存模板接口缺失、前端模板 API/套用逻辑缺失、管理端无法列出全部项目模板。
+
+阶段聚焦测试：
+
+```powershell
+npm test -- --run src/server/repositories/signatureTemplates.test.ts src/server/routes/signatureTemplates.test.ts src/server/routes/approvals.test.ts src/client/pages/submitDrawingLayout.test.ts src/client/pages/approvalDetailLogic.test.ts
+```
+
+结果：
+
+```text
+Test Files  5 passed (5)
+Tests       61 passed (61)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  44 passed (44)
+Tests       197 passed (197)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+仍需现场验证：
+
+- 在真实图纸详情页保存一个常用图框模板。
+- 在提交页套用该模板后检查 PDF 预览中的三类签名框位置。
+
+## 2026-06-17 V4.2 批量上传验证
+
+范围：
+
+- 新增批量提交表、仓库和接口。
+- 提交图纸页支持一次选择多个 PDF。
+- 批量上传后每张图纸保留独立签名框位置。
+- 签名模板可批量套用为初始位置，也可只套用到当前图纸。
+- 批量提交返回逐项成功/失败结果，单项失败不阻塞其它有效图纸。
+
+阶段聚焦测试：
+
+```powershell
+npm test -- --run src/server/repositories/batchSubmissions.test.ts src/server/routes/submissions.test.ts src/client/pages/submitDrawingLayout.test.ts
+```
+
+结果：
+
+```text
+Test Files  3 passed (3)
+Tests       21 passed (21)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  45 passed (45)
+Tests       208 passed (208)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+仍需现场验证：
+
+- 选择多张真实图纸后逐张检查签名框位置是否独立保存。
+- 用真实坚果云同步目录确认批量提交后文件进入 `02-审批中\项目名\`。
+
+## 2026-06-17 V4.3 批量签后 PDF 处理验证
+
+范围：
+
+- 新增批量重新生成签后 PDF 接口。
+- 新增批量标记打印归档接口。
+- 批量操作返回逐项成功/失败结果。
+- 设计师和管理员可批量处理，主管和工艺不可执行批量签后处理。
+- “全部图纸”页增加批量重新生成签后 PDF、批量标记打印归档和逐项结果展示。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/server/routes/approvals.test.ts
+npm test -- --run src/client/pages/approvalListLogic.test.ts
+```
+
+结果：新增用例先失败，分别暴露批量审批后处理接口缺失、前端批量候选规则函数缺失。
+
+阶段聚焦测试：
+
+```powershell
+npm test -- --run src/server/routes/approvals.test.ts src/client/pages/approvalListLogic.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       46 passed (46)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  45 passed (45)
+Tests       213 passed (213)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+浏览器烟测：
+
+- 打开 `http://127.0.0.1:8080/#/approvals`。
+- 退出旧登录态后使用管理员重新登录。
+- “全部图纸”页面正常渲染，浏览器控制台无 error。
+- 当前运行库无图纸记录，批量操作栏未出现；批量按钮显示和可用性由自动化测试覆盖，真实数据下仍需现场试跑。
+
+仍需现场验证：
+
+- 在“全部图纸”筛选“已通过待打印”，勾选多张图纸批量重新生成签后 PDF。
+- 对包含签名失败或未生成签后 PDF 的图纸执行批量归档，确认失败项逐项提示。
+
+## 2026-06-18 V4.4 运维风险看板验证
+
+范围：
+
+- 新增系统风险识别服务和管理员风险接口。
+- 系统管理页“运维追溯”新增风险看板。
+- 风险项支持跳转到异常图纸筛选入口。
+- `#/approvals?status=...` 与 `#/approvals?signatureStatus=...` 路由可正确进入全部图纸页。
+
+阶段聚焦测试：
+
+```powershell
+npm test -- --run src/server/services/systemRisks.test.ts src/server/routes/system.test.ts src/server/routes/approvals.test.ts src/client/pages/settingsDiagnostics.test.ts src/client/pages/approvalListLogic.test.ts src/client/appRouting.test.ts
+```
+
+结果：
+
+```text
+Test Files  6 passed (6)
+Tests       69 passed (69)
+```
+
+浏览器烟测：
+
+- `POST /api/system/restart -> {"restarting":true}`。
+- `GET /health -> {"ok":true}`。
+- 打开 `http://127.0.0.1:8080/#/settings` 并切换到“运维追溯”。
+- 页面显示“风险看板”和“系统健康诊断”。
+- 打开 `#/approvals?status=file_missing` 可进入“全部图纸”。
+- 浏览器控制台无 error。
+
+## 2026-06-18 V4.5 轻量版本追溯验证
+
+范围：
+
+- 审批仓库新增同项目、同零件版本查询。
+- 审批详情返回 `relatedVersions`，详情页“其它版本”浮窗排除当前图纸。
+- 提交页上传解析和项目/零件变化后都能刷新“同零件已有版本”提醒。
+- 追溯 CSV 增加“同零件版本数”字段。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/server/repositories/approvals.test.ts src/server/routes/approvals.test.ts src/server/routes/submissions.test.ts src/server/routes/reports.test.ts src/client/pages/approvalDetailLogic.test.ts src/client/pages/submitDrawingLayout.test.ts
+npm test -- --run src/server/routes/submissions.test.ts src/client/api.test.ts src/client/pages/submitDrawingLayout.test.ts
+```
+
+结果：新增用例先失败，分别暴露 `listVersions` 缺失、详情缺少 `relatedVersions`、上传预览缺少 `existingVersions`、CSV 缺少版本数字段、提交页缺少项目变更后的版本提醒刷新。
+
+阶段聚焦测试：
+
+```powershell
+npm test -- --run src/server/repositories/approvals.test.ts src/server/routes/approvals.test.ts src/server/routes/submissions.test.ts src/server/routes/reports.test.ts src/client/api.test.ts src/client/pages/approvalDetailLogic.test.ts src/client/pages/submitDrawingLayout.test.ts
+```
+
+结果：
+
+```text
+Test Files  7 passed (7)
+Tests       90 passed (90)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  47 passed (47)
+Tests       234 passed (234)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+服务重启与浏览器烟测：
+
+```powershell
+POST /api/system/restart -> {"restarting":true}
+GET  /health -> {"ok":true}
+```
+
+浏览器验证：
+
+- 打开 `http://127.0.0.1:8080/#/submit`，提交页正常渲染，包含 PDF 文件入口和签名模板入口。
+- 打开 `#/approvals?status=file_missing`，进入“全部图纸”，确认带查询参数的路由正常。
+- 打开 `#/settings` 并切换“运维追溯”，风险看板和系统健康诊断正常渲染。
+- 浏览器控制台无 error。
+
+仍需现场验证：
+
+- 用真实同项目、同零件多版本图纸确认提交页提醒和详情页“其它版本”入口符合设计师习惯。
+- 导出 CSV 后用现场常用表格软件打开，确认“同零件版本数”列显示正常。
+
+## 2026-06-18 V4.6 文档与发布回归验证
+
+范围：
+
+- 新增第四版实现总结。
+- 更新 Windows 局域网部署说明，覆盖第四版上线检查、签名模板、批量上传、批量签后 PDF 处理、风险看板和轻量版本追溯。
+- 执行第四版收尾发布回归。
+
+文档更新：
+
+```text
+docs/v4-implementation-summary.md
+docs/deploy-windows-lan.md
+```
+
+文档检索：
+
+```powershell
+rg -n "V4|第四版|签名框模板|批量上传|风险看板" docs
+```
+
+结果：可检索到新增 V4 总结、部署说明、V4.1-V4.5 验证记录和 V4 方案文档。
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  47 passed (47)
+Tests       234 passed (234)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+服务重启与健康检查：
+
+```powershell
+POST /api/system/restart -> {"restarting":true}
+GET  /health -> {"ok":true}
+```
+
+浏览器烟测：
+
+- 登录管理员账号后打开 `http://127.0.0.1:8080/#/submit`。
+- 提交页显示“提交图纸”“PDF 文件”“签名模板”“套用模板”。
+- 打开 `#/approvals`，进入“全部图纸”。
+- 打开 `#/settings`，确认“签名模板”和“运维追溯”入口存在。
+- 切换到“签名模板”，页面正常渲染。
+- 切换到“运维追溯”，页面显示“风险看板”“系统健康诊断”“数据库备份”。
+- 浏览器控制台无 error。
+
+仍需现场验证：
+
+- 用真实坚果云同步目录执行多 PDF 批量上传，确认文件同步和服务器目录写入符合现场网络条件。
+- 用真实机械图纸逐张检查模板套用后的签名视觉位置，尤其是不同图框和多页 PDF。
+- 在真实已通过待打印数据上执行批量重新生成签后 PDF 和批量打印归档，确认逐项结果提示符合现场操作习惯。
+
+## 2026-06-18 V4.7 批量提交历史追溯验证
+
+范围：
+
+- 系统管理页“运维追溯”新增“批量提交记录”面板。
+- 面板展示最近批量上传批次的项目、批次号、状态、成功数、失败数、总数和逐项结果。
+- 批量提交逐项结果显示文件名、处理状态、签名框来源和失败原因。
+- 更新第四版总结和 Windows 局域网部署说明。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：新增用例先失败，暴露 `batchSubmissionStatusLabel`、`placementStateLabel` 和 `normalizeBatchSubmissions` 尚未实现。
+
+聚焦测试：
+
+```powershell
+npm test -- --run src/client/api.test.ts src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       10 passed (10)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+服务重启与健康检查：
+
+```powershell
+POST /api/system/restart -> {"restarting":true}
+GET  /health -> {"ok":true}
+```
+
+浏览器烟测：
+
+- 登录管理员账号后打开 `http://127.0.0.1:8080/#/settings`。
+- 切换到“运维追溯”。
+- 页面显示“风险看板”和“批量提交记录”。
+- 当前没有批量记录时显示“暂无批量提交记录”。
+- 浏览器控制台无 error。
+
+仍需现场验证：
+
+- 用真实多 PDF 批量提交生成一条批量记录，确认成功项、失败项和错误原因符合现场操作习惯。
+
+## 2026-06-18 V5.1 托盘摘要接口与 Tauri 前置检查
+
+范围：
+
+- 新增托盘助手摘要服务 `getTraySummary`。
+- 新增 `/api/tray/summary`，供 Tauri 托盘助手轮询当前账号待办和管理员风险摘要。
+- 新增 `scripts/check-tauri-prereqs.ps1`，用于检查 Tauri Windows 构建前置环境。
+- 更新 Windows 局域网部署说明中的 V5 托盘助手前置条件。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/server/services/traySummary.test.ts
+```
+
+结果：先失败，原因是 `src/server/services/traySummary.ts` 不存在。
+
+```powershell
+npm test -- --run src/server/routes/tray.test.ts
+```
+
+结果：先失败，请求 `/api/tray/summary` 落到前端静态回退，未返回托盘摘要数据。
+
+聚焦测试：
+
+```powershell
+npm test -- --run src/server/services/traySummary.test.ts src/server/routes/tray.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       5 passed (5)
+```
+
+全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  50 passed (50)
+Tests       248 passed (248)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+Tauri 前置检查：
+
+```powershell
+.\scripts\check-tauri-prereqs.ps1
+```
+
+结果：
+
+```text
+Node v24.15.0
+npm 11.12.1
+rustc 1.96.0
+cargo 1.96.0
+stable-x86_64-pc-windows-msvc
+x86_64-pc-windows-msvc
+WebView2 found
+cl.exe missing
+vswhere.exe missing
+```
+
+结论：
+
+- 后端托盘摘要接口第一批测试通过。
+- Tauri 构建前还需要补齐或确认 Microsoft C++ Build Tools。
+
+## 2026-06-18 V5.2 Tauri 子应用骨架与登录基础逻辑
+
+范围：
+
+- 新增 `apps/tray-helper` Tauri v2 子应用骨架。
+- 根项目新增 `tray:dev`、`tray:build`、`tray:test` 脚本。
+- 子应用新增设置窗口初始页面。
+- 新增托盘端纯逻辑模块：
+  - `linkBuilder`
+  - `notificationState`
+  - `roles`
+- 新增托盘端 API 客户端：
+  - 登录 `/api/auth/login`
+  - 摘要 `/api/tray/summary`
+  - 健康检查 `/health`
+  - 401 转换为 `auth_expired`
+- 新增本机登录状态存储封装 `authStore`。
+
+Tauri 依赖版本确认：
+
+```text
+@tauri-apps/cli 2.11.2
+@tauri-apps/api 2.11.1
+@tauri-apps/plugin-notification 2.3.3
+@tauri-apps/plugin-autostart 2.5.1
+@tauri-apps/plugin-store 2.4.3
+@tauri-apps/plugin-opener 2.5.4
+```
+
+红灯验证：
+
+```powershell
+npm run tray:test
+```
+
+结果：
+
+- 纯逻辑测试先失败，原因是 `linkBuilder.ts`、`notificationState.ts`、`roles.ts` 不存在。
+- API 客户端测试先失败，原因是 `apiClient.ts` 不存在。
+- 登录存储测试先失败，原因是 `authStore.ts` 不存在。
+
+托盘端测试：
+
+```powershell
+npm run tray:test
+```
+
+结果：
+
+```text
+Test Files  5 passed (5)
+Tests       8 passed (8)
+```
+
+托盘端前端构建：
+
+```powershell
+npm --prefix apps/tray-helper run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+根项目全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  50 passed (50)
+Tests       248 passed (248)
+```
+
+根项目生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+未执行：
+
+- `npm run tray:dev`
+- `npm run tray:build`
+
+原因：当前 PowerShell 中仍未确认 Microsoft C++ Build Tools，`cl.exe` 和 `vswhere.exe` 未检测到。需补齐 MSVC 环境后再进入 Tauri Rust 编译和托盘运行验证。
+
+## 2026-06-18 V5.3 托盘轮询、通知、菜单和管理员动作
+
+范围：
+
+- 托盘端新增轮询状态机：
+  - 在线轮询间隔 30 秒
+  - 离线/错误退避 60 秒
+  - 未登录和登录过期停止认证轮询
+  - 401 自动清理本地登录态
+- 托盘端新增系统通知逻辑：
+  - 新待审图纸按审批 ID 去重
+  - 已提醒 ID 本地持久化，避免重启后重复提醒
+  - 单张图纸打开明细，多张图纸打开待办列表
+  - 通知携带 `open-approval` 动作和目标 URL，供 Windows 通知点击/打开动作回到审批页面
+- 托盘端新增角色化菜单模型：
+  - 主管/工艺显示待审核入口
+  - 设计师显示提交图纸和我的签名入口
+  - 管理员显示系统管理、服务日志、立即扫描、重启服务
+  - 非管理员不显示扫描和重启动作
+- 托盘端接入 Tauri：
+  - 创建/更新系统托盘菜单
+  - 通过系统浏览器打开审批工作台链接
+  - 系统通知点击回到对应 URL
+  - 设置窗口关闭时隐藏，托盘菜单可重新打开
+  - 登录成功后刷新托盘状态并隐藏设置窗口
+  - 已登录启动时默认隐藏设置窗口
+- 后端已有管理员接口被托盘复用：
+  - `POST /api/system/scan-now`
+  - `POST /api/system/restart`
+- Web 设置页支持 `#/settings?tab=logs` 和 `#/settings?tab=operations`，便于托盘直达服务日志/运维追溯。
+- Rust/Tauri 配置更新：
+  - 启用 `tray-icon`
+  - 注册 notification、opener、store、autostart 插件
+  - 增加 Tauri capability 权限文件
+  - 增加 `quit_app` 命令
+
+红灯验证：
+
+```powershell
+npm run tray:test
+npm test -- --run src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：
+
+- 托盘测试先失败，原因是 `notifications.ts`、`poller.ts`、`trayMenu.ts` 不存在，且 `apiClient`/`authStore` 缺少新增方法。
+- 设置页测试先失败，原因是 `settingsTabFromHash` 不存在。
+
+托盘端测试：
+
+```powershell
+npm run tray:test
+```
+
+结果：
+
+```text
+Test Files  8 passed (8)
+Tests       20 passed (20)
+```
+
+托盘端前端构建：
+
+```powershell
+npm --prefix apps/tray-helper run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：Vite 报告 `@tauri-apps/api/core.js` 同时被静态和动态导入，属于分包提示，不影响构建结果。
+
+Tauri CLI 环境检查：
+
+```powershell
+npm --prefix apps/tray-helper run tauri -- info
+.\scripts\check-tauri-prereqs.ps1
+```
+
+结果：
+
+```text
+WebView2 found
+rustc 1.96.0
+cargo 1.96.0
+Rust toolchain stable-x86_64-pc-windows-msvc
+MSVC cl.exe missing
+vswhere.exe missing
+```
+
+Rust 检查：
+
+```powershell
+cargo check
+```
+
+结果：
+
+- 第一次暴露脚手架问题：`Cargo.toml` 声明了 lib target，但没有 `src/lib.rs`。已删除多余 lib target。
+- 之后 `cargo check` 拉取 crates.io 失败，错误指向 `index.crates.io` 通过 `127.0.0.1` 代理连接失败。
+- 覆盖代理环境变量后再次执行，5 分钟未完成，判断为当前 Cargo 网络/镜像环境不可用。
+
+根项目全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  50 passed (50)
+Tests       249 passed (249)
+```
+
+根项目生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+未执行：
+
+- `npm run tray:dev`
+- `npm run tray:build`
+
+原因：
+
+- 当前机器缺 Microsoft C++ Build Tools / MSVC，`cl.exe` 和 `vswhere.exe` 均未检测到。
+- 当前 Cargo 依赖下载环境不可用，Rust 依赖尚不能稳定拉取。
+
+下一步进入 Tauri 真机运行前，需要先完成：
+
+1. 安装 Visual Studio Build Tools，勾选 Desktop development with C++。
+2. 修复 Cargo 访问 crates.io 的代理/镜像配置，或配置可用内网 Rust crate 镜像。
+3. 重新执行 `cargo check`、`npm run tray:dev`、`npm run tray:build` 和托盘通知手工冒烟。
+
+## 2026-06-18 V5.4 托盘打包元数据与上线文档
+
+范围：
+
+- 新增托盘助手图标源文件：`apps/tray-helper/src-tauri/app-icon.svg`。
+- 使用 Tauri CLI 生成默认图标集：`apps/tray-helper/src-tauri/icons`。
+- 更新 `tauri.conf.json`：
+  - 产品名：`PDF 图纸审批托盘助手`
+  - 应用标识：`local.pdf-approval.tray-helper`
+  - 托盘图标：`icons/32x32.png`
+  - Windows 打包目标：`nsis`、`msi`
+  - 安装包图标：`icons/icon.ico`
+  - 发布者：`PDF Approval Team`
+- 新增用户指南：`docs/tray-helper-user-guide.md`。
+- 新增管理员指南：`docs/tray-helper-admin-guide.md`。
+- 新增发布验收清单：`docs/tray-helper-verification.md`。
+- 更新 Windows 局域网部署文档，加入托盘助手文档索引、构建命令和产物路径。
+
+图标生成：
+
+```powershell
+npm --prefix apps/tray-helper run tauri -- icon src-tauri/app-icon.svg
+```
+
+结果：
+
+```text
+icon.ico, icon.icns, icon.png, 32x32.png, 64x64.png, 128x128.png and platform icon sets created
+```
+
+Tauri 配置检查：
+
+```powershell
+npm --prefix apps/tray-helper run tauri -- info
+```
+
+结果：
+
+```text
+WebView2 found
+Rust stable-x86_64-pc-windows-msvc found
+Tauri JS 2.11.2 / API 2.11.1 detected
+Plugins detected: autostart, notification, store, opener
+MSVC Build Tools missing
+```
+
+托盘端测试：
+
+```powershell
+npm run tray:test
+```
+
+结果：
+
+```text
+Test Files  8 passed (8)
+Tests       20 passed (20)
+```
+
+托盘端前端构建：
+
+```powershell
+npm --prefix apps/tray-helper run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+根项目全量测试：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  50 passed (50)
+Tests       249 passed (249)
+```
+
+根项目生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+Tauri 安装包构建：
+
+```powershell
+npm run tray:build
+```
+
+结果：
+
+- 命令运行 5 分钟后超时。
+- 未生成 `apps/tray-helper/src-tauri/target/release/bundle`。
+- 超时后确认存在残留 `npm run tray:build`、`tauri build` 和 `cargo build --release` 进程，已停止这些构建进程。
+
+Cargo 离线检查：
+
+```powershell
+cargo check --offline
+```
+
+结果：
+
+```text
+error: no matching package named `winapi` found
+required by package `auto-launch v0.5.0`
+required by package `tauri-plugin-autostart v2.0.0`
+```
+
+结论：
+
+- V5.4 的打包元数据、图标资源和上线文档已完成。
+- 当前机器仍不能产出 Tauri Windows 安装包。
+- 阻塞项仍是：
+  - 缺 Visual Studio Build Tools / MSVC。
+  - Cargo 本地缓存不完整，且当前 crates.io 网络/代理不可用。
+
+## 2026-06-18 V5.5 非 C 盘 Tauri 构建环境准备
+
+本节原本记录“把 Tauri 构建环境放到非 C 盘”的准备方案。该方案已被 V5.6 取代，不再作为当前实施路径。
+
+保留结论：
+
+- 当时没有执行真实 Rust 安装。
+- 当时没有执行 Visual Studio Build Tools 安装。
+- 当前机器仍未产出 Tauri Windows 安装包。
+- 后续以 V5.6 的“当前机器不安装工具链，安装包由外部构建机/CI 产出”为准。
+
+## 2026-06-18 V5.6 托盘助手外部构建模式
+
+用户最新约束：
+
+- 当前机器不要安装 Tauri 打包环境。
+- 不再继续 Rust、Visual Studio Build Tools 或专用工具链目录的本机安装路径。
+
+范围调整：
+
+- 删除会创建目录、下载或安装工具链的脚本：
+  - `scripts/use-tauri-build-env.ps1`
+  - `scripts/bootstrap-rust-non-c.ps1`
+  - `scripts/install-vs-buildtools-non-c.ps1`
+  - `scripts/build-tray-non-c.ps1`
+- 重写 `scripts/check-tauri-prereqs.ps1` 为只读检查脚本。
+- 新增 `scripts/build-tray-frontend-only.ps1`，只运行托盘单元测试和托盘前端构建。
+- 新增 `docs/tray-helper-external-build.md`，固化外部构建机/CI 产出 Windows 安装包的流程。
+- 更新 `docs/tray-helper-admin-guide.md`、`docs/tray-helper-verification.md`、`docs/deploy-windows-lan.md`，移除当前机器安装工具链的上线指引。
+
+当前机器允许执行的验证：
+
+```powershell
+npm test
+npm run build
+.\scripts\build-tray-frontend-only.ps1
+.\scripts\check-tauri-prereqs.ps1
+```
+
+当前机器不执行：
+
+```powershell
+npm run tray:build
+```
+
+除非后续明确允许在这台机器安装并使用 Tauri 打包环境。
+
+外部构建机负责执行：
+
+```powershell
+npm install --registry=https://registry.npmmirror.com
+npm --prefix apps/tray-helper install --registry=https://registry.npmmirror.com
+npm test
+npm run build
+npm run tray:test
+npm --prefix apps/tray-helper run build
+npm run tray:build
+```
+
+安装包产物路径：
+
+```text
+apps\tray-helper\src-tauri\target\release\bundle
+```
+
+本批验证结果：
+
+```powershell
+.\scripts\check-tauri-prereqs.ps1
+```
+
+结果：
+
+- Node `v24.15.0`、npm `11.12.1` 可用。
+- Rust `1.96.0`、Cargo `1.96.0`、`stable-x86_64-pc-windows-msvc` 可用。
+- WebView2 Runtime 存在。
+- `cl.exe` 缺失。
+- `vswhere.exe` 缺失。
+- 脚本只读执行，没有安装或下载工具链。
+
+```powershell
+.\scripts\build-tray-frontend-only.ps1
+```
+
+结果：
+
+- 托盘单元测试：8 个文件、20 个测试通过。
+- 托盘前端构建：`tsc && vite build` 通过。
+- 未执行 Rust 编译或 Tauri 安装包构建。
+
+```powershell
+npm test
+```
+
+结果：
+
+- 50 个测试文件通过。
+- 249 个测试通过。
+
+```powershell
+npm run build
+```
+
+结果：
+
+- `tsc && vite build` 通过。
+
+当前结论：
+
+- 当前机器上的 V5 Web、后端和托盘前端验证通过。
+- 当前机器仍不产出 Tauri Windows 安装包。
+- Tauri 安装包需按 `docs/tray-helper-external-build.md` 在外部构建机/CI 生成。
+
+## 2026-06-19 V5.7 Electron 客户端第一批
+
+用户方向调整：
+
+- V5 正式主线改为 Electron 客户端 + 局域网服务端。
+- Tauri 托盘助手保留为历史实验，不再作为正式客户端实施路径。
+
+本批范围：
+
+- 新增 Electron 方案设计与实施计划：
+  - `docs/plans/2026-06-19-electron-client-server-design.md`
+  - `docs/plans/2026-06-19-electron-client-server-implementation-plan.md`
+- 新增前端服务端地址配置：
+  - `src/client/clientConfig.ts`
+  - `src/client/pages/ServerConnectionPage.tsx`
+- 改造 API URL：
+  - Web 模式继续使用相对 `/api`。
+  - Electron 模式使用保存的 `http://服务器IP:8080`。
+  - 原始 PDF、签后 PDF、签名图片、CSV 下载都走统一 URL 拼接。
+- 新增 Electron 子应用：
+  - `apps/desktop-client/main.cjs`
+  - `apps/desktop-client/preload.cjs`
+  - `apps/desktop-client/desktopConfig.cjs`
+  - `apps/desktop-client/package.json`
+- 根项目新增脚本：
+  - `npm run desktop:test`
+  - `npm run desktop:build`
+  - `npm run desktop:dev`
+- 安装 Electron dev dependency。
+
+已执行验证：
+
+```powershell
+npm run desktop:test
+```
+
+结果：
+
+- `apps/desktop-client` 2 个测试文件通过。
+- 7 个测试通过。
+
+```powershell
+npm test
+```
+
+结果：
+
+- 52 个测试文件通过。
+- 260 个测试通过。
+
+```powershell
+npm run build
+```
+
+结果：
+
+- `tsc && vite build` 通过。
+- `dist/client` 生产前端已生成。
+
+```powershell
+npm run desktop:build
+```
+
+结果：
+
+- 先执行 `npm run build` 通过。
+- 再执行 `npm run desktop:test` 通过。
+
+Electron 二进制处理：
+
+```powershell
+$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'
+node node_modules\electron\install.js
+node_modules\.bin\electron.cmd --version
+```
+
+结果：
+
+- Electron 二进制已下载到 `node_modules\electron\dist\electron.exe`。
+- Electron 版本：`v42.4.1`。
+
+短暂启动冒烟：
+
+```powershell
+$electron = (Resolve-Path '.\node_modules\electron\dist\electron.exe').Path
+$proc = Start-Process -FilePath $electron -ArgumentList 'apps/desktop-client' -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 5
+$exited = $proc.HasExited
+if (-not $exited) { Stop-Process -Id $proc.Id -Force }
+```
+
+结果：
+
+- Electron 主进程启动后 5 秒内未异常退出。
+- 测试结束后已停止进程。
+- 检查无本次测试残留 Electron 进程。
+
+当前限制：
+
+- 本批已完成开发启动级 Electron 客户端，不包含安装包打包。
+- 安装包制作可在后续引入 `electron-builder` 或同类工具。
+
+## 2026-06-19 V5.8 Electron 便携客户端打包
+
+本批范围：
+
+- 新增便携打包脚本：`scripts/desktopPackage.mjs`。
+- 新增打包布局测试：`apps/desktop-client/packageLayout.test.mjs`。
+- 根项目新增命令：`npm run desktop:package`。
+- 更新 Electron 客户端用户和管理员文档。
+
+输出形态：
+
+```text
+dist\desktop-client\PDF图纸审批客户端
+```
+
+启动文件：
+
+```text
+dist\desktop-client\PDF图纸审批客户端\PDF图纸审批客户端.exe
+```
+
+验证：
+
+```powershell
+npm run desktop:test
+```
+
+结果：
+
+- `apps/desktop-client` 3 个测试文件通过。
+- 8 个测试通过。
+
+```powershell
+npm run desktop:package
+```
+
+结果：
+
+- `npm run build` 通过。
+- `npm run desktop:test` 通过。
+- 便携客户端目录生成成功。
+
+便携版短启动冒烟：
+
+```powershell
+.\dist\desktop-client\PDF图纸审批客户端\PDF图纸审批客户端.exe
+```
+
+结果：
+
+- 进程启动 5 秒内未异常退出。
+- 测试结束后已停止进程。
+- 检查无本次测试残留便携客户端进程。
+
+当前限制：
+
+- 便携版需要复制整个 `PDF图纸审批客户端` 文件夹，不能只复制 exe。
+- 还没有安装向导、开始菜单快捷方式和自动升级。
+
+## 2026-06-19 V5.9 服务端发布包
+
+本批范围：
+
+- 新增服务端发布包脚本：`scripts/serverPackage.mjs`。
+- 新增服务端包布局测试：`src/server/serverPackage.test.ts`。
+- 根项目新增命令：`npm run server:package`。
+- 更新部署说明和 Electron 管理员说明。
+
+输出形态：
+
+```text
+dist\server-package\PDF图纸审批服务端
+```
+
+包内包含：
+
+- `src/server` 服务端源码。
+- `dist/client` 网页备用入口。
+- `scripts/start-server.ps1`、`scripts/install-startup-task.ps1`、`scripts/backup-database.ps1`。
+- `data`、`backups`、`logs` 空目录。
+- 精简 `package.json`。
+- `部署说明.txt`。
+
+包内不包含：
+
+- `node_modules`。
+- Electron 运行时。
+- React/Vite/Electron 等前端或客户端开发依赖。
+- 根项目 `package-lock.json`。
+
+验证：
+
+```powershell
+npm run server:package
+```
+
+结果：
+
+- `npm run build` 通过。
+- `src/server/serverPackage.test.ts` 通过。
+- 服务端发布包目录生成成功。
+- 关键文件存在：`src/server/index.ts`、`dist/client/index.html`、`scripts/start-server.ps1`、`部署说明.txt`。
+- `node_modules` 和 `package-lock.json` 未复制。
+
+当前限制：
+
+- 服务端发布包目标电脑仍需安装 Node.js。
+- 首次部署需在包目录执行 `npm install --omit=dev`。
+
+## 2026-06-19 V5.10 服务端免 Node exe 打包
+
+范围：
+
+- 新增 Electron 服务端壳：`apps/server-exe`。
+- 新增服务端启动封装：`src/server/startServer.ts`。
+- 新增服务端 exe 打包脚本：`scripts/serverExePackage.mjs`。
+- 根项目新增命令：`npm run server:exe`。
+- 服务端 exe 默认把数据、备份和日志放在发布目录下：
+  - `data`
+  - `backups`
+  - `logs`
+- 服务端窗口显示本机地址、局域网地址、数据目录和日志目录。
+- 管理端服务日志读取 exe 包内 `logs\server.log` 和 `logs\server.err.log`。
+
+验证：
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE='1'
+.\node_modules\electron\dist\electron.exe -e "console.log(process.versions.node); console.log(typeof require('node:sqlite').DatabaseSync)"
+```
+
+结果：
+
+```text
+24.16.0
+function
+```
+
+说明 Electron 自带 Node 运行时支持当前后端使用的 `node:sqlite`。
+
+```powershell
+npm test -- --run src/server/serverExePackage.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       2 passed (2)
+```
+
+```powershell
+npm test -- --run src/server/startServer.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       1 passed (1)
+```
+
+覆盖：端口被占用时，启动函数会把 `EADDRINUSE` 交给 Electron 服务端窗口显示中文错误提示，而不是形成未处理异常。
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+npm run server:exe
+```
+
+结果：
+
+```text
+Server exe package created: dist\server-exe\PDF图纸审批服务端
+```
+
+输出：
+
+```text
+dist\server-exe\PDF图纸审批服务端\PDF图纸审批服务端.exe
+```
+
+服务端 exe 冒烟：
+
+```powershell
+$env:PORT = '18080'
+Start-Process -FilePath 'dist\server-exe\PDF图纸审批服务端\PDF图纸审批服务端.exe'
+Invoke-RestMethod http://127.0.0.1:18080/health
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+冒烟结束后已停止临时服务端进程，并清空发布目录内由冒烟生成的 `data`、`backups`、`logs` 临时内容。
+
+全量回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  55 passed (55)
+Tests       264 passed (264)
+```
+
+当前限制：
+
+- 免 Node 版仍需复制整个 `PDF图纸审批服务端` 文件夹，不能只复制 exe。
+- 当前先提供便携目录，不包含安装向导、开始菜单快捷方式或自动升级。
+
+## 2026-06-20 V5.11 服务端控制台与端口设置
+
+范围：
+
+- 服务端 exe 窗口从简单状态页调整为部署控制台：
+  - 服务状态。
+  - 当前端口。
+  - 本机地址。
+  - 局域网地址。
+  - 启动设置。
+  - 数据目录、备份目录、日志目录。
+- 新增 `server-config.json` 端口配置。
+- 服务端窗口支持：
+  - 保存端口。
+  - 保存并重启。
+  - 打开本机工作台。
+  - 打开局域网地址。
+  - 打开数据、备份、日志目录。
+- `PORT` 环境变量仍保留最高优先级，用于高级部署或临时覆盖。
+
+聚焦测试：
+
+```powershell
+npm test -- --run src/server/serverExeRuntimeConfig.test.ts src/server/serverExeConsoleView.test.ts src/server/serverExePackage.test.ts src/server/startServer.test.ts
+```
+
+结果：
+
+```text
+Test Files  4 passed (4)
+Tests       9 passed (9)
+```
+
+CJS 语法检查：
+
+```powershell
+node --check apps\server-exe\main.cjs
+node --check apps\server-exe\serverConsoleView.cjs
+node --check apps\server-exe\serverRuntimeConfig.cjs
+node --check apps\server-exe\preload.cjs
+```
+
+结果：全部通过。
+
+全量回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  57 passed (57)
+Tests       270 passed (270)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+服务端 exe 打包：
+
+```powershell
+npm run server:exe
+```
+
+结果：
+
+```text
+Server exe package created: dist\server-exe\PDF图纸审批服务端
+```
+
+配置端口冒烟：
+
+```powershell
+Set-Content dist\server-exe\PDF图纸审批服务端\server-config.json '{"port":18082}'
+Start-Process dist\server-exe\PDF图纸审批服务端\PDF图纸审批服务端.exe
+Invoke-RestMethod http://127.0.0.1:18082/health
+```
+
+结果：
+
+```json
+{"ok":true}
+```
+
+冒烟结束后已停止临时服务端进程，并清空发布目录内由冒烟生成的 `server-config.json`、`data`、`backups`、`logs` 临时内容。
+
+说明：
+
+- 本机未安装 Playwright，尝试使用 Electron 自身生成截图未稳定产出文件，未把截图作为最终验收依据。
+- UI 验证以 `serverExeConsoleView.test.ts` 的静态渲染断言、CJS 语法检查和服务端 exe 启动冒烟为准。
+
+## 2026-06-20 V5.12 Windows NSIS 安装包
+
+范围：
+
+- 新增 `electron-builder` 作为安装包生成工具。
+- 新增 `scripts/windowsInstallers.mjs`，基于已有便携客户端和服务端 exe 目录生成 NSIS 安装包。
+- 新增安装包配置测试 `src/server/windowsInstallers.test.ts`。
+- 根项目新增命令：
+  - `npm run installer:test`
+  - `npm run installer:package`
+- 安装包缓存固定在项目目录 `.cache\electron-builder`，避免把构建缓存放到 C 盘。
+- 服务端和客户端仍保持分离部署：
+  - 服务端安装到审批服务器电脑。
+  - 客户端安装到设计师、主管、工艺等使用者电脑。
+
+依赖安装：
+
+```powershell
+$env:npm_config_cache=(Join-Path (Get-Location) '.cache\npm')
+$env:ELECTRON_BUILDER_CACHE=(Join-Path (Get-Location) '.cache\electron-builder')
+npm install -D electron-builder --registry=https://registry.npmmirror.com
+```
+
+聚焦测试：
+
+```powershell
+npm test -- --run src/server/windowsInstallers.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       3 passed (3)
+```
+
+安装包生成：
+
+```powershell
+$env:ELECTRON_BUILDER_CACHE=(Join-Path (Get-Location) '.cache\electron-builder')
+npm run installer:package
+```
+
+输出：
+
+```text
+dist\installers\client\PDF图纸审批客户端-安装包-0.1.0.exe
+dist\installers\server\PDF图纸审批服务端-安装包-0.1.0.exe
+```
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  58 passed (58)
+Tests       273 passed (273)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+$env:ELECTRON_BUILDER_CACHE=(Join-Path (Get-Location) '.cache\electron-builder')
+npm run installer:package
+```
+
+结果：
+
+```text
+Desktop client package created: dist\desktop-client\PDF图纸审批客户端
+Server exe package created: dist\server-exe\PDF图纸审批服务端
+Client installer output: dist\installers\client
+Server installer output: dist\installers\server
+```
+
+产物检查：
+
+```text
+dist\installers\client\PDF图纸审批客户端-安装包-0.1.0.exe   102246243 bytes
+dist\installers\server\PDF图纸审批服务端-安装包-0.1.0.exe   102790298 bytes
+```
+
+签名检查：
+
+```powershell
+Get-AuthenticodeSignature dist\installers\client\PDF图纸审批客户端-安装包-0.1.0.exe
+Get-AuthenticodeSignature dist\installers\server\PDF图纸审批服务端-安装包-0.1.0.exe
+```
+
+结果：两个安装包状态均为 `NotSigned`。
+
+当前限制：
+
+- 安装包为 NSIS exe，不是 MSI。
+- 服务端安装包安装的是可双击启动的服务端程序，不注册 Windows Service。
+- 当前安装包未配置企业代码签名；首次运行可能出现 Windows SmartScreen 提示。
+- 当前未配置正式产品图标，Electron Builder 会使用默认图标。
+
+## 2026-06-22 V5.13 全量检查、角色向导与旧打印角色移除
+
+范围：
+
+- 登录后新增按角色区分的流程向导，覆盖设计师、主管、工艺、管理员。
+- 当前业务流程移除旧 `printer` 打印角色：默认账号不再创建打印账号，用户管理不再暴露打印角色，旧打印账号无法登录或出现在用户列表。
+- 数据库 `users.role` 的历史 CHECK 暂不破坏性迁移，保留 `printer` 仅用于旧数据兼容和回归测试。
+- 批量上传时的已有版本查询改为按项目和零件名去重，并增加短防抖，避免一次上传多张同零件图纸时重复请求。
+- 全部图纸列表增加旧请求保护，切换筛选时旧响应不会覆盖新列表。
+- 角色流程向导步骤标签使用标准控件圆角，避免重新引入胶囊形 `999px` 圆角。
+- 升级 `nodemailer` 到 `^9.0.1`，处理生产依赖安全审计问题。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/pages/submitDrawingLayout.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       11 passed (11)
+```
+
+```powershell
+npm test -- --run src/client/pages/approvalsPageLayout.test.ts src/client/pages/approvalListLogic.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       9 passed (9)
+```
+
+```powershell
+npm test -- --run src/client/pages/submitDrawingLayout.test.ts src/client/pages/approvalsPageLayout.test.ts src/client/roleGuide.test.ts src/client/widgets/RoleFlowGuide.test.ts src/server/routes/users.test.ts src/server/auth.test.ts src/server/notifications/email.test.ts
+```
+
+结果：
+
+```text
+Test Files  7 passed (7)
+Tests       26 passed (26)
+```
+
+构建验证：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+安全审计：
+
+```powershell
+$env:npm_config_cache=(Join-Path (Get-Location) '.cache\npm')
+npm audit --omit=dev --audit-level=moderate --registry=https://registry.npmjs.org
+```
+
+结果：
+
+```text
+found 0 vulnerabilities
+```
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  61 passed (61)
+Tests       280 passed (280)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+```powershell
+npm run desktop:test
+```
+
+结果：
+
+```text
+Test Files  3 passed (3)
+Tests       8 passed (8)
+```
+
+## 2026-06-22 V6.1 批注体验优化验证
+
+范围：
+
+- 右侧批注列表点击后选中批注，并让左侧 PDF 预览滚动到对应标记。
+- 批注标记增加稳定的 `data-annotation-id`，用于列表和 PDF 层定位。
+- 新增设计师只读、归档/作废只读、空批注和保存失败的中文提示。
+- 更新 Windows 局域网部署说明、Electron 客户端用户说明和管理员说明，明确审查版 PDF 带批注、正式签后 PDF 保持干净。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/pages/approvalDetailLayout.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       9 passed (9)
+```
+
+```powershell
+npm test -- --run src/client/pages/approvalDetailLayout.test.ts src/client/widgets/PdfAnnotationWorkspace.test.ts src/client/styles.test.ts src/server/pdf/annotatePdf.test.ts src/server/routes/approvalAnnotations.test.ts
+```
+
+结果：
+
+```text
+Test Files  5 passed (5)
+Tests       40 passed (40)
+```
+
+文档检索：
+
+```powershell
+rg -n "V6.1|画笔|云线|批注|审查版 PDF|签后 PDF" docs
+```
+
+结果：可在部署说明、客户端用户说明和客户端管理员说明中检索到 V6.1 批注说明。
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  70 passed (70)
+Tests       360 passed (360)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：
+
+- 构建仍有既有的 PDF 相关 chunk 超过 500 kB 提醒，本批未新增该风险。
+- 本批未启动开发服务做人工浏览器烟测；批注创建、编辑、权限、审查版 PDF 导出和签后 PDF 生成边界由自动化测试覆盖。
+
+## 2026-06-23 个人资料、通知偏好与遗漏检查验证
+
+范围：
+
+- 检查个人资料、常用项目和角色通知偏好的实现链路。
+- 修复非管理员未配置签名时无法进入“我的资料”的遗漏。
+- 修复管理员删除图纸入口不可达的问题：管理员可进入“全部图纸”做台账维护和删除，但仍不显示上传、签名入口；“全部图纸”批量签后 PDF 和打印归档操作保持设计师口径。
+- 同步更新 profile/通知偏好设计文档中的管理员导航说明。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/roleAccess.test.ts src/client/pages/approvalsPageLayout.test.ts src/client/appRouting.test.ts
+```
+
+结果：
+
+```text
+Test Files  3 passed (3)
+Tests       12 passed (12)
+```
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  75 passed (75)
+Tests       393 passed (393)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：
+
+- 构建仍有既有的 PDF 相关 chunk 超过 500 kB 提醒，本次未新增该风险。
+- 本次未启动浏览器做人工烟测；资料页、权限路由、通知服务、提交页常用项目和管理员删除入口由自动化测试覆盖。
+
+## 2026-06-23 管理员个人资料常用项目收口验证
+
+范围：
+
+- 管理员“我的资料”不显示常用项目区块。
+- `/api/profile` 对管理员固定返回空 `commonProjects`，并在保存资料时忽略并清空管理员提交的 `commonProjects`。
+- 设计师、主管、工艺仍可维护常用项目，设计师提交页继续使用常用项目快捷入口。
+- 同步更新个人资料与通知偏好设计文档。
+
+TDD 红灯验证：
+
+```powershell
+npm test -- --run src/server/routes/profile.test.ts src/client/pages/ProfilePage.test.ts
+```
+
+结果：新增测试先失败，失败点为前端缺少角色判断函数、后端管理员保存后返回 `["项目A"]`。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/server/routes/profile.test.ts src/client/pages/ProfilePage.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       6 passed (6)
+```
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  75 passed (75)
+Tests       394 passed (394)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：
+
+- 构建仍有既有的 PDF 相关 chunk 超过 500 kB 提醒，本次未新增该风险。
+- 静态检查发现 `systemRisk` 已有偏好项和收件人规则，但尚未看到真实触发调用，建议作为下一批通知增强项处理。
+
+## 2026-06-23 运维通知、分页、PDF 懒加载与清理策略验证
+
+范围：
+
+- 补齐 `systemRisk` 邮件触发：手动扫描、数据库备份后按管理员偏好发送系统风险邮件，并写入系统通知日志。
+- 增加“给自己发送测试邮件”，便于用户验证个人邮箱与 SMTP 配置。
+- “全部图纸”改为服务端分页与关键词检索，避免图纸量增长后前端一次性加载过重。
+- PDF 预览、签名定位、批注工作区改为动态加载，降低普通页面入口包体积。
+- 增加清理维护：临时上传、失败/部分失败批量提交记录、未被当前记录引用的旧签审 PDF，支持预览后执行。
+- 修复构建暴露的 `clampPageSize` 类型收窄问题，避免 `number | undefined` 传入 `Math.trunc`。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/server/notifications/systemRiskNotifications.test.ts src/server/routes/profile.test.ts src/server/routes/system.test.ts
+npm test -- --run src/client/api.test.ts src/client/pages/ProfilePage.test.ts
+npm test -- --run src/server/repositories/approvals.test.ts src/server/routes/approvals.test.ts src/client/api.test.ts
+npm test -- --run src/client/pages/approvalDetailLayout.test.ts src/client/pages/submitDrawingLayout.test.ts
+npm test -- --run src/server/repositories/batchSubmissions.test.ts src/server/services/cleanupService.test.ts src/server/routes/system.test.ts
+npm test -- --run src/client/api.test.ts src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：上述聚焦测试均通过。
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  77 passed (77)
+Tests       404 passed (404)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：
+
+- 普通入口包为 `assets/index-DAjO3J9S.js`，约 `326.38 kB`；PDF 工作区已拆出 `PdfSignaturePlacementWorkspace` 和 `PdfAnnotationWorkspace` 异步 chunk。
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB，这是 PDF 库相关异步 chunk，普通页面不再同步加载。
+- 本批未启动浏览器做人工烟测；系统风险邮件、分页接口、清理接口、资料页测试邮件和 PDF 懒加载由自动化测试与构建覆盖。
+
+## 2026-06-23 侧边栏图标化与 Logo 视觉优化验证
+
+范围：
+
+- 菜单栏增加路由图标，展开状态显示“图标 + 文案”。
+- 侧栏收起状态改为 72px 图标窄栏，只显示 Logo、导航图标、收起/展开按钮和退出图标。
+- 应用 Logo 改为复用打包图标 `src/client/public/app-icon.png`。
+- 保持原有路由、权限和侧栏收起状态本地存储逻辑不变。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/appLayout.test.ts src/client/styles.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       12 passed (12)
+```
+
+最终回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  77 passed (77)
+Tests       404 passed (404)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build
+✓ built
+```
+
+说明：
+
+- 构建仍提示既有 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB，属于 PDF 异步 chunk；本次侧栏改造未新增该类风险。
+- 本批未启动浏览器做人工烟测；侧栏结构和关键 CSS 行为由源级测试覆盖。
+
+## 2026-06-23 批注回退到初始版验证
+
+范围：
+
+- 新增 `POST /api/approvals/:id/annotations/reset`，主管、工艺、管理员可清空当前图纸批注。
+- 设计师禁止回退批注；已归档或作废图纸返回只读错误。
+- 回退只删除批注记录，不修改原始 PDF 和签后 PDF；审查版 PDF 继续按当前批注动态生成。
+- 回退操作写入操作日志 `approval.annotations_reset`，记录删除数量。
+- 审批详情页在“审查版 PDF”旁增加“回退到初始版”，执行前二次确认，完成后刷新批注和操作日志。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/server/routes/approvalAnnotations.test.ts
+npm test -- --run src/client/api.test.ts src/client/pages/approvalDetailLayout.test.ts
+```
+
+结果：
+
+```text
+后端新增 reset 测试最初因接口不存在返回 404。
+前端新增 reset 测试最初因 resetApprovalAnnotations 和页面入口不存在失败。
+```
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/server/routes/approvalAnnotations.test.ts src/client/api.test.ts src/client/pages/approvalDetailLayout.test.ts
+```
+
+结果：
+
+```text
+Test Files  3 passed (3)
+Tests       40 passed (40)
+```
+
+最终回归：
+
+```powershell
+npm run build
+npm test
+```
+
+结果：
+
+```text
+npm run build: tsc && vite build 通过，仍保留既有 PDF 异步 chunk 超过 500 kB 提示。
+npm test: Test Files 77 passed (77), Tests 408 passed (408)
+```
+
+说明：
+
+- 构建过程中发现 `node:sqlite` 的 `changes` 类型可能为 `number | bigint`，已显式转为 `number` 后通过构建。
+- 本批未启动浏览器做人工烟测；接口权限、删除数量、操作日志、前端 API 路径和详情页入口由自动化测试覆盖。
+
+## 2026-06-23 V7 质量、审图效率与部署排障验证
+
+范围：
+
+- 新增 `/health` 安全版本信息和 API 兼容版本。
+- 客户端新增连接自检，提示 `127.0.0.1`、地址格式和版本兼容问题。
+- 服务端 exe 控制台强化局域网地址展示和“复制客户端地址”。
+- 增加审批列表长期使用索引。
+- PDF 预览增加适高、页码跳转和更稳定的缩放/拖动控制。
+- 批注列表增加筛选和连续标注。
+- 运维追溯新增自动维护计划和备份目录校验。
+- 拆分审批详情右侧面板和设置页运维 Tab，降低单文件维护压力。
+- 更新 Windows 局域网部署、Electron 管理员和客户端用户文档。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/pages/settingsDiagnostics.test.ts
+```
+
+结果：
+
+```text
+Test Files  1 passed (1)
+Tests       9 passed (9)
+```
+
+全量回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  84 passed (84)
+Tests       441 passed (441)
+```
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build 通过。
+```
+
+说明：构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是既有 PDF 库异步 chunk，普通入口包约 `342.48 kB`，PDF 批注和签名定位工作区仍为异步加载。
+
+桌面客户端和安装包验证：
+
+```powershell
+npm run desktop:test
+npm run installer:test
+$env:ELECTRON_BUILDER_CACHE=(Join-Path (Get-Location) '.cache\electron-builder')
+npm run installer:package
+```
+
+结果：
+
+```text
+desktop:test: Test Files  3 passed (3), Tests  8 passed (8)
+installer:test: Test Files  1 passed (1), Tests  3 passed (3)
+installer:package: 客户端与服务端 NSIS 安装包生成成功
+```
+
+安装包输出：
+
+```text
+dist\installers\client\PDF图纸审批客户端-安装包-0.1.0.exe  102473962 bytes
+dist\installers\server\PDF图纸审批服务端-安装包-0.1.0.exe  103351608 bytes
+```
+
+签名检查：
+
+```powershell
+Get-AuthenticodeSignature dist\installers\client\PDF图纸审批客户端-安装包-0.1.0.exe
+Get-AuthenticodeSignature dist\installers\server\PDF图纸审批服务端-安装包-0.1.0.exe
+```
+
+结果：两个安装包状态均为 `NotSigned`。当前仍需按内部软件分发方式说明来源，或后续接入企业代码签名证书。
+
+本地开发服务重启：
+
+```powershell
+npm run dev
+node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173
+```
+
+结果：
+
+```text
+后端: http://127.0.0.1:8080/health -> ok
+前端: http://127.0.0.1:5173 -> HTTP 200
+```
+
+当前限制：
+
+- 本次未做真实坚果云现场上传/删除烟测，文件监听路径仍建议上线前用现场目录做一次真实 PDF 提交和删除验证。
+- 本次未连接真实 SMTP 发送外部邮件；邮件链路由自动化测试和页面“发送测试邮件”入口覆盖。
+- 安装包未代码签名，Windows 可能显示安全提醒。
+
+## 2026-06-23 V7 无遗留打磨验证
+
+范围：
+
+- PDF 批注工作区和签名定位工作区新增横向缩略页导航，保留页码输入、上一页/下一页、滚轮缩放和拖动平移。
+- 管理员“运维追溯”新增维护执行结果看板，汇总最近一次自动备份、自动清理和备份校验状态。
+- `/health` 在非测试运行时自动返回服务端非回环 IPv4 局域网地址。
+
+红灯验证：
+
+```powershell
+npm test -- --run src/client/widgets/PdfAnnotationWorkspace.test.ts src/client/widgets/PdfSignaturePlacementWorkspace.test.ts src/client/pages/settingsDiagnostics.test.ts src/server/server.test.ts src/client/styles.test.ts
+```
+
+结果：
+
+```text
+初始失败点为缺少 .pdf-page-thumbnails、buildMaintenanceRunSummary、维护执行结果文案、getLanIPv4Addresses 和缩略页样式。
+```
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/widgets/PdfAnnotationWorkspace.test.ts src/client/widgets/PdfSignaturePlacementWorkspace.test.ts src/client/pages/settingsDiagnostics.test.ts src/server/server.test.ts src/client/styles.test.ts
+```
+
+结果：
+
+```text
+Test Files  5 passed (5)
+Tests       44 passed (44)
+```
+
+全量回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  84 passed (84)
+Tests       444 passed (444)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build 通过。
+```
+
+说明：构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是既有 PDF 库异步 chunk；本次缩略页导航没有引入新的 PDF 渲染依赖。
+
+本地开发服务重启：
+
+```powershell
+npm run dev
+node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173
+```
+
+结果：
+
+```text
+后端: http://127.0.0.1:8080/health -> ok，lanUrls 返回 172.30.255.69 和 192.168.0.62 两个局域网地址。
+前端: http://127.0.0.1:5173 -> HTTP 200
+```
+
+## 2026-06-23 移动端适配验证
+
+范围：
+
+- 520px 以下移动端断点：应用壳层切换为单列，侧边栏变为顶部 sticky 导航，菜单横向滚动。
+- 审批列表表格在手机宽度下转为卡片列表，通过单元格 `data-label` 显示字段名。
+- 工具栏、筛选表单、分页、批量操作按钮在窄屏下改为更适合触控的纵向布局。
+- PDF 预览、签名定位工作区、批注工具栏和浮窗在手机宽度下限制高度和宽度，避免被屏幕裁切。
+- 管理员运维日志继续保持独立滚动面板，避免长日志把页面无限撑开。
+
+聚焦验证：
+
+```powershell
+npm test -- --run src/client/styles.test.ts src/client/widgets/ApprovalTable.test.ts
+```
+
+结果：
+
+```text
+Test Files  2 passed (2)
+Tests       15 passed (15)
+```
+
+全量回归：
+
+```powershell
+npm test
+```
+
+结果：
+
+```text
+Test Files  84 passed (84)
+Tests       447 passed (447)
+```
+
+生产构建：
+
+```powershell
+npm run build
+```
+
+结果：
+
+```text
+tsc && vite build 通过。
+```
+
+说明：构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是既有 PDF 库异步 chunk 体积提示，本次移动端适配未新增 PDF 依赖。
+
+390px 真机宽度冒烟：
+
+```text
+审批页: innerWidth=390, docScrollWidth=390, bodyScrollWidth=390, overflowX=0。
+运维页: innerWidth=390, docScrollWidth=390, bodyScrollWidth=390, overflowX=0。
+侧边栏: position=sticky, width=390, height=188。
+菜单栏: display=flex, overflow-x=auto。
+审批列表: table display=block, row display=grid, cell grid-template-columns=82px 230px。
+运维日志: operation-log-panel .table-surface overflow=auto。
+```
+
+截图：
+
+```text
+output/playwright/mobile-approvals-fresh.png
+output/playwright/mobile-settings-operations-fresh.png
+```
+
+## 2026-06-23 v0.8.0 安装包与更新清单验证
+
+范围：
+
+- 版本号统一提升到 `0.8.0`。
+- 客户端和服务端重新生成 Windows 安装包。
+- 生成局域网更新清单 `dist/updates/latest.json` 和随包更新日志 `dist/updates/CHANGELOG.md`。
+- 管理员端可配置 `update_manifest_url` 并检查更新清单。
+
+验证命令：
+
+```powershell
+npm test
+npm run build
+npm run installer:package
+Get-AuthenticodeSignature -LiteralPath 'dist\installers\client\PDF图纸审批客户端-安装包-0.8.0.exe','dist\installers\server\PDF图纸审批服务端-安装包-0.8.0.exe'
+```
+
+结果：
+
+```text
+npm test: 87 个测试文件，454 个测试通过。
+npm run build: tsc 与 Vite 生产构建通过。
+npm run installer:package: 客户端安装包、服务端安装包和更新清单生成成功。
+客户端安装包: dist\installers\client\PDF图纸审批客户端-安装包-0.8.0.exe，约 102.48 MB。
+服务端安装包: dist\installers\server\PDF图纸审批服务端-安装包-0.8.0.exe，约 103.36 MB。
+更新清单: dist\updates\latest.json。
+更新日志: dist\updates\CHANGELOG.md。
+签名状态: 两个安装包均为 NotSigned，当前未配置代码签名证书。
+```
+
+## 2026-06-23 v0.8.5 服务端统一更新配置验证
+
+范围：
+
+- 版本号统一提升到 `0.8.5`。
+- 更新清单地址改为服务端按当前请求 Host 自动推导 `/updates/latest.json`。
+- 管理端“目录与通知”不再展示或保存 `update_manifest_url`。
+- 旧数据库中的 `update_manifest_url` 不再覆盖服务端默认更新源。
+- 服务端窗口新增“更新发布”信息，显示更新目录和可复制的清单地址。
+- 重新生成客户端和服务端安装包，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/routes/system.test.ts src/client/pages/settingsDiagnostics.test.ts src/server/serverExeConsoleView.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts
+npm run build
+npm test
+npm run desktop:test
+npm run installer:package
+Get-Content -Raw 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-Item 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.5.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.5.exe'
+Get-AuthenticodeSignature -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.5.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.5.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 5 个测试文件，31 个测试通过。
+npm run build: tsc 与 Vite 生产构建通过。
+npm test: 88 个测试文件，462 个测试通过。
+npm run desktop:test: 3 个测试文件，8 个测试通过。
+npm run installer:package: 0.8.5 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.5。
+运行目录客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.5.exe，102475315 bytes。
+运行目录服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.5.exe，103355870 bytes。
+签名状态: 两个安装包均为 NotSigned，当前未配置企业代码签名证书。
+git status: 当前目录不是 Git 仓库，无法读取工作树差异。
+```
+
+说明：
+
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是 PDF 预览依赖 chunk 的体积提示，未阻断构建或安装包生成。
+- 在线更新仍是“检查并下载安装包”，不会静默安装。
+
+## 2026-06-23 v0.8.4 服务端安装器二次自检测修复验证
+
+范围：
+
+- 版本号统一提升到 `0.8.4`。
+- 继续修复服务端安装器从 `releases\installers\server` 目录运行时提示“无法关闭”的问题。
+- 自定义 NSIS 检测目标从 `${APP_EXECUTABLE_FILENAME}` 改为明确的 `${PRODUCT_NAME}.exe`。
+
+根因补充：
+
+```text
+0.8.3 已绕开默认的“安装目录前缀”检测，但仍使用 NSIS 模板变量 APP_EXECUTABLE_FILENAME。
+在安装器上下文中该变量存在歧义，仍可能匹配安装包自身。
+0.8.4 改为 PRODUCT_NAME.exe，对本项目等价于 PDF图纸审批服务端.exe / PDF图纸审批客户端.exe，只匹配真正运行的应用进程。
+```
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/windowsInstallers.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts
+npm run installer:package
+npm test
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-AuthenticodeSignature -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.4.exe','E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.4.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 3 个测试文件，8 个测试通过。
+npm run installer:package: 0.8.4 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+npm test: 88 个测试文件，461 个测试通过。
+服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.4.exe，103355435 bytes。
+客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.4.exe，102475344 bytes。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.4。
+签名状态: 两个安装包均为 NotSigned，当前未配置代码签名证书。
+```
+
+说明：
+
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是 PDF 预览依赖 chunk 的体积提示，未阻断构建或安装包生成。
+- 当前更新能力采用局域网 `latest.json` 清单检查和下载链接展示，不做静默自动替换，避免未确认的外部更新服务或证书依赖。
+
+## 2026-06-23 v0.8.1 服务端内置更新目录验证
+
+范围：
+
+- 版本号统一提升到 `0.8.1`。
+- 服务端直接托管 `releaseDir\updates` 和 `releaseDir\installers`，默认开发环境为 `dist`。
+- 服务端 exe 启动时创建 `releases\updates`、`releases\installers\client`、`releases\installers\server`。
+- 服务端窗口显示“更新”目录并支持打开。
+- 重新生成客户端和服务端安装包。
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/server.test.ts src/server/serverExePackage.test.ts src/server/serverExeConsoleView.test.ts src/server/releaseVersion.test.ts src/server/updateManifestPackage.test.ts src/server/services/updateInfo.test.ts src/server/routes/system.test.ts
+npm run build
+npm run installer:package
+npm test
+```
+
+结果：
+
+```text
+聚焦测试: 7 个测试文件，26 个测试通过。
+npm run build: tsc 与 Vite 生产构建通过。
+npm run installer:package: 0.8.1 客户端安装包、服务端安装包和更新清单生成成功。
+npm test: 87 个测试文件，455 个测试通过。
+HTTP 冒烟: /updates/latest.json 返回 200，version=0.8.1；/installers/client/PDF图纸审批客户端-安装包-0.8.1.exe 返回 200。
+客户端安装包: dist\installers\client\PDF图纸审批客户端-安装包-0.8.1.exe，约 102.48 MB。
+服务端安装包: dist\installers\server\PDF图纸审批服务端-安装包-0.8.1.exe，约 103.36 MB。
+签名状态: 两个安装包均为 NotSigned，当前未配置代码签名证书。
+```
+
+说明：
+
+- 在线更新仍是“检查新版并下载新版安装包”，不会静默自动替换正在运行的客户端。
+- 正式部署后，将 `latest.json`、`CHANGELOG.md` 和两个安装包放入服务端窗口显示的“更新”目录，再将更新清单地址配置为 `http://服务器IP:端口/updates/latest.json`。
+
+## 2026-06-23 v0.8.2 普通用户自动检查客户端更新验证
+
+范围：
+
+- 版本号统一提升到 `0.8.2`。
+- 普通用户登录后自动请求 `/api/system/client-update-info` 检查客户端新版本。
+- 非管理员更新接口只返回客户端安装包下载入口，不暴露服务端安装包。
+- `npm run installer:package` 默认同步更新清单和安装包到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/routes/system.test.ts src/client/api.test.ts src/client/appLayout.test.ts src/server/runtimeReleaseSync.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts
+npm run build
+npm run installer:package
+npm test
+Get-ChildItem -LiteralPath 'dist\installers\client','dist\installers\server','dist\updates' -File | Where-Object { $_.Name -match '0\.8\.2|latest|CHANGELOG' }
+Get-ChildItem -LiteralPath 'E:\PDF服务端\pdf-approval\releases' -Recurse -File | Where-Object { $_.Name -match '0\.8\.2|latest|CHANGELOG' }
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-AuthenticodeSignature -LiteralPath 'dist\installers\client\PDF图纸审批客户端-安装包-0.8.2.exe','dist\installers\server\PDF图纸审批服务端-安装包-0.8.2.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 6 个测试文件，45 个测试通过。
+npm run build: tsc 与 Vite 生产构建通过。
+npm run installer:package: 0.8.2 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+npm test: 88 个测试文件，460 个测试通过。
+客户端安装包: dist\installers\client\PDF图纸审批客户端-安装包-0.8.2.exe，102477137 bytes。
+服务端安装包: dist\installers\server\PDF图纸审批服务端-安装包-0.8.2.exe，103357088 bytes。
+运行目录客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.2.exe。
+运行目录服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.2.exe。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.2。
+签名状态: 两个安装包均为 NotSigned，当前未配置代码签名证书。
+```
+
+说明：
+
+- 本机 `127.0.0.1:8080` 当前未监听，HTTP 冒烟未执行；真实运行目录文件已同步，服务端启动后会按 `/updates/latest.json` 和 `/installers/...` 对外提供下载。
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是 PDF 预览依赖 chunk 的体积提示，未阻断构建或安装包生成。
+- 在线更新能力仍是“自动检查 + 下载客户端安装包”，不会静默自动安装。
+
+## 2026-06-23 v0.8.3 服务端安装器自检测误判修复验证
+
+范围：
+
+- 版本号统一提升到 `0.8.3`。
+- 修复从 `E:\PDF服务端\pdf-approval\releases\installers\server` 运行服务端安装包时，NSIS 把安装器自身误判为旧服务端进程的问题。
+- 新增自定义 `build\installer.nsh`，安装器只按精确 exe 名称检测 `PDF图纸审批服务端.exe` 或 `PDF图纸审批客户端.exe`。
+- 重新生成客户端和服务端安装包，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+根因：
+
+```text
+electron-builder 默认 NSIS 检测逻辑在 PowerShell 可用时会检查所有 ExecutablePath 以 $INSTDIR 开头的进程。
+用户从 E:\PDF服务端\pdf-approval\releases\installers\server 启动安装包时，安装器进程路径也以 $INSTDIR 开头。
+因此安装器把自身当成待关闭的旧服务端应用，弹出“PDF图纸审批服务端 无法关闭”。
+```
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/windowsInstallers.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts
+npm run installer:package
+npm test
+Get-ChildItem -LiteralPath 'E:\PDF服务端\pdf-approval\releases' -Recurse -File | Where-Object { $_.Name -match '0\.8\.3|latest|CHANGELOG' }
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-AuthenticodeSignature -LiteralPath 'dist\installers\client\PDF图纸审批客户端-安装包-0.8.3.exe','dist\installers\server\PDF图纸审批服务端-安装包-0.8.3.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 3 个测试文件，8 个测试通过。
+npm run installer:package: 0.8.3 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+npm test: 88 个测试文件，461 个测试通过。
+客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.3.exe，102475300 bytes。
+服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.3.exe，103355399 bytes。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.3。
+签名状态: 两个安装包均为 NotSigned，当前未配置代码签名证书。
+```
+
+## 2026-06-24 v0.8.6 性能与体验打磨验证
+
+范围：
+
+- 版本号统一提升到 `0.8.6`。
+- 业务页面改为路由级懒加载，侧边栏 hover/focus 预加载目标页面。
+- 全量图纸台账搜索增加输入防抖、`useDeferredValue` 和刷新反馈。
+- 详情页减少不必要 PDF 状态复查，PDF 检查失败时提供重试入口。
+- 长列表、风险行、批量历史、批注项和操作日志表格增加 `content-visibility` 渲染优化。
+- 服务端新增慢 API 请求日志，阈值由 `PDF_APPROVAL_SLOW_REQUEST_MS` 控制，日志不记录请求体。
+- 新增操作日志时间线和管理员日志排序索引。
+- 重新生成客户端和服务端安装包，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+验证命令：
+
+```powershell
+npm test -- --run src/client/appLayout.test.ts src/client/pages/approvalListLogic.test.ts src/client/pages/approvalDetailLogic.test.ts src/client/styles.test.ts src/client/pages/approvalsPageLayout.test.ts src/server/server.test.ts src/server/dbIndexes.test.ts src/server/releaseVersion.test.ts
+npm run build
+npm test
+npm run desktop:test
+npm run installer:package
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-ChildItem -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.6.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.6.exe'
+Get-AuthenticodeSignature -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.6.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.6.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 8 个测试文件，59 个测试通过。
+npm run build: tsc 与 Vite 生产构建通过；业务页面已拆分为独立页面 chunk，入口 index-B4nNRO3v.js 为 238.33 kB。
+npm test: 88 个测试文件，471 个测试通过。
+npm run desktop:test: 3 个测试文件，8 个测试通过。
+npm run installer:package: 0.8.6 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.6。
+运行目录客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.6.exe，102486876 bytes。
+运行目录服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.6.exe，103368048 bytes。
+签名状态: 两个安装包均为 NotSigned，当前未配置企业代码签名证书。
+```
+
+说明：
+
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB。这是 PDF.js 预览依赖的独立 chunk，当前已从主入口拆出，未阻断构建或安装包生成。
+- 慢请求日志只记录 `method`、不含 query 的 `path`、`status` 和 `durationMs`，不会记录请求体、密码或 token。
+
+补充检查：
+
+```text
+2026-06-24 继续收尾时发现当前分发文档仍引用 0.8.5 安装包名，已更新：
+- docs/desktop-client-admin-guide.md
+- docs/desktop-client-user-guide.md
+- docs/deploy-windows-lan.md
+
+文档版本检查: 当前分发文档中不再出现 0.8.5 安装包名，均指向 0.8.6。
+补充聚焦测试: 6 个测试文件，30 个测试通过。
+```
+
+## 2026-06-24 v0.8.7 服务端升级保留更新目录验证
+
+范围：
+
+- 版本号统一提升到 `0.8.7`。
+- 修复服务端重新安装或升级后 `releases` 目录被清空，导致 `/updates/latest.json` 返回 `HTTP_404` 的问题。
+- 自定义 NSIS 删除逻辑：升级清理旧应用文件时保留 `data`、`backups`、`logs`、`releases` 和 `server-config.json`。
+- 重新生成客户端和服务端安装包，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+根因：
+
+```text
+服务端安装包升级时会先执行旧版本卸载器。electron-builder 默认卸载逻辑会 RMDir /r $INSTDIR，安装目录里的 releases 也会被删除。
+服务端仍然托管 /updates/latest.json，但 releases\updates\latest.json 已不存在，因此返回 HTTP_404。
+```
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/windowsInstallers.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts src/server/server.test.ts src/server/runtimeReleaseSync.test.ts
+npm test
+npm run installer:package
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/updates/latest.json'
+Invoke-WebRequest -UseBasicParsing 'http://192.168.0.62:8080/updates/latest.json'
+Get-AuthenticodeSignature -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.7.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.7.exe'
+```
+
+结果：
+
+```text
+聚焦测试: 5 个测试文件，16 个测试通过。
+npm test: 88 个测试文件，472 个测试通过。
+npm run installer:package: 0.8.7 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.7。
+HTTP 冒烟: http://127.0.0.1:8080/updates/latest.json 返回 200，version=0.8.7。
+HTTP 冒烟: http://192.168.0.62:8080/updates/latest.json 返回 200，version=0.8.7。
+运行目录客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.7.exe，102487207 bytes。
+运行目录服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.7.exe，103368537 bytes。
+签名状态: 两个安装包均为 NotSigned，当前未配置企业代码签名证书。
+```
+
+说明：
+
+- 本次已直接恢复真实运行目录中的 `latest.json`，所以当前局域网更新检查不再是 404。
+- 后续从 `0.8.7` 服务端安装包开始，升级安装会保留 `releases`，不会再因为重装清空更新清单。
+
+## 2026-06-25 v0.8.8 窗口适配正式发布包验证
+
+范围：
+
+- 版本号统一提升到 `0.8.8`。
+- 将窗口尺寸变化下的资料页表单、通知偏好和顶部流程向导防挤压修复纳入正式更新包。
+- 管理员运维页去掉多余的本机更新日志区块。
+- 重新生成客户端和服务端安装包，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+验证命令：
+
+```powershell
+npm test -- --run src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts src/server/updateManifestPackage.test.ts src/server/runtimeReleaseSync.test.ts src/client/styles.test.ts src/client/pages/settingsDiagnostics.test.ts
+npm test
+npm run installer:package
+Get-Content -LiteralPath 'E:\PDF服务端\pdf-approval\releases\updates\latest.json'
+Get-Item -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.8.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.8.exe'
+Get-AuthenticodeSignature -LiteralPath 'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.8.exe','E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.8.exe'
+Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8080/updates/latest.json'
+Invoke-WebRequest -UseBasicParsing 'http://192.168.0.62:8080/updates/latest.json'
+```
+
+结果：
+
+```text
+聚焦测试: 6 个测试文件，32 个测试通过。
+npm test: 88 个测试文件，473 个测试通过。
+npm run installer:package: 0.8.8 客户端安装包、服务端安装包、更新清单生成成功，并同步到 E:\PDF服务端\pdf-approval\releases。
+运行目录更新清单: E:\PDF服务端\pdf-approval\releases\updates\latest.json，version=0.8.8，releaseDate=2026-06-25。
+运行目录客户端安装包: E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.8.exe，102487194 bytes。
+运行目录服务端安装包: E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.8.exe，103368705 bytes。
+签名状态: 两个安装包均为 NotSigned，当前未配置企业代码签名证书。
+HTTP 冒烟: 当前 8080 服务未运行，127.0.0.1:8080 和 192.168.0.62:8080 均连接被拒绝；服务端启动或安装 0.8.8 后需复测。
+```
+
+说明：
+
+- `latest.json` 已在真实运行目录中更新到 `0.8.8`，服务端启动后会通过 `/updates/latest.json` 对局域网提供新版清单。
+
+## 2026-06-25 v0.8.9 客户端更新检测修复验证
+
+范围：
+
+- 修复只升级服务端后，旧客户端把服务端版本误当成客户端版本，导致不会提示客户端更新的问题。
+- 客户端更新检查优先传入 Electron 已安装外壳版本。
+- 服务端兼容未传版本的旧 Electron 客户端，按未知旧版处理并继续提示最新客户端安装包。
+- 管理员版本更新面板将“当前版本”明确为“服务端当前版本”。
+
+命令：
+
+```powershell
+npm test -- --run src/client/api.test.ts src/client/clientConfig.test.ts src/client/appLayout.test.ts src/client/pages/settingsDiagnostics.test.ts src/server/routes/system.test.ts src/server/services/updateInfo.test.ts src/server/releaseVersion.test.ts
+npm test
+npm run installer:package
+```
+
+结果：
+
+- 聚焦测试：7 个测试文件、65 个用例通过。
+- 全量测试：88 个测试文件、477 个用例通过。
+- `npm run installer:package` 成功，已构建客户端、服务端安装包和更新清单。
+- 运行目录更新清单：`E:\PDF服务端\pdf-approval\releases\updates\latest.json`，version=`0.8.9`，releaseDate=`2026-06-25`。
+- 运行目录客户端安装包：`E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.8.9.exe`，102487305 bytes。
+- 运行目录服务端安装包：`E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.8.9.exe`，103369241 bytes。
+- 签名状态：客户端、服务端安装包均为 `NotSigned`，Windows 仍可能显示安全提醒。
+- HTTP 冒烟：`http://127.0.0.1:8080/updates/latest.json` 返回 200，version=`0.8.9`。
+- HTTP 冒烟：`http://192.168.0.62:8080/updates/latest.json` 返回 200，version=`0.8.9`。
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB；该 PDF 依赖已是独立 chunk，未阻断构建或安装包生成。
+
+## 2026-06-26 客户端打印并自动归档验证
+
+范围：
+
+- 审批详情页新增“打印并归档”入口，仅在 Electron 客户端、设计师或管理员、已通过待打印且签后 PDF 已生成时显示。
+- 打印前支持设置打印机、份数、页码范围、纸张、方向、彩色/黑白、双面、边距、缩放和打印背景。
+- Electron 主进程新增打印机列表、打印参数持久化和签后 PDF 原生打印 IPC。
+- Windows 打印回调成功后自动调用现有归档接口；取消或失败不归档。
+- 浏览器访问保持“打开签后 PDF + 手动标记归档”的兜底方式。
+
+命令：
+
+```powershell
+npm test -- --run src/client/printSettings.test.ts
+npm run desktop:test -- --run apps/desktop-client/electronShell.test.mjs apps/desktop-client/desktopConfig.test.mjs
+npm test -- --run src/client/clientConfig.test.ts src/client/printSettings.test.ts
+npm test -- --run src/client/pages/approvalDetailPrint.test.ts
+npm test -- --run src/client/printSettings.test.ts src/client/clientConfig.test.ts src/client/pages/approvalDetailPrint.test.ts src/client/pages/approvalDetailLogic.test.ts
+npm run desktop:test
+npm test
+npm run build
+```
+
+结果：
+
+- 打印参数聚焦测试：`src/client/printSettings.test.ts` 6 个用例通过。
+- Electron 桥接聚焦测试：`electronShell.test.mjs`、`desktopConfig.test.mjs` 共 9 个用例通过。
+- 客户端桥接聚焦测试：`src/client/clientConfig.test.ts` 和打印参数测试共 15 个用例通过。
+- 审批详情打印逻辑测试：`src/client/pages/approvalDetailPrint.test.ts` 4 个用例通过。
+- 前端聚焦回归：4 个测试文件、37 个用例通过。
+- `npm run desktop:test`：3 个测试文件、10 个用例通过。
+- `npm test`：90 个测试文件、489 个用例通过。
+- `npm run build`：TypeScript 和 Vite 构建通过。
+- 构建仍提示 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 超过 500 kB；该提示为既有 PDF 依赖体积提示，未阻断构建。
+
+未覆盖项：
+
+- 本次未连接真实打印机做纸张出纸验证。Electron 能确认打印任务被 Windows 打印系统接受，但不能可靠确认打印机后续缺纸、卡纸或实际出纸状态。
+
+## 2026-06-26 v0.9.0 打包与运行目录同步验证
+
+范围：
+
+- 将打印并自动归档能力发布为 `0.9.0`。
+- 重新生成客户端、服务端安装包和局域网更新清单。
+- 同步发布文件到真实服务端运行目录 `E:\PDF服务端\pdf-approval\releases`。
+
+命令：
+
+```powershell
+npm test -- --run src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts src/client/clientConfig.test.ts src/client/printSettings.test.ts src/client/pages/approvalDetailPrint.test.ts
+npm run installer:package
+npm test -- --run src/server/releaseVersion.test.ts src/server/updateManifestPackage.test.ts src/server/runtimeReleaseSync.test.ts
+Get-AuthenticodeSignature -LiteralPath `
+  'dist\installers\client\PDF图纸审批客户端-安装包-0.9.0.exe',`
+  'dist\installers\server\PDF图纸审批服务端-安装包-0.9.0.exe',`
+  'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.0.exe',`
+  'E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.0.exe'
+```
+
+结果：
+
+- 版本聚焦测试：5 个测试文件、23 个用例通过。
+- `npm run installer:package` 成功退出，exit code = 0。
+- 发布打包验证：3 个测试文件、4 个用例通过。
+- `dist\updates\latest.json` 和 `E:\PDF服务端\pdf-approval\releases\updates\latest.json` 均为 version=`0.9.0`，releaseDate=`2026-06-26`。
+- `dist\installers\client\PDF图纸审批客户端-安装包-0.9.0.exe`：102491558 bytes。
+- `dist\installers\server\PDF图纸审批服务端-安装包-0.9.0.exe`：103372019 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.0.exe`：102491558 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.0.exe`：103372019 bytes。
+- 四个安装包 Authenticode 状态均为 `NotSigned`，当前未配置企业代码签名证书，Windows 可能继续显示安全提醒。
+- 更新清单下载路径指向 `../installers/client/PDF图纸审批客户端-安装包-0.9.0.exe` 和 `../installers/server/PDF图纸审批服务端-安装包-0.9.0.exe`。
+
+## 2026-06-26 v0.9.1 electron-updater 启动更新验证
+
+范围：
+
+- Electron 客户端接入 `electron-updater`，启动后通过服务端 `/updates/latest.yml` 检查客户端新版，不依赖用户登录。
+- 客户端发现新版后自动下载并显示进度；下载完成后提示用户打开安装包，按 Windows 安装向导手动完成升级。
+- 发布流程新增 `latest.yml`、客户端安装包和 `.blockmap` 文件到 `dist\updates`，并同步到真实运行目录 `E:\PDF服务端\pdf-approval\releases\updates`。
+- 服务端仍通过 `latest.json` 提供网页/管理端版本信息；Electron 自动更新使用 `latest.yml`。
+
+命令：
+
+```powershell
+npm run desktop:test -- --run apps/desktop-client/electronShell.test.mjs apps/desktop-client/packageLayout.test.mjs
+npm test -- --run src/server/runtimeReleaseSync.test.ts src/server/windowsInstallers.test.ts src/server/updateManifestPackage.test.ts src/client/clientConfig.test.ts src/client/appLayout.test.ts src/server/releaseVersion.test.ts src/server/services/updateInfo.test.ts
+npm run build
+npm run desktop:test
+npm test
+npm run installer:package
+Get-AuthenticodeSignature -LiteralPath `
+  'dist\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe',`
+  'dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe',`
+  'E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe',`
+  'E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe'
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/updates/latest.json
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8080/updates/latest.yml
+Invoke-WebRequest -UseBasicParsing http://192.168.0.62:8080/updates/latest.yml
+```
+
+结果：
+
+- Electron 聚焦测试：2 个文件、5 个用例通过。
+- 更新相关聚焦测试：7 个文件、28 个用例通过。
+- `npm run build` 通过；仍有既有 `assets/pdf-CJRVEglZ.js` 约 `531.35 kB` 的 Vite chunk 体积提醒，未阻断构建。
+- `npm run desktop:test`：3 个文件、11 个用例通过。
+- `npm test`：90 个文件、491 个用例通过。首次全量测试发现新增更新弹窗进度条使用 `border-radius: 999px` 触发视觉规范测试失败，已改为 `var(--radius-control)` 并重新全量通过。
+- `npm run installer:package` 成功退出，重新生成客户端、服务端安装包，并同步到 `E:\PDF服务端\pdf-approval\releases`。
+- `dist\updates\latest.yml` 和 `E:\PDF服务端\pdf-approval\releases\updates\latest.yml` 均为 version=`0.9.1`，指向 `PDF图纸审批客户端-安装包-0.9.1.exe`，size=`103108694`。
+- `dist\updates\latest.json` 和 `E:\PDF服务端\pdf-approval\releases\updates\latest.json` 均为 version=`0.9.1`，releaseDate=`2026-06-26`。
+- `dist\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe`：103108694 bytes。
+- `dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe`：103373427 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe`：103108694 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe`：103373427 bytes。
+- `dist\updates\PDF图纸审批客户端-安装包-0.9.1.exe.blockmap` 和 `E:\PDF服务端\pdf-approval\releases\updates\PDF图纸审批客户端-安装包-0.9.1.exe.blockmap` 均存在。
+- HTTP 冒烟：`http://127.0.0.1:8080/updates/latest.json` 返回 200，version=`0.9.1`。
+- HTTP 冒烟：`http://127.0.0.1:8080/updates/latest.yml` 返回 200，首行为 `version: 0.9.1`。
+- HTTP 冒烟：`http://192.168.0.62:8080/updates/latest.yml` 返回 200，首行为 `version: 0.9.1`。
+- 四个安装包 Authenticode 状态均为 `NotSigned`，当前未配置企业代码签名证书，Windows 可能继续显示安全提醒。
+
+上线注意：
+
+- `0.9.0` 及更早客户端没有内置 `electron-updater`，无法自动升级到 `0.9.1`；团队电脑需要手动安装一次 `PDF图纸审批客户端-安装包-0.9.1.exe`。
+- 从 `0.9.1` 之后，客户端启动时才会自动检查后续新版，自动下载完成后仍由用户打开安装包并按安装向导升级，不执行静默安装或自动重启。

@@ -1,0 +1,6 @@
+{
+  "name": "pdf-approval-server-exe",
+  "version": "0.9.1",
+  "private": true,
+  "main": "main.cjs"
+}

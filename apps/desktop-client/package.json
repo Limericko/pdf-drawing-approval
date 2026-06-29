@@ -1,0 +1,10 @@
+{
+  "name": "pdf-approval-desktop-client",
+  "version": "0.9.1",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "test": "vitest run --config vitest.config.mjs"
+  }
+}

@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+apps/*/node_modules/
+
+# Build and package outputs
+dist/
+apps/*/dist/
+apps/tray-helper/src-tauri/target/
+out/
+release.package.*
+
+# Runtime data and local drawing workspaces
+data/
+backups/
+logs/
+output/
+test/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+server-config.json
+**/server-config.json
+*.local.json
+
+# Logs, process markers and caches
+*.log
+*.pid
+.cache/
+.playwright-cli/
+.codex/*.log
+.codex/*.pid
+client.dev.*
+server.dev.*
+vite.log
+vite.err.log
+server.log
+server.err.log
+
+# Local agent/skill installations
+.agents/
+skills-lock.json
+
+# OS/editor noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
