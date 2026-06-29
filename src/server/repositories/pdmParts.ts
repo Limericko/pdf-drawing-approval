@@ -63,6 +63,15 @@ export type PdmPendingMetadataApproval = {
   submittedAt: string;
 };
 
+export type PdmPartListItem = PdmPart & {
+  currentVersion: string | null;
+  currentDocumentCode: string | null;
+  currentApprovalId: number | null;
+  currentReleasedAt: string | null;
+  usageProjectCount: number;
+  usageProjects: string[];
+};
+
 type PdmPartRow = {
   id: number;
   material_code: string;
@@ -121,6 +130,15 @@ type PdmPendingMetadataRow = {
   submitted_at: string;
 };
 
+type PdmPartListRow = PdmPartRow & {
+  current_version: string | null;
+  current_document_code: string | null;
+  current_approval_id: number | null;
+  current_released_at: string | null;
+  usage_project_count: number;
+  usage_projects: string | null;
+};
+
 export class PdmPartRepository {
   constructor(private readonly db: DatabaseConnection) {}
 
@@ -154,6 +172,54 @@ export class PdmPartRepository {
   getPartById(id: number): PdmPart | null {
     const row = this.db.prepare("SELECT * FROM pdm_parts WHERE id = ?").get(id) as PdmPartRow | undefined;
     return row ? mapPart(row) : null;
+  }
+
+  listParts(
+    filters: {
+      keyword?: string;
+      projectName?: string;
+      isCommon?: boolean;
+      hasCurrentRevision?: boolean;
+      page?: number;
+      pageSize?: number;
+    } = {}
+  ): { items: PdmPartListItem[]; total: number; page: number; pageSize: number } {
+    const pageSize = clampInteger(filters.pageSize ?? 20, 1, 100, 20);
+    const page = clampInteger(filters.page ?? 1, 1, 100000, 1);
+    const { where, params } = buildPartListWhere(filters);
+    const totalRow = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM pdm_parts p
+         LEFT JOIN pdm_drawing_revisions current_revision ON current_revision.id = p.current_revision_id
+         ${where}`
+      )
+      .get(params) as { total: number };
+    const rows = this.db
+      .prepare(
+        `SELECT
+          p.*,
+          current_revision.version AS current_version,
+          current_revision.document_code AS current_document_code,
+          current_revision.approval_id AS current_approval_id,
+          current_revision.released_at AS current_released_at,
+          COUNT(u.id) AS usage_project_count,
+          GROUP_CONCAT(u.project_name, '||') AS usage_projects
+        FROM pdm_parts p
+        LEFT JOIN pdm_drawing_revisions current_revision ON current_revision.id = p.current_revision_id
+        LEFT JOIN pdm_part_usages u ON u.part_id = p.id
+        ${where}
+        GROUP BY p.id
+        ORDER BY current_revision.released_at DESC, p.updated_at DESC, p.id DESC
+        LIMIT @limit OFFSET @offset`
+      )
+      .all({
+        ...params,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }) as PdmPartListRow[];
+
+    return { items: rows.map(mapPartListItem), total: totalRow.total, page, pageSize };
   }
 
   publishRevision(input: {
@@ -311,6 +377,39 @@ export class PdmPartRepository {
   }
 }
 
+function buildPartListWhere(filters: {
+  keyword?: string;
+  projectName?: string;
+  isCommon?: boolean;
+  hasCurrentRevision?: boolean;
+}) {
+  const conditions: string[] = [];
+  const params: Record<string, SQLInputValue> = {};
+  const keyword = filters.keyword?.trim();
+  if (keyword) {
+    conditions.push("(p.material_code LIKE @keyword OR p.name LIKE @keyword OR current_revision.document_code LIKE @keyword)");
+    params.keyword = `%${keyword}%`;
+  }
+  const projectName = filters.projectName?.trim();
+  if (projectName) {
+    conditions.push(
+      `EXISTS (
+        SELECT 1 FROM pdm_part_usages usage_filter
+        WHERE usage_filter.part_id = p.id AND usage_filter.project_name = @projectName
+      )`
+    );
+    params.projectName = projectName;
+  }
+  if (filters.isCommon !== undefined) {
+    conditions.push("p.is_common = @isCommon");
+    params.isCommon = filters.isCommon ? 1 : 0;
+  }
+  if (filters.hasCurrentRevision !== undefined) {
+    conditions.push(filters.hasCurrentRevision ? "p.current_revision_id IS NOT NULL" : "p.current_revision_id IS NULL");
+  }
+  return { where: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "", params };
+}
+
 function mapPart(row: PdmPartRow): PdmPart {
   return {
     id: row.id,
@@ -321,6 +420,18 @@ function mapPart(row: PdmPartRow): PdmPart {
     createdFromApprovalId: row.created_from_approval_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function mapPartListItem(row: PdmPartListRow): PdmPartListItem {
+  return {
+    ...mapPart(row),
+    currentVersion: row.current_version,
+    currentDocumentCode: row.current_document_code,
+    currentApprovalId: row.current_approval_id,
+    currentReleasedAt: row.current_released_at,
+    usageProjectCount: row.usage_project_count,
+    usageProjects: row.usage_projects ? row.usage_projects.split("||").filter(Boolean).sort((left, right) => left.localeCompare(right, "zh-Hans-CN")) : []
   };
 }
 
@@ -388,4 +499,9 @@ function normalizeRequired(value: string, errorCode: string) {
 function blankToNull(value: string | null | undefined) {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+function clampInteger(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
 }

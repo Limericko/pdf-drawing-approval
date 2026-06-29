@@ -5,6 +5,8 @@ import {
   type ApprovalSource,
   type ApprovalStatus,
   type CreateApprovalInput,
+  type PdmMetadataStatus,
+  type PdmPublishStatus,
   deriveApprovalStatus,
   type ReviewInput,
   type SignatureStatus
@@ -29,6 +31,13 @@ type ApprovalRow = {
   signed_at: string | null;
   signature_status: SignatureStatus;
   signature_error: string | null;
+  document_code: string | null;
+  material_code: string | null;
+  drawing_name: string | null;
+  pdm_revision_id: number | null;
+  pdm_metadata_status: PdmMetadataStatus;
+  pdm_publish_status: PdmPublishStatus;
+  pdm_publish_error: string | null;
   submitted_at: string;
   supervisor_status: "pending" | "approved" | "rejected";
   supervisor_comment: string | null;
@@ -44,16 +53,25 @@ export class ApprovalRepository {
   constructor(private readonly db: DatabaseConnection) {}
 
   create(input: CreateApprovalInput): Approval {
+    const documentCode = blankToNull(input.documentCode);
+    const materialCode = blankToNull(input.materialCode);
+    const drawingName = blankToNull(input.drawingName) ?? input.partName;
+    const pdmMetadataStatus = input.pdmMetadataStatus ?? derivePdmMetadataStatus(documentCode, materialCode, drawingName);
+    const pdmPublishStatus = input.pdmPublishStatus ?? (materialCode ? "pending" : "metadata_pending");
     const result = this.db
       .prepare(
         `INSERT INTO approvals (
           project_name, part_name, version, minor_version, major_version,
           original_file_path, current_file_path, status, submitted_by,
-          submitted_by_user_id, source, original_file_hash, signature_status
+          submitted_by_user_id, source, original_file_hash, signature_status,
+          document_code, material_code, drawing_name, pdm_metadata_status,
+          pdm_publish_status, pdm_publish_error
         ) VALUES (
           @projectName, @partName, @version, @minorVersion, @majorVersion,
           @originalFilePath, @currentFilePath, @status, @submittedBy,
-          @submittedByUserId, @source, @originalFileHash, @signatureStatus
+          @submittedByUserId, @source, @originalFileHash, @signatureStatus,
+          @documentCode, @materialCode, @drawingName, @pdmMetadataStatus,
+          @pdmPublishStatus, @pdmPublishError
         )`
       )
       .run({
@@ -63,7 +81,13 @@ export class ApprovalRepository {
         submittedByUserId: input.submittedByUserId ?? null,
         source: input.source ?? "folder_watch",
         originalFileHash: input.originalFileHash ?? null,
-        signatureStatus: input.signatureStatus ?? "not_required"
+        signatureStatus: input.signatureStatus ?? "not_required",
+        documentCode,
+        materialCode,
+        drawingName,
+        pdmMetadataStatus,
+        pdmPublishStatus,
+        pdmPublishError: input.pdmPublishError ?? null
       });
 
     return this.getById(Number(result.lastInsertRowid))!;
@@ -327,7 +351,8 @@ function buildListWhere(filters: {
     const keyword = filters.keyword?.trim();
     if (keyword) {
       conditions.push(
-        "(project_name LIKE @keyword OR part_name LIKE @keyword OR version LIKE @keyword OR current_file_path LIKE @keyword)"
+        `(project_name LIKE @keyword OR part_name LIKE @keyword OR version LIKE @keyword OR current_file_path LIKE @keyword
+          OR document_code LIKE @keyword OR material_code LIKE @keyword OR drawing_name LIKE @keyword)`
       );
       params.keyword = `%${keyword}%`;
     }
@@ -361,6 +386,13 @@ export function mapApproval(row: ApprovalRow): Approval {
     signedAt: row.signed_at,
     signatureStatus: row.signature_status,
     signatureError: row.signature_error,
+    documentCode: row.document_code,
+    materialCode: row.material_code,
+    drawingName: row.drawing_name,
+    pdmRevisionId: row.pdm_revision_id,
+    pdmMetadataStatus: row.pdm_metadata_status,
+    pdmPublishStatus: row.pdm_publish_status,
+    pdmPublishError: row.pdm_publish_error,
     submittedAt: row.submitted_at,
     supervisorStatus: row.supervisor_status,
     supervisorComment: row.supervisor_comment,
@@ -371,4 +403,20 @@ export function mapApproval(row: ApprovalRow): Approval {
     printedAt: row.printed_at,
     archivedAt: row.archived_at
   };
+}
+
+function derivePdmMetadataStatus(
+  documentCode: string | null,
+  materialCode: string | null,
+  drawingName: string | null
+): PdmMetadataStatus {
+  if (!drawingName) return "missing_required";
+  if (!materialCode) return "missing_material_code";
+  if (!documentCode) return "missing_document_code";
+  return "complete";
+}
+
+function blankToNull(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }

@@ -315,6 +315,7 @@ async function createApprovalFromUpload(
   } catch {
     throw new Error("UPLOAD_NOT_FOUND");
   }
+  const uploadedFileNameMetadata = parseDrawingFileName(upload.originalName);
 
   const projectName = safePathSegment(input.projectName);
   const fileName = `${safeFileNamePart(input.partName)}-${input.version}.pdf`;
@@ -337,7 +338,16 @@ async function createApprovalFromUpload(
     submittedByUserId: user?.id ?? null,
     source: "web_upload",
     originalFileHash,
-    signatureStatus: "pending"
+    signatureStatus: "pending",
+    documentCode: uploadedFileNameMetadata?.documentCode ?? null,
+    materialCode: uploadedFileNameMetadata?.materialCode ?? null,
+    drawingName: input.partName,
+    pdmMetadataStatus: derivePdmMetadataStatus(
+      uploadedFileNameMetadata?.documentCode ?? null,
+      uploadedFileNameMetadata?.materialCode ?? null,
+      input.partName
+    ),
+    pdmPublishStatus: uploadedFileNameMetadata?.materialCode ? "pending" : "metadata_pending"
   });
   deps.signaturePlacements.upsertMany(approval.id, input.placements);
 
@@ -413,4 +423,11 @@ function hasInvalidSignaturePlacement(
       placement.xRatio + placement.widthRatio > 1 ||
       placement.yRatio + placement.heightRatio > 1
   );
+}
+
+function derivePdmMetadataStatus(documentCode: string | null, materialCode: string | null, drawingName: string | null) {
+  if (!drawingName) return "missing_required";
+  if (!materialCode) return "missing_material_code";
+  if (!documentCode) return "missing_document_code";
+  return "complete";
 }

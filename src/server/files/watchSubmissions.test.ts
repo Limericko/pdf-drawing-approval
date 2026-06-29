@@ -40,6 +40,29 @@ describe("processSubmittedFile", () => {
     await expect(fs.stat(path.join(context.watchRoot, "02-审批中", "项目A", "轴承座-a0A0.pdf"))).resolves.toBeTruthy();
   });
 
+  it("stores PDM metadata from a standard filename submitted through the watched folder", async () => {
+    const context = await setup();
+    const file = path.join(context.projectDir, "MP300A000072 《0102A00700883 400A按键》 a0A0.pdf");
+    await fs.writeFile(file, "%PDF-1.7\n");
+
+    const result = await processSubmittedFile(file, {
+      ...context,
+      waitForStable: async () => ({ ok: true })
+    });
+    if (!result.processed || !("approval" in result)) throw new Error("approval not created");
+
+    expect(context.approvals.getById(result.approval.id)).toEqual(
+      expect.objectContaining({
+        partName: "400A按键",
+        documentCode: "MP300A000072",
+        materialCode: "0102A00700883",
+        drawingName: "400A按键",
+        pdmMetadataStatus: "complete",
+        pdmPublishStatus: "pending"
+      })
+    );
+  });
+
   it("accepts PDFs placed directly in the watch root as default project", async () => {
     const context = await setup();
     const file = path.join(context.watchRoot, "301新光纤-a0A0.pdf");

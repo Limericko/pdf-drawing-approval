@@ -12,6 +12,8 @@ export type ApprovalStatus =
   | "voided";
 export type ApprovalSource = "web_upload" | "folder_watch";
 export type SignatureStatus = "not_required" | "placement_required" | "pending" | "ready" | "generated" | "failed";
+export type PdmMetadataStatus = "complete" | "missing_material_code" | "missing_document_code" | "missing_required";
+export type PdmPublishStatus = "not_applicable" | "metadata_pending" | "pending" | "published" | "failed";
 
 export type Approval = {
   id: number;
@@ -32,6 +34,13 @@ export type Approval = {
   signedAt: string | null;
   signatureStatus: SignatureStatus;
   signatureError: string | null;
+  documentCode: string | null;
+  materialCode: string | null;
+  drawingName: string | null;
+  pdmRevisionId: number | null;
+  pdmMetadataStatus: PdmMetadataStatus;
+  pdmPublishStatus: PdmPublishStatus;
+  pdmPublishError: string | null;
   submittedAt: string;
   supervisorStatus: ReviewStatus;
   supervisorComment: string | null;
@@ -57,6 +66,12 @@ export type CreateApprovalInput = {
   source?: ApprovalSource;
   originalFileHash?: string | null;
   signatureStatus?: SignatureStatus;
+  documentCode?: string | null;
+  materialCode?: string | null;
+  drawingName?: string | null;
+  pdmMetadataStatus?: PdmMetadataStatus;
+  pdmPublishStatus?: PdmPublishStatus;
+  pdmPublishError?: string | null;
 };
 
 export type ReviewInput = {

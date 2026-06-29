@@ -3,6 +3,7 @@ import path from "node:path";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth.ts";
+import type { Approval } from "../domain/approvals.ts";
 import type { ApprovalAnnotationRepository } from "../repositories/approvalAnnotations.ts";
 import type { ApprovalRepository } from "../repositories/approvals.ts";
 import type { OperationLogRepository } from "../repositories/operationLogs.ts";
@@ -12,6 +13,7 @@ import type { SignaturePlacementRepository } from "../repositories/signaturePlac
 import type { SignatureTemplateRepository } from "../repositories/signatureTemplates.ts";
 import type { NotificationEventKey } from "../repositories/userPreferences.ts";
 import type { UserRepository } from "../repositories/users.ts";
+import type { PdmReleaseService } from "../services/pdmReleaseService.ts";
 import { moveApprovalFile } from "../services/fileMoveService.ts";
 import { tryGenerateSignedPdfForApproval } from "../services/signingWorkflow.ts";
 import { hasPdfHeader } from "../files/pdfValidation.ts";
@@ -28,6 +30,7 @@ export function approvalRoutes(deps: {
   signaturePlacements?: SignaturePlacementRepository;
   signatureTemplates?: SignatureTemplateRepository;
   users?: UserRepository;
+  pdmReleaseService?: PdmReleaseService;
   notifyApprovalEvent?: (
     event: NotificationEventKey,
     approvalId: number,
@@ -72,7 +75,7 @@ export function approvalRoutes(deps: {
           deps.notifyApprovalEvent?.("signatureFailed", approvalId, { actorUserId: null, actorUsername: "system" }) ?? Promise.resolve()
       });
       if (signed?.signatureStatus === "generated") {
-        items.push(batchCompletedItem(approvalId, signed));
+        items.push(batchCompletedItem(approvalId, publishPdmIfEligible(deps, signed)));
       } else {
         items.push(batchFailedItem(approvalId, signed?.signatureError ?? "SIGNING_FAILED", signed ?? approval));
       }
@@ -313,7 +316,7 @@ export function approvalRoutes(deps: {
           notifySignatureFailed: (approvalId) =>
             deps.notifyApprovalEvent?.("signatureFailed", approvalId, { actorUserId: null, actorUsername: "system" }) ?? Promise.resolve()
         });
-        return res.json({ approval: signed ?? next, placements });
+        return res.json({ approval: signed ? publishPdmIfEligible(deps, signed) : next, placements });
       }
 
       res.json({ approval: next, placements });
@@ -383,8 +386,9 @@ export function approvalRoutes(deps: {
             notifySignatureFailed: (approvalId) =>
               deps.notifyApprovalEvent?.("signatureFailed", approvalId, { actorUserId: null, actorUsername: "system" }) ?? Promise.resolve()
           });
-          return res.json(signed ?? moved);
+          return res.json(signed ? publishPdmIfEligible(deps, signed) : moved);
         }
+        return res.json(publishPdmIfEligible(deps, moved));
       }
       res.json(moved);
     } catch (error) {
@@ -582,10 +586,27 @@ export function approvalRoutes(deps: {
         deps.notifyApprovalEvent?.("signatureFailed", approvalId, { actorUserId: null, actorUsername: "system" }) ?? Promise.resolve()
     });
 
-    res.json(signed);
+    res.json(signed ? publishPdmIfEligible(deps, signed) : signed);
   });
 
   return router;
+}
+
+function publishPdmIfEligible(
+  deps: {
+    approvals: ApprovalRepository;
+    pdmReleaseService?: PdmReleaseService;
+  },
+  approval: Approval
+) {
+  if (
+    approval.status === "approved_for_print" &&
+    (approval.signatureStatus === "generated" || approval.signatureStatus === "not_required")
+  ) {
+    deps.pdmReleaseService?.publishApproval(approval.id);
+    return deps.approvals.getById(approval.id) ?? approval;
+  }
+  return approval;
 }
 
 function isPathInsideRoot(root: string, filePath: string) {
