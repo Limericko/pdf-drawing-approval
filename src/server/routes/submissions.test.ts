@@ -92,7 +92,11 @@ describe("submission routes", () => {
       partName: "轴承座",
       version: "a0A0",
       minorVersion: "a0",
-      majorVersion: "A0"
+      majorVersion: "A0",
+      documentCode: null,
+      materialCode: null,
+      drawingName: "轴承座",
+      metadataStatus: "missing_material_code"
     });
     expect(context.operationLogs.listRecent().map((log) => log.action)).toContain("submission.uploaded");
   });
