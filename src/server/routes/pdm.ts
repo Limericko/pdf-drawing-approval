@@ -2,12 +2,16 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth.ts";
 import type { ApprovalRepository } from "../repositories/approvals.ts";
+import type { OperationLogRepository } from "../repositories/operationLogs.ts";
 import type { PdmPartRepository } from "../repositories/pdmParts.ts";
+import type { PdmBackfillService } from "../services/pdmBackfillService.ts";
 import type { PdmReleaseService } from "../services/pdmReleaseService.ts";
 
 export function pdmRoutes(deps: {
   approvals: ApprovalRepository;
+  operationLogs?: OperationLogRepository;
   pdmParts: PdmPartRepository;
+  pdmBackfillService: PdmBackfillService;
   pdmReleaseService: PdmReleaseService;
   jwtSecret: string;
 }) {
@@ -78,6 +82,25 @@ export function pdmRoutes(deps: {
     const result = deps.pdmReleaseService.publishApproval(approval.id);
     if (result.status === "not_found") return res.status(404).json({ error: "APPROVAL_NOT_FOUND" });
     if (result.status === "skipped") return res.status(400).json(result);
+    res.json(result);
+  });
+
+  router.post("/backfill-approved", requireAuth(deps.jwtSecret, ["admin"]), async (req, res) => {
+    const result = await deps.pdmBackfillService.backfillApprovedDrawings();
+    deps.operationLogs?.create({
+      actorUserId: req.user?.id ?? null,
+      actorUsername: req.user?.username ?? null,
+      action: "pdm.backfill_requested",
+      targetType: "pdm",
+      targetId: null,
+      message: "管理员触发了 PDM 历史审批回填",
+      metadata: {
+        scanned: result.scanned,
+        published: result.published,
+        skipped: result.skipped,
+        failed: result.failed
+      }
+    });
     res.json(result);
   });
 

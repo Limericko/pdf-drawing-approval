@@ -317,6 +317,25 @@ describe("PDM part library API", () => {
       expect.objectContaining({ method: "POST" })
     );
   });
+
+  it("runs the PDM approved drawing backfill endpoint", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ scanned: 1, published: 1, skipped: 0, failed: 0, items: [] });
+    const pdmApi = api as unknown as {
+      runPdmApprovedBackfill?: () => Promise<unknown>;
+    };
+
+    expect(pdmApi.runPdmApprovedBackfill).toBeTypeOf("function");
+    await pdmApi.runPdmApprovedBackfill!();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/backfill-approved",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
 });
 
 describe("system cleanup API", () => {

@@ -22,6 +22,7 @@ import {
   prepareStandardFolders,
   resetUserPassword,
   restartServer,
+  runPdmApprovedBackfill,
   runSystemCleanup,
   saveMaintenanceSettings,
   saveSettings,
@@ -39,6 +40,7 @@ import {
   type DirectoryListing,
   type SignatureTemplate,
   type OperationLog,
+  type PdmBackfillResult,
   type MaintenanceSettings,
   type ScanRun,
   type SystemDiagnostics,
@@ -54,9 +56,11 @@ import { OperationsTab } from "./settings/OperationsTab.tsx";
 export {
   batchSubmissionStatusLabel,
   buildMaintenanceRunSummary,
+  buildPdmBackfillSummary,
   normalizeBatchSubmissions,
   normalizeDiagnostics,
   normalizeSystemRisks,
+  pdmBackfillReasonLabel,
   placementStateLabel,
   riskDashboardEmptyText,
   riskLevelLabel
@@ -121,6 +125,8 @@ export function SettingsPage() {
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
   const [updateInfo, setUpdateInfo] = useState<SystemUpdateInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [pdmBackfillResult, setPdmBackfillResult] = useState<PdmBackfillResult | null>(null);
+  const [backfillingPdm, setBackfillingPdm] = useState(false);
   const [newUser, setNewUser] = useState({ username: "", password: "", displayName: "", email: "", role: "designer" as User["role"] });
   const [reportFilters, setReportFilters] = useState({ projectName: "", status: "", from: "", to: "" });
 
@@ -462,6 +468,23 @@ export function SettingsPage() {
       setMessage(error instanceof Error ? error.message : "更新检查失败");
     } finally {
       setCheckingUpdate(false);
+    }
+  }
+
+  async function executePdmBackfill() {
+    if (!window.confirm("确认执行 PDM 历史回填？系统会扫描已通过/已归档图纸，并把标准文件名的记录发布到 PDM 零件库。")) return;
+    setBackfillingPdm(true);
+    setMessage("正在执行 PDM 历史回填...");
+    try {
+      const result = await runPdmApprovedBackfill();
+      setPdmBackfillResult(result);
+      setMessage(`PDM 回填完成：扫描 ${result.scanned} 条，发布 ${result.published} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条。`);
+      await Promise.all([refreshOperationLogs(), refreshRisks(), refreshDiagnostics()]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "PDM 历史回填失败");
+      await refreshOperationLogs();
+    } finally {
+      setBackfillingPdm(false);
     }
   }
 
@@ -841,6 +864,8 @@ export function SettingsPage() {
           operationLogs={operationLogs}
           updateInfo={updateInfo}
           checkingUpdate={checkingUpdate}
+          pdmBackfillResult={pdmBackfillResult}
+          backfillingPdm={backfillingPdm}
           onRefreshRisks={refreshRisks}
           onRefreshDiagnostics={refreshDiagnostics}
           onRunBackup={runDatabaseBackupNow}
@@ -856,6 +881,7 @@ export function SettingsPage() {
           onExportReport={exportApprovalReport}
           onRefreshOperationLogs={refreshOperationLogs}
           onCheckUpdate={checkUpdateNow}
+          onRunPdmBackfill={executePdmBackfill}
         />
       )}
     </section>

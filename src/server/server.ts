@@ -38,6 +38,7 @@ import { watchSubmissions } from "./files/watchSubmissions.ts";
 import { runDatabaseBackup } from "./services/backupService.ts";
 import { executeCleanup } from "./services/cleanupService.ts";
 import { createMaintenanceScheduler, readMaintenanceSettings } from "./services/maintenanceScheduler.ts";
+import { PdmBackfillService } from "./services/pdmBackfillService.ts";
 import { PdmReleaseService } from "./services/pdmReleaseService.ts";
 import { buildPublicHealth } from "./services/publicHealth.ts";
 import type { MailTransport } from "./notifications/email.ts";
@@ -62,6 +63,7 @@ export type ServerDeps = {
   operationLogs?: OperationLogRepository;
   passwordResetTokens?: PasswordResetTokenRepository;
   pdmParts?: PdmPartRepository;
+  pdmBackfillService?: PdmBackfillService;
   pdmReleaseService?: PdmReleaseService;
   scanRuns?: ScanRunRepository;
   signatureAssets?: SignatureAssetRepository;
@@ -102,6 +104,7 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
   const passwordResetTokens = deps.passwordResetTokens ?? new PasswordResetTokenRepository(db);
   const pdmParts = deps.pdmParts ?? new PdmPartRepository(db);
   const pdmReleaseService = deps.pdmReleaseService ?? new PdmReleaseService({ db, approvals, operationLogs, pdmParts });
+  const pdmBackfillService = deps.pdmBackfillService ?? new PdmBackfillService({ db, approvals, operationLogs, pdmParts, releaseService: pdmReleaseService });
   const scanRuns = deps.scanRuns ?? new ScanRunRepository(db);
   const signatureAssets = deps.signatureAssets ?? new SignatureAssetRepository(db);
   const signaturePlacements = deps.signaturePlacements ?? new SignaturePlacementRepository(db);
@@ -203,7 +206,7 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
       jwtSecret: config.jwtSecret
     })
   );
-  app.use("/api/pdm", pdmRoutes({ approvals, pdmParts, pdmReleaseService, jwtSecret: config.jwtSecret }));
+  app.use("/api/pdm", pdmRoutes({ approvals, operationLogs, pdmParts, pdmBackfillService, pdmReleaseService, jwtSecret: config.jwtSecret }));
   app.use(
     "/api/approvals",
     approvalAnnotationRoutes({

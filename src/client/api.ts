@@ -287,6 +287,22 @@ export type PdmReleaseResult = {
   error?: string;
 };
 
+export type PdmBackfillItem = {
+  approvalId: number;
+  status: "published" | "skipped" | "failed";
+  reason?: string;
+  materialCode?: string;
+  version?: string;
+};
+
+export type PdmBackfillResult = {
+  scanned: number;
+  published: number;
+  skipped: number;
+  failed: number;
+  items: PdmBackfillItem[];
+};
+
 export type SignatureAsset = {
   id: number;
   userId: number;
@@ -646,6 +662,10 @@ export function repairApprovalPdmMetadata(
 
 export function publishApprovalToPdm(approvalId: number) {
   return requestJson<PdmReleaseResult>(`/api/pdm/approvals/${approvalId}/publish`, { method: "POST" });
+}
+
+export function runPdmApprovedBackfill() {
+  return requestJson<PdmBackfillResult>("/api/pdm/backfill-approved", { method: "POST" });
 }
 
 export function getApproval(id: number) {

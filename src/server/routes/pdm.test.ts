@@ -145,6 +145,35 @@ async function createApprovedApproval(
   return approval;
 }
 
+async function createHistoricalPdmApproval(
+  context: Awaited<ReturnType<typeof appContext>>,
+  input: {
+    projectName: string;
+    documentCode: string;
+    materialCode: string;
+    drawingName: string;
+    version: string;
+  }
+) {
+  const fileName = `${input.documentCode} 《${input.materialCode} ${input.drawingName}》 ${input.version}.pdf`;
+  const filePath = path.join(context.watchRoot, "04-已通过待打印", input.projectName, fileName);
+  await createValidPdf(filePath);
+  return context.approvals.create({
+    projectName: input.projectName,
+    partName: fileName.replace(/\.pdf$/i, ""),
+    version: input.version,
+    minorVersion: input.version.slice(0, 2),
+    majorVersion: input.version.slice(2),
+    originalFilePath: filePath,
+    currentFilePath: filePath,
+    status: "approved_for_print",
+    submittedByUserId: context.designer.id,
+    source: "folder_watch",
+    originalFileHash: null,
+    signatureStatus: "not_required"
+  });
+}
+
 async function publishApproval(
   context: Awaited<ReturnType<typeof appContext>>,
   input: {
@@ -361,6 +390,44 @@ describe("PDM routes", () => {
 
     expect(published.body.status).toBe("published");
     expect(published.body.revision.version).toBe("a0A0");
+  });
+
+  it("lets admins backfill approved historical drawings while denying non-admin roles", async () => {
+    const context = await appContext();
+    const approval = await createHistoricalPdmApproval(context, {
+      projectName: "项目A",
+      documentCode: "MP300A000072",
+      materialCode: "0102A00700883",
+      drawingName: "400A按键",
+      version: "a0A0"
+    });
+
+    await request(context.app).post("/api/pdm/backfill-approved").set("Authorization", auth(context.designerToken)).expect(403);
+    await request(context.app).post("/api/pdm/backfill-approved").set("Authorization", auth(context.supervisorToken)).expect(403);
+    await request(context.app).post("/api/pdm/backfill-approved").set("Authorization", auth(context.processToken)).expect(403);
+
+    const response = await request(context.app)
+      .post("/api/pdm/backfill-approved")
+      .set("Authorization", auth(context.adminToken))
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        scanned: 1,
+        published: 1,
+        skipped: 0,
+        failed: 0
+      })
+    );
+    expect(response.body.items[0]).toEqual(
+      expect.objectContaining({
+        approvalId: approval.id,
+        status: "published",
+        materialCode: "0102A00700883",
+        version: "a0A0"
+      })
+    );
+    expect(context.pdmParts.findPartByMaterialCode("0102A00700883")?.currentRevisionId).toBeTruthy();
   });
 
   it("publishes PDM revision automatically when an eligible approval passes both reviews", async () => {
