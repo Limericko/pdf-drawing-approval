@@ -106,6 +106,15 @@ describe("PDM pending metadata page layout", () => {
     expect(pendingSource).toContain("体系文件号");
     expect(pendingSource).toContain("管家婆物料号");
   });
+
+  it("supports inline metadata repair and publish retry from the queue", () => {
+    expect(pendingSource).toContain("repairApprovalPdmMetadata");
+    expect(pendingSource).toContain("publishApprovalToPdm");
+    expect(pendingSource).toContain("pdm-inline-repair");
+    expect(pendingSource).toContain("快速补录");
+    expect(pendingSource).toContain("保存补录");
+    expect(pendingSource).toContain("发布到 PDM");
+  });
 });
 
 describe("PDM part detail page layout", () => {
@@ -121,6 +130,18 @@ describe("PDM part detail page layout", () => {
     expect(detailSource).toContain("使用项目");
     expect(detailSource).toContain("审批记录");
     expect(detailSource).toContain("getPdmPart");
+  });
+
+  it("provides direct revision file actions, trace timeline, and admin void controls", () => {
+    expect(detailSource).toContain("getApprovalFileUrl");
+    expect(detailSource).toContain("getSignedFileUrl");
+    expect(detailSource).toContain("getAnnotatedFileUrl");
+    expect(detailSource).toContain("原始 PDF");
+    expect(detailSource).toContain("签后 PDF");
+    expect(detailSource).toContain("审查版 PDF");
+    expect(detailSource).toContain("操作时间线");
+    expect(detailSource).toContain("voidPdmRevision");
+    expect(detailSource).toContain("作废版本");
   });
 
   it("summarizes revision state without hiding superseded versions", () => {
@@ -147,7 +168,8 @@ describe("PDM part detail page layout", () => {
         updatedAt: "2026-06-29T01:00:00.000Z"
       },
       revisions: [],
-      usages: []
+      usages: [],
+      traceLogs: []
     };
 
     expect(pdmRevisionSummary(detail)).toBe("当前 a1A0 / 体系文件号 MP300A000072");

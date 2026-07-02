@@ -276,8 +276,31 @@ describe("PDM routes", () => {
   it("returns a part detail with current revision, revision history, usage projects, and approval links", async () => {
     const context = await appContext();
     const first = await publishApproval(context, { projectName: "项目A", drawingName: "400A按键", version: "a0A0" });
-    await publishApproval(context, { projectName: "项目B", drawingName: "400A按键", version: "a1A0" });
+    const second = await publishApproval(context, { projectName: "项目B", drawingName: "400A按键", version: "a1A0" });
     const partId = first.published.part!.id;
+    context.operationLogs.create({
+      actorUsername: "supervisor",
+      action: "approval.reviewed",
+      targetType: "approval",
+      targetId: first.approval.id,
+      message: "主管审核通过",
+      metadata: { decision: "approved" }
+    });
+    context.operationLogs.create({
+      actorUsername: "system",
+      action: "pdm.revision_published",
+      targetType: "approval",
+      targetId: second.approval.id,
+      message: "系统发布新版",
+      metadata: { revisionId: second.published.revision!.id }
+    });
+    context.operationLogs.create({
+      actorUsername: "system",
+      action: "approval.reviewed",
+      targetType: "approval",
+      targetId: 9999,
+      message: "无关审批日志"
+    });
 
     const response = await request(context.app)
       .get(`/api/pdm/parts/${partId}`)
@@ -291,6 +314,48 @@ describe("PDM routes", () => {
       ["a0A0", "superseded"]
     ]);
     expect(response.body.usages.map((usage: { projectName: string }) => usage.projectName)).toEqual(["项目A", "项目B"]);
+    expect(response.body.traceLogs.map((log: { message: string }) => log.message)).toEqual([
+      "系统发布新版",
+      "主管审核通过",
+      "系统已发布图纸版本到 PDM",
+      "系统已发布图纸版本到 PDM"
+    ]);
+  });
+
+  it("lets admins void PDM revisions and rejects non-admin or missing reasons", async () => {
+    const context = await appContext();
+    const first = await publishApproval(context, { projectName: "项目A", drawingName: "400A按键", version: "a0A0" });
+    const second = await publishApproval(context, { projectName: "项目A", drawingName: "400A按键", version: "a1A0" });
+    const partId = first.published.part!.id;
+    const currentRevisionId = second.published.revision!.id;
+
+    await request(context.app)
+      .post(`/api/pdm/revisions/${currentRevisionId}/void`)
+      .set("Authorization", auth(context.designerToken))
+      .send({ reason: "重复发布" })
+      .expect(403);
+    await request(context.app)
+      .post(`/api/pdm/revisions/${currentRevisionId}/void`)
+      .set("Authorization", auth(context.adminToken))
+      .send({ reason: "" })
+      .expect(400);
+
+    const response = await request(context.app)
+      .post(`/api/pdm/revisions/${currentRevisionId}/void`)
+      .set("Authorization", auth(context.adminToken))
+      .send({ reason: "重复发布" })
+      .expect(200);
+
+    expect(response.body.voided).toEqual(expect.objectContaining({ id: currentRevisionId, releaseStatus: "voided" }));
+    expect(response.body.currentRevision).toEqual(expect.objectContaining({ id: first.published.revision!.id, releaseStatus: "released" }));
+    expect(context.pdmParts.getPartById(partId)?.currentRevisionId).toBe(first.published.revision!.id);
+    expect(context.operationLogs.listForTarget("pdm_revision", currentRevisionId).at(-1)).toEqual(
+      expect.objectContaining({
+        actorUsername: "admin",
+        action: "pdm.revision_voided",
+        message: "管理员作废了 PDM 图纸版本"
+      })
+    );
   });
 
   it("lists pending metadata for admins and only the designer's own records", async () => {

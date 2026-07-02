@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, ArrowLeft, Check, ExternalLink, PencilLine, RefreshCw, Send } from "lucide-react";
 import {
   listPendingPdmMetadata,
+  publishApprovalToPdm,
+  repairApprovalPdmMetadata,
   type PdmMetadataStatus,
   type PdmPendingMetadataApproval,
   type PdmPublishStatus
 } from "../api.ts";
+
+type PdmRepairDraft = {
+  documentCode: string;
+  materialCode: string;
+  drawingName: string;
+};
 
 export function PdmPendingMetadataPage() {
   const [items, setItems] = useState<PdmPendingMetadataApproval[]>([]);
@@ -14,6 +22,10 @@ export function PdmPendingMetadataPage() {
   const [refreshSeq, setRefreshSeq] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [editingApprovalId, setEditingApprovalId] = useState<number | null>(null);
+  const [repairDrafts, setRepairDrafts] = useState<Record<number, PdmRepairDraft>>({});
+  const [busyApprovalId, setBusyApprovalId] = useState<number | null>(null);
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredItems = useMemo(
     () => filterPendingMetadataItems(items, { keyword: normalizedKeyword, metadataStatus: status }),
@@ -43,6 +55,77 @@ export function PdmPendingMetadataPage() {
   function clearFilters() {
     setKeyword("");
     setStatus("");
+  }
+
+  function reloadQueue() {
+    setRefreshSeq((current) => current + 1);
+  }
+
+  function startRepair(item: PdmPendingMetadataApproval) {
+    setEditingApprovalId(item.approvalId);
+    setRepairDrafts((current) => ({
+      ...current,
+      [item.approvalId]: {
+        documentCode: item.documentCode ?? "",
+        materialCode: item.materialCode ?? "",
+        drawingName: item.drawingName ?? item.partName
+      }
+    }));
+  }
+
+  function updateRepairDraft(approvalId: number, field: keyof PdmRepairDraft, value: string) {
+    setRepairDrafts((current) => ({
+      ...current,
+      [approvalId]: {
+        ...(current[approvalId] ?? { documentCode: "", materialCode: "", drawingName: "" }),
+        [field]: value
+      }
+    }));
+  }
+
+  async function saveRepair(item: PdmPendingMetadataApproval) {
+    const draft = repairDrafts[item.approvalId] ?? {
+      documentCode: item.documentCode ?? "",
+      materialCode: item.materialCode ?? "",
+      drawingName: item.drawingName ?? item.partName
+    };
+    if (!draft.drawingName.trim()) {
+      setError("图纸名称不能为空。");
+      return;
+    }
+
+    setError("");
+    setMessage("");
+    setBusyApprovalId(item.approvalId);
+    try {
+      await repairApprovalPdmMetadata(item.approvalId, {
+        documentCode: nullableTrim(draft.documentCode),
+        materialCode: nullableTrim(draft.materialCode),
+        drawingName: draft.drawingName.trim()
+      });
+      setMessage("PDM 信息已保存。");
+      setEditingApprovalId(null);
+      reloadQueue();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDM_METADATA_REPAIR_FAILED");
+    } finally {
+      setBusyApprovalId(null);
+    }
+  }
+
+  async function publishItem(item: PdmPendingMetadataApproval) {
+    setError("");
+    setMessage("");
+    setBusyApprovalId(item.approvalId);
+    try {
+      const result = await publishApprovalToPdm(item.approvalId);
+      setMessage(result.status === "published" ? "已发布到 PDM 零件库。" : result.error ?? result.reason ?? "PDM 发布已提交。");
+      reloadQueue();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "PDM_PUBLISH_FAILED");
+    } finally {
+      setBusyApprovalId(null);
+    }
   }
 
   return (
@@ -113,7 +196,8 @@ export function PdmPendingMetadataPage() {
           {keyword.trim() && <span>关键词：{keyword.trim()}</span>}
           {status && <span>类型：{pdmMetadataStatusLabel(status as PdmMetadataStatus)}</span>}
         </div>
-        {error && <div className="error">PDM 待补录读取失败：{error}</div>}
+        {error && <div className="error">PDM 待补录处理失败：{error}</div>}
+        {message && <div className="success">{message}</div>}
         {loading && <div className="empty compact-empty">正在刷新 PDM 待补录清单...</div>}
         {filteredItems.length > 0 ? (
           <div className="table-surface pdm-table-surface">
@@ -132,26 +216,86 @@ export function PdmPendingMetadataPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredItems.map((item) => (
-                  <tr key={item.approvalId}>
-                    <td data-label="项目">{item.projectName}</td>
-                    <td data-label="图纸名称"><strong className="pdm-part-name">{item.drawingName ?? item.partName}</strong></td>
-                    <td data-label="版本"><span className="version-badge">{item.version}</span></td>
-                    <td data-label="管家婆物料号">{item.materialCode ?? <span className="muted-inline">待补</span>}</td>
-                    <td data-label="体系文件号">{item.documentCode ?? <span className="muted-inline">待补</span>}</td>
-                    <td data-label="待补类型">
-                      <span className="status-chip status-chip--pending">{pdmMetadataStatusLabel(item.metadataStatus)}</span>
-                    </td>
-                    <td data-label="发布状态">{pdmPublishStatusLabel(item.publishStatus)}</td>
-                    <td data-label="提交时间">{formatPdmPendingDate(item.submittedAt)}</td>
-                    <td data-label="操作" className="row-actions">
-                      <a className="table-action-link" href={`#/approvals/${item.approvalId}`}>
-                        <ExternalLink size={14} strokeWidth={2} aria-hidden="true" />
-                        打开审批详情
-                      </a>
-                    </td>
-                  </tr>
-                ))}
+                {filteredItems.map((item) => {
+                  const draft = repairDrafts[item.approvalId] ?? {
+                    documentCode: item.documentCode ?? "",
+                    materialCode: item.materialCode ?? "",
+                    drawingName: item.drawingName ?? item.partName
+                  };
+                  const isEditing = editingApprovalId === item.approvalId;
+                  const isBusy = busyApprovalId === item.approvalId;
+                  return (
+                    <Fragment key={item.approvalId}>
+                      <tr>
+                        <td data-label="项目">{item.projectName}</td>
+                        <td data-label="图纸名称"><strong className="pdm-part-name">{item.drawingName ?? item.partName}</strong></td>
+                        <td data-label="版本"><span className="version-badge">{item.version}</span></td>
+                        <td data-label="管家婆物料号">{item.materialCode ?? <span className="muted-inline">待补</span>}</td>
+                        <td data-label="体系文件号">{item.documentCode ?? <span className="muted-inline">待补</span>}</td>
+                        <td data-label="待补类型">
+                          <span className="status-chip status-chip--pending">{pdmMetadataStatusLabel(item.metadataStatus)}</span>
+                        </td>
+                        <td data-label="发布状态">{pdmPublishStatusLabel(item.publishStatus)}</td>
+                        <td data-label="提交时间">{formatPdmPendingDate(item.submittedAt)}</td>
+                        <td data-label="操作" className="row-actions">
+                          <button type="button" className="table-action-button" onClick={() => startRepair(item)}>
+                            <PencilLine size={14} strokeWidth={2} aria-hidden="true" />
+                            快速补录
+                          </button>
+                          <button type="button" className="table-action-button" disabled={isBusy} onClick={() => publishItem(item)}>
+                            <Send size={14} strokeWidth={2} aria-hidden="true" />
+                            发布到 PDM
+                          </button>
+                          <a className="table-action-link" href={`#/approvals/${item.approvalId}`}>
+                            <ExternalLink size={14} strokeWidth={2} aria-hidden="true" />
+                            打开审批详情
+                          </a>
+                        </td>
+                      </tr>
+                      {isEditing && (
+                        <tr key={`${item.approvalId}-repair`} className="pdm-inline-repair-row">
+                          <td colSpan={9}>
+                            <div className="pdm-inline-repair" aria-label={`${item.drawingName ?? item.partName} 快速补录`}>
+                              <label>
+                                管家婆物料号
+                                <input
+                                  value={draft.materialCode}
+                                  onChange={(event) => updateRepairDraft(item.approvalId, "materialCode", event.target.value)}
+                                  placeholder="例如 0102A00700883"
+                                />
+                              </label>
+                              <label>
+                                体系文件号
+                                <input
+                                  value={draft.documentCode}
+                                  onChange={(event) => updateRepairDraft(item.approvalId, "documentCode", event.target.value)}
+                                  placeholder="例如 MP300A000072"
+                                />
+                              </label>
+                              <label>
+                                图纸名称
+                                <input
+                                  value={draft.drawingName}
+                                  onChange={(event) => updateRepairDraft(item.approvalId, "drawingName", event.target.value)}
+                                  placeholder="图纸名称"
+                                />
+                              </label>
+                              <div className="pdm-inline-repair__actions">
+                                <button type="button" className="primary-button icon-text-button" disabled={isBusy} onClick={() => saveRepair(item)}>
+                                  <Check size={14} strokeWidth={2} aria-hidden="true" />
+                                  保存补录
+                                </button>
+                                <button type="button" className="secondary-button" onClick={() => setEditingApprovalId(null)} disabled={isBusy}>
+                                  取消
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -220,4 +364,9 @@ function formatPdmPendingDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function nullableTrim(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }

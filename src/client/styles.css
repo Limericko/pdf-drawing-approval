@@ -2025,7 +2025,7 @@ input[type="file"] {
 
 .pdm-tab-list {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   padding: 4px;
   background: var(--surface-soft);
@@ -2118,6 +2118,134 @@ input[type="file"] {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+}
+
+.pdm-file-action-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.pdm-file-action-list--compact {
+  min-width: 0;
+}
+
+.pdm-file-action-disabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 10px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pdm-revision-admin {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 8px;
+  min-width: 260px;
+}
+
+.pdm-revision-admin input {
+  min-height: 32px;
+}
+
+.pdm-trace-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pdm-trace-list li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+.pdm-trace-list__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-line);
+  border-radius: var(--radius-control);
+}
+
+.pdm-trace-list div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.pdm-trace-list time,
+.pdm-trace-list em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.pdm-trace-list strong {
+  color: var(--text-strong);
+}
+
+.pdm-trace-list span {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.pdm-inline-repair-row:hover {
+  background: transparent;
+}
+
+.pdm-inline-repair-row td {
+  padding: 10px;
+  background: #f9fbfc;
+}
+
+.pdm-inline-repair {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--primary-line);
+  border-radius: var(--radius-control);
+}
+
+.pdm-inline-repair label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pdm-inline-repair input {
+  min-height: 34px;
+}
+
+.pdm-inline-repair__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .error {
@@ -5465,6 +5593,15 @@ input[type="file"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .pdm-inline-repair,
+  .pdm-revision-admin {
+    grid-template-columns: 1fr;
+  }
+
+  .pdm-file-action-list {
+    min-width: 0;
+  }
+
   .submit-panel {
     position: static;
   }
@@ -5939,6 +6076,15 @@ input[type="file"] {
   .pdm-table .row-actions .table-action-link,
   .pdm-table .row-actions .table-action-button {
     width: 100%;
+  }
+
+  .pdm-table .pdm-inline-repair-row td {
+    display: block;
+    padding: 0;
+  }
+
+  .pdm-table .pdm-inline-repair-row td::before {
+    display: none;
   }
 
   .pdm-overview-grid .pdm-stat-strip,

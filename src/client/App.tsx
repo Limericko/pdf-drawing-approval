@@ -463,7 +463,7 @@ export function App() {
             {routeAllowed && route.name === "detail" && <ApprovalDetailPage id={route.id} user={user} />}
             {routeAllowed && route.name === "pdm" && <PdmPartsPage user={user} />}
             {routeAllowed && route.name === "pdmPending" && <PdmPendingMetadataPage />}
-            {routeAllowed && route.name === "pdmDetail" && <PdmPartDetailPage id={route.id} />}
+            {routeAllowed && route.name === "pdmDetail" && <PdmPartDetailPage id={route.id} user={user} />}
             {routeAllowed && route.name === "signature" && <MySignaturePage onSignatureUpdated={applySignatureState} />}
             {routeAllowed && route.name === "profile" && <ProfilePage onUserUpdated={setUser} />}
             {routeAllowed && route.name === "settings" && <SettingsPage />}

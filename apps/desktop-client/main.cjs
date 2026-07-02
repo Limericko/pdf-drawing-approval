@@ -45,7 +45,7 @@ function registerIpcHandlers() {
   ipcMain.handle("desktop:get-server-url", () => readSettings(getUserDataDir()).serverUrl);
   ipcMain.handle("desktop:set-server-url", (_event, serverUrl) => {
     const nextServerUrl = writeSettings(getUserDataDir(), { serverUrl }).serverUrl;
-    scheduleUpdateCheck(600);
+    scheduleUpdateCheckIfConfigured(600);
     return nextServerUrl;
   });
   ipcMain.handle("desktop:clear-server-url", () => writeSettings(getUserDataDir(), { serverUrl: null }).serverUrl);
@@ -176,6 +176,11 @@ function scheduleUpdateCheck(delayMs) {
       setUpdateState({ status: "error", message: errorMessage(error) });
     });
   }, delayMs);
+}
+
+function scheduleUpdateCheckIfConfigured(delayMs) {
+  if (!readSettings(getUserDataDir()).serverUrl) return;
+  scheduleUpdateCheck(delayMs);
 }
 
 function setUpdateState(nextState) {
@@ -336,7 +341,7 @@ async function createMainWindow() {
   });
 
   await mainWindow.loadURL(clientServer.url);
-  scheduleUpdateCheck(800);
+  scheduleUpdateCheckIfConfigured(800);
 }
 
 app.whenReady().then(async () => {

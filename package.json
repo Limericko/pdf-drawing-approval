@@ -1,6 +1,6 @@
 {
   "name": "pdf-approval",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "LAN PDF drawing approval system for Windows teams",
   "author": "PDF Approval Team",
   "private": true,

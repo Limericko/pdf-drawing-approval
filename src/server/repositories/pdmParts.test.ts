@@ -87,6 +87,52 @@ describe("PdmPartRepository", () => {
     ]);
   });
 
+  it("voids a current revision and restores the latest non-voided history as current", () => {
+    const { repository } = createRepo();
+    const part = repository.createOrUpdatePart({
+      materialCode: "0102A00700883",
+      name: "400A按键",
+      createdFromApprovalId: 10
+    });
+    const first = repository.publishRevision(publishInput({ partId: part.id, approvalId: 10, version: "a0A0" }));
+    const second = repository.publishRevision(
+      publishInput({
+        partId: part.id,
+        approvalId: 11,
+        version: "a1A0",
+        minorVersion: "a1",
+        originalFileHash: "original-hash-a1A0",
+        signedFileHash: "signed-hash-a1A0"
+      })
+    );
+
+    const result = repository.voidRevision(second.id);
+
+    expect(result.voided).toEqual(expect.objectContaining({ id: second.id, releaseStatus: "voided" }));
+    expect(result.currentRevision).toEqual(expect.objectContaining({ id: first.id, releaseStatus: "released" }));
+    expect(repository.findPartByMaterialCode("0102A00700883")?.currentRevisionId).toBe(first.id);
+    expect(repository.listRevisions(part.id).map((item) => [item.id, item.releaseStatus])).toEqual([
+      [second.id, "voided"],
+      [first.id, "released"]
+    ]);
+  });
+
+  it("clears the current revision when the last non-voided revision is voided", () => {
+    const { repository } = createRepo();
+    const part = repository.createOrUpdatePart({
+      materialCode: "0102A00700883",
+      name: "400A按键",
+      createdFromApprovalId: 10
+    });
+    const revision = repository.publishRevision(publishInput({ partId: part.id, approvalId: 10, version: "a0A0" }));
+
+    const result = repository.voidRevision(revision.id);
+
+    expect(result.currentRevision).toBeNull();
+    expect(repository.findPartByMaterialCode("0102A00700883")?.currentRevisionId).toBeNull();
+    expect(repository.getRevisionById(revision.id)?.releaseStatus).toBe("voided");
+  });
+
   it("rejects duplicate revisions for the same material code and version", () => {
     const { repository } = createRepo();
     const part = repository.createOrUpdatePart({

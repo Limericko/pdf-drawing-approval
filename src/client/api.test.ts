@@ -336,6 +336,26 @@ describe("PDM part library API", () => {
       })
     );
   });
+
+  it("voids a PDM drawing revision with an admin reason", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ voided: { id: 12 }, currentRevision: null });
+    const pdmApi = api as unknown as {
+      voidPdmRevision?: (revisionId: number, reason: string) => Promise<unknown>;
+    };
+
+    expect(pdmApi.voidPdmRevision).toBeTypeOf("function");
+    await pdmApi.voidPdmRevision!(12, "重复发布");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/revisions/12/void",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "重复发布" }),
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
 });
 
 describe("system cleanup API", () => {

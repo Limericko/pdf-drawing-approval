@@ -4002,7 +4002,7 @@ Vite 构建仍提示 assets/pdf-CJRVEglZ.js 约 531.35 kB 超过 500 kB。
 
 已知限制：
 
-- PDM 历史回填当前是维护服务能力，尚未做管理员页面按钮；需要接入运维入口时可复用 `PdmBackfillService.backfillApprovedDrawings()`。
+- PDM 历史回填已接入管理员“系统管理”维护入口，可触发 `PdmBackfillService.backfillApprovedDrawings()` 并查看回填结果。
 - 标准 PDM 发布以管家婆物料号为主键；缺失物料号的历史审批不会自动发布，需要先通过元数据修复补齐。
 - 缺失体系文件号允许发布，后续可通过元数据修复补齐。
 
@@ -4075,4 +4075,63 @@ git diff --check: 无空白或补丁格式问题。
 
 ```text
 构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 台账收口。
+
+## 2026-07-02 PDM V1 收口与 v0.9.2 发布验证
+
+变更范围：
+
+- PDM 零件详情页新增原始 PDF、签后 PDF、审查版 PDF 直接入口。
+- PDM 零件详情页新增操作时间线，直接展示该零件相关审批和 PDM 操作日志。
+- 新增管理员 PDM 图纸版本作废接口和页面入口；作废当前版本后会回退到最近的非作废历史版本。
+- PDM 待补录清单新增列表内快速补录和“发布到 PDM”重试。
+- 修正 PDM 历史回填验证文档中的过期限制说明。
+- 版本升级到 `0.9.2`，重新生成客户端、服务端安装包和更新清单。
+
+命令验证：
+
+```powershell
+npm test -- --run src/client/pages/pdmPageLayout.test.ts
+npm test -- --run src/server/repositories/pdmParts.test.ts
+npm test -- --run src/server/routes/pdm.test.ts
+npm test -- --run src/client/api.test.ts
+npm test
+npm run desktop:test
+npm run build
+npm run installer:package
+git diff --check
+```
+
+结果：
+
+- focused PDM 前端布局测试：10 个用例通过。
+- PDM repository 测试：9 个用例通过。
+- PDM routes 测试：8 个用例通过。
+- client API 测试：27 个用例通过。
+- 全量测试：95 个测试文件、541 个用例通过。
+- Electron 桌面壳测试：3 个测试文件、12 个用例通过。
+- Vite/TypeScript 构建通过；仍保留既有 `assets/pdf-CJRVEglZ.js` 约 531.35 kB 的 PDF.js chunk 提示，不阻断发布。
+- `git diff --check` 通过。
+
+浏览器冒烟：
+
+- 使用临时端口 `18080` 和临时数据库启动 `0.9.2` 开发服务，未占用真实服务端 `8080`。
+- Chrome/Playwright 打开 `http://127.0.0.1:18080/#/pdm`，使用 `admin / admin123` 登录。
+- PDM 工作台显示零件总数、当前有效版本、待补录、共用件数和零件主表。
+- PDM 待补录页显示“快速补录”“发布到 PDM”，点击“快速补录”后出现物料号、体系文件号、图纸名称内联表单。
+- PDM 零件详情页显示原始 PDF、签后 PDF、审查版 PDF、历史版本、作废版本控件。
+- 点击“操作时间线”后显示审核处理和发布到 PDM 记录。
+- Playwright console error 检查：0 个 error。
+
+发布产物：
+
+- `dist\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe`：103125185 bytes。
+- `dist\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe`：103396067 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe`：103125185 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe`：103396067 bytes。
+- `E:\PDF服务端\pdf-approval\releases\updates\latest.json` 和 `latest.yml` 均已同步，version=`0.9.2`。
+- 真实服务端 `http://127.0.0.1:8080/updates/latest.json` 返回 version=`0.9.2`；`/updates/latest.yml` 首行为 `version: 0.9.2`。
+
+注意：
+
+- 验证时真实服务端 `/health` 仍显示 `0.9.1`，因为尚未安装新版服务端 exe；当前已同步的是更新目录。安装 `PDF图纸审批服务端-安装包-0.9.2.exe` 后，服务端运行版本才会变为 `0.9.2`。
 ```

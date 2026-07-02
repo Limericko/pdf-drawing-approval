@@ -28,8 +28,8 @@ npm run installer:package
 输出：
 
 ```text
-dist\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe
-dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe
+dist\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe
+dist\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe
 ```
 
 分发规则：
@@ -52,13 +52,13 @@ dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe
 3. 把客户端安装包放到 `releases\installers\client`，把服务端安装包放到 `releases\installers\server`。
 4. 服务端会自动通过当前访问地址提供 `http://服务器IP:端口/updates/latest.json` 和 `http://服务器IP:端口/updates/latest.yml`，无需在管理端填写更新清单地址。
 5. 管理员在“运维追溯 → 版本更新”点击“检查更新”，查看新版本、更新日志和安装包下载地址。
-6. Electron 客户端启动后会通过 `/updates/latest.yml` 自动检查客户端新版；发现新版后自动下载并显示进度，下载完成后提示用户打开安装包并按 Windows 安装向导升级。
+6. Electron 客户端保存审批服务器地址后会通过 `/updates/latest.yml` 自动检查客户端新版；首次未配置服务器地址时不会检查更新。发现新版后自动下载并显示进度，下载完成后提示用户打开安装包并按 Windows 安装向导升级。
 
 特殊部署如果要使用独立更新服务器，可在服务端启动环境中设置 `PDF_APPROVAL_UPDATE_MANIFEST_URL` 覆盖默认清单地址；常规局域网部署不要设置。
 
 当前更新能力是“自动检查、自动下载客户端安装包、手动执行安装向导”，不会静默覆盖安装，也不会自动更新服务端。服务端升级前仍建议先做一次数据库备份。
 
-注意：`0.9.0` 及更早客户端没有内置 `electron-updater`，不能自动升级到 `0.9.1`。这次需要给同事手动安装一次 `PDF图纸审批客户端-安装包-0.9.1.exe`；从 `0.9.1` 之后，客户端启动时才会自动检查、下载后续新版。
+注意：`0.9.0` 及更早客户端没有内置 `electron-updater`，不能自动升级到新版。需要给这些电脑手动安装一次 `PDF图纸审批客户端-安装包-0.9.2.exe`；从 `0.9.1` 及以后客户端开始，启动时才会自动检查、下载后续新版。
 
 从 `0.8.7` 开始，服务端安装器升级时会保留安装目录下的 `data`、`backups`、`logs`、`releases` 和 `server-config.json`。如果旧版本安装后发现更新清单 404，先重新发布一次安装包或执行 `npm run release:sync-runtime` 恢复 `releases` 目录。
 

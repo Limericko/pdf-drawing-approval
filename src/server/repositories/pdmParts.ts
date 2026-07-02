@@ -334,6 +334,54 @@ export class PdmPartRepository {
     return rows.map(mapRevision);
   }
 
+  voidRevision(revisionId: number): { voided: PdmDrawingRevision; currentRevision: PdmDrawingRevision | null } {
+    const revision = this.getRevisionById(revisionId);
+    if (!revision) {
+      throw new Error("PDM_REVISION_NOT_FOUND");
+    }
+
+    this.db
+      .prepare("UPDATE pdm_drawing_revisions SET release_status = 'voided', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .run(revisionId);
+
+    const part = this.getPartById(revision.partId);
+    if (part?.currentRevisionId === revisionId) {
+      const replacement = this.db
+        .prepare(
+          `SELECT * FROM pdm_drawing_revisions
+           WHERE part_id = ? AND id != ? AND release_status != 'voided'
+           ORDER BY released_at DESC, id DESC
+           LIMIT 1`
+        )
+        .get(revision.partId, revisionId) as PdmDrawingRevisionRow | undefined;
+
+      this.db
+        .prepare(
+          `UPDATE pdm_drawing_revisions
+           SET release_status = 'superseded', updated_at = CURRENT_TIMESTAMP
+           WHERE part_id = ? AND release_status != 'voided'`
+        )
+        .run(revision.partId);
+
+      if (replacement) {
+        this.db
+          .prepare("UPDATE pdm_drawing_revisions SET release_status = 'released', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(replacement.id);
+        this.db
+          .prepare("UPDATE pdm_parts SET current_revision_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(replacement.id, revision.partId);
+      } else {
+        this.db
+          .prepare("UPDATE pdm_parts SET current_revision_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(revision.partId);
+      }
+    }
+
+    const refreshedPart = this.getPartById(revision.partId);
+    const currentRevision = refreshedPart?.currentRevisionId ? this.getRevisionById(refreshedPart.currentRevisionId) : null;
+    return { voided: this.getRevisionById(revisionId)!, currentRevision };
+  }
+
   recordUsage(input: { materialCode: string; projectName: string; approvalId: number }): PdmPartUsage {
     const materialCode = normalizeRequired(input.materialCode, "PDM_MATERIAL_CODE_REQUIRED");
     const projectName = normalizeRequired(input.projectName, "PDM_PROJECT_NAME_REQUIRED");

@@ -7,11 +7,21 @@ export type ReleaseNote = {
 
 export const releaseNotes: ReleaseNote[] = [
   {
+    version: "0.9.2",
+    date: "2026-07-02",
+    title: "V9.2 PDM V1 图纸版本库",
+    items: [
+      "PDM 零件详情页新增原始 PDF、签后 PDF、审查版 PDF 直接打开入口，并展示该零件相关审批和 PDM 操作时间线。",
+      "管理员可在零件详情页作废 PDM 图纸版本，系统会重新计算当前有效版本并记录作废原因。",
+      "PDM 待补录清单支持列表内快速补录物料号、体系文件号、图纸名称，并可直接重试发布到 PDM。"
+    ]
+  },
+  {
     version: "0.9.1",
     date: "2026-06-26",
     title: "V9.1 客户端启动自动更新",
     items: [
-      "Electron 客户端接入 electron-updater，启动后即通过服务端 /updates/latest.yml 检查新版，不再依赖用户登录。",
+      "Electron 客户端接入 electron-updater，已配置审批服务器地址后会通过服务端 /updates/latest.yml 检查新版，不再依赖用户登录；首次未配置服务地址时不再误触发更新失败提示。",
       "发现新版后自动下载客户端安装包并显示下载进度，下载完成后弹出安装步骤，由用户打开安装包按向导完成升级。",
       "发布同步流程新增 latest.yml、客户端安装包和 blockmap 文件，真实服务端 releases\\updates 可直接作为内网更新源。"
     ]

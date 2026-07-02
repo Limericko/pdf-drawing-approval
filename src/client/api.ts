@@ -275,6 +275,12 @@ export type PdmPartDetail = {
   currentRevision: PdmDrawingRevision | null;
   revisions: PdmDrawingRevision[];
   usages: PdmPartUsage[];
+  traceLogs: OperationLog[];
+};
+
+export type PdmRevisionVoidResult = {
+  voided: PdmDrawingRevision;
+  currentRevision: PdmDrawingRevision | null;
 };
 
 export type PdmMetadataRepairResult = {
@@ -673,6 +679,13 @@ export function publishApprovalToPdm(approvalId: number) {
 
 export function runPdmApprovedBackfill() {
   return requestJson<PdmBackfillResult>("/api/pdm/backfill-approved", { method: "POST" });
+}
+
+export function voidPdmRevision(revisionId: number, reason: string) {
+  return requestJson<PdmRevisionVoidResult>(`/api/pdm/revisions/${revisionId}/void`, {
+    method: "POST",
+    body: JSON.stringify({ reason })
+  });
 }
 
 export function getApproval(id: number) {
