@@ -251,6 +251,11 @@ describe("PDM routes", () => {
       .set("Authorization", auth(context.designerToken))
       .expect(200);
     expect(keyword.body.total).toBe(1);
+    expect(keyword.body.stats).toEqual({
+      totalParts: 1,
+      currentRevisionCount: 1,
+      commonPartCount: 0
+    });
     expect(keyword.body.items[0]).toEqual(
       expect.objectContaining({
         materialCode: "0102A00700883",

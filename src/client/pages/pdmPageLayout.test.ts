@@ -19,6 +19,9 @@ import {
 
 const listSource = fs.readFileSync(path.resolve("src/client/pages/PdmPartsPage.tsx"), "utf8");
 const detailSource = fs.readFileSync(path.resolve("src/client/pages/PdmPartDetailPage.tsx"), "utf8");
+const pendingSource = fs.existsSync(path.resolve("src/client/pages/PdmPendingMetadataPage.tsx"))
+  ? fs.readFileSync(path.resolve("src/client/pages/PdmPendingMetadataPage.tsx"), "utf8")
+  : "";
 
 describe("PDM part library page layout", () => {
   it("uses part-library copy and keeps PDM visible to all workflow roles", () => {
@@ -75,23 +78,43 @@ describe("PDM part library page layout", () => {
 
   it("uses a PDM workbench shell with scan-friendly summary and issue queue", () => {
     expect(listSource).toContain("PDM 工作台");
-    expect(listSource).toContain("pdm-stat-strip");
-    expect(listSource).toContain("pdm-workbench-grid");
-    expect(listSource).toContain("pdm-issue-panel");
+    expect(listSource).toContain("pdm-ledger-shell");
+    expect(listSource).toContain("pdm-overview-grid");
+    expect(listSource).toContain("pdm-filter-section");
+    expect(listSource).toContain("pdm-ledger-section");
+    expect(listSource).toContain("pdm-risk-queue");
+    expect(listSource).toContain("进入待补录");
+    expect(listSource).toContain("#/pdm/pending-metadata");
 
-    expect(buildPdmLibraryStats([partItem({ isCommon: true }), partItem({ currentRevisionId: null, currentVersion: null })], 42, 3)).toEqual([
+    expect(buildPdmLibraryStats({ totalParts: 42, currentRevisionCount: 31, commonPartCount: 8 }, 3)).toEqual([
       { label: "零件总数", value: "42", note: "按当前筛选统计" },
-      { label: "当前页有效", value: "1", note: "已发布当前版本" },
+      { label: "当前有效版本", value: "31", note: "已发布当前版本" },
       { label: "待补录", value: "3", note: "需补齐物料号或发布异常" },
-      { label: "当前页共用件", value: "1", note: "跨项目复用" }
+      { label: "共用件数", value: "8", note: "跨项目复用" }
     ]);
+  });
+});
+
+describe("PDM pending metadata page layout", () => {
+  it("renders a dedicated repair queue instead of sending users to the full approval ledger", () => {
+    expect(pendingSource).toContain("PDM 待补录清单");
+    expect(pendingSource).toContain("pdm-pending-page");
+    expect(pendingSource).toContain("pdm-pending-summary");
+    expect(pendingSource).toContain("listPendingPdmMetadata");
+    expect(pendingSource).toContain("返回零件库");
+    expect(pendingSource).toContain("打开审批详情");
+    expect(pendingSource).toContain("体系文件号");
+    expect(pendingSource).toContain("管家婆物料号");
   });
 });
 
 describe("PDM part detail page layout", () => {
   it("shows current revision, revision history, usage projects, and trace links", () => {
-    expect(detailSource).toContain("pdm-record-hero");
-    expect(detailSource).toContain("pdm-detail-rail");
+    expect(detailSource).toContain("pdm-detail-shell");
+    expect(detailSource).toContain("pdm-master-card");
+    expect(detailSource).toContain("pdm-current-version-pin");
+    expect(detailSource).toContain("pdm-relation-tabs");
+    expect(detailSource).toContain("pdm-hash-grid");
     expect(detailSource).toContain("零件主档案");
     expect(detailSource).toContain("当前有效版本");
     expect(detailSource).toContain("历史版本");

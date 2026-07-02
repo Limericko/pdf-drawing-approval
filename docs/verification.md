@@ -4044,3 +4044,35 @@ Chrome headless 打开 http://127.0.0.1:5173/#/pdm，使用 admin / admin123 登
 ```text
 构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 页面优化。
 ```
+
+## 2026-07-02 PDM 台账与待补录清单收口验证
+
+范围：
+
+- 零件库首页固化为三段式 PDM 台账：统计与风险概览、紧凑筛选区、零件主表。
+- 后端零件列表返回筛选后的总零件数、当前有效版本数和共用件数，避免前端只按当前页推断统计。
+- 待补录从零件库右侧风险队列拆出为独立清单页 `#/pdm/pending-metadata`，管理员和设计师可进入，主管和工艺不可进入。
+- 零件详情页固化为“主档案 + 当前有效版本 + 版本关系页签”，覆盖版本历史、使用项目、关联审批和文件哈希。
+- PDM 主表突出管家婆物料号、图纸名称、当前版本、体系文件号、项目复用、状态和最近发布。
+
+命令：
+
+```powershell
+npm test -- --run
+npm run build
+git diff --check
+```
+
+结果：
+
+```text
+npm test -- --run: 95 个测试文件，535 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+git diff --check: 无空白或补丁格式问题。
+```
+
+说明：
+
+```text
+构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 台账收口。
+```

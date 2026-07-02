@@ -122,6 +122,35 @@ describe("PdmPartRepository", () => {
     ]);
   });
 
+  it("returns filtered ledger stats for total parts, released current revisions, and common parts", () => {
+    const { repository } = createRepo();
+    const button = repository.createOrUpdatePart({
+      materialCode: "0102A00700883",
+      name: "400A按键",
+      createdFromApprovalId: 10
+    });
+    const cover = repository.createOrUpdatePart({
+      materialCode: "0102A00700999",
+      name: "端盖",
+      createdFromApprovalId: 11
+    });
+    repository.publishRevision(publishInput({ partId: button.id, materialCode: button.materialCode, approvalId: 10 }));
+    repository.recordUsage({ materialCode: button.materialCode, projectName: "项目A", approvalId: 10 });
+    repository.recordUsage({ materialCode: button.materialCode, projectName: "项目B", approvalId: 12 });
+    repository.recordUsage({ materialCode: cover.materialCode, projectName: "项目B", approvalId: 11 });
+
+    expect(repository.listParts().stats).toEqual({
+      totalParts: 2,
+      currentRevisionCount: 1,
+      commonPartCount: 1
+    });
+    expect(repository.listParts({ projectName: "项目A" }).stats).toEqual({
+      totalParts: 1,
+      currentRevisionCount: 1,
+      commonPartCount: 1
+    });
+  });
+
   it("lists approval records that still need PDM metadata repair", () => {
     const { db, repository } = createRepo();
     db.prepare(

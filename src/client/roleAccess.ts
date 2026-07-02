@@ -8,6 +8,7 @@ export type AppRouteName =
   | "approvals"
   | "settings"
   | "pdm"
+  | "pdmPending"
   | "detail"
   | "pdmDetail";
 
@@ -59,6 +60,7 @@ export function defaultRouteForRole(user: Pick<User, "role">): Exclude<AppRouteN
 export function routeAllowedForRole(user: Pick<User, "role">, route: AppRouteName) {
   if (route === "detail") return routeAllowedForRole(user, "approvals");
   if (route === "pdmDetail") return routeAllowedForRole(user, "pdm");
+  if (route === "pdmPending") return user.role === "admin" || user.role === "designer";
   return navigationForRole(user).some((item) => item.route === route);
 }
 
@@ -70,6 +72,7 @@ export function routePath(route: Exclude<AppRouteName, "detail" | "pdmDetail">) 
     profile: "#/profile",
     approvals: "#/approvals",
     settings: "#/settings",
-    pdm: "#/pdm"
+    pdm: "#/pdm",
+    pdmPending: "#/pdm/pending-metadata"
   }[route];
 }

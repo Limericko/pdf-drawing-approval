@@ -72,6 +72,12 @@ export type PdmPartListItem = PdmPart & {
   usageProjects: string[];
 };
 
+export type PdmPartListStats = {
+  totalParts: number;
+  currentRevisionCount: number;
+  commonPartCount: number;
+};
+
 type PdmPartRow = {
   id: number;
   material_code: string;
@@ -183,7 +189,7 @@ export class PdmPartRepository {
       page?: number;
       pageSize?: number;
     } = {}
-  ): { items: PdmPartListItem[]; total: number; page: number; pageSize: number } {
+  ): { items: PdmPartListItem[]; total: number; page: number; pageSize: number; stats: PdmPartListStats } {
     const pageSize = clampInteger(filters.pageSize ?? 20, 1, 100, 20);
     const page = clampInteger(filters.page ?? 1, 1, 100000, 1);
     const { where, params } = buildPartListWhere(filters);
@@ -195,6 +201,17 @@ export class PdmPartRepository {
          ${where}`
       )
       .get(params) as { total: number };
+    const statsRow = this.db
+      .prepare(
+        `SELECT
+          COUNT(*) AS total_parts,
+          SUM(CASE WHEN p.current_revision_id IS NOT NULL THEN 1 ELSE 0 END) AS current_revision_count,
+          SUM(CASE WHEN p.is_common = 1 THEN 1 ELSE 0 END) AS common_part_count
+         FROM pdm_parts p
+         LEFT JOIN pdm_drawing_revisions current_revision ON current_revision.id = p.current_revision_id
+         ${where}`
+      )
+      .get(params) as { total_parts: number; current_revision_count: number | null; common_part_count: number | null };
     const rows = this.db
       .prepare(
         `SELECT
@@ -219,7 +236,17 @@ export class PdmPartRepository {
         offset: (page - 1) * pageSize
       }) as PdmPartListRow[];
 
-    return { items: rows.map(mapPartListItem), total: totalRow.total, page, pageSize };
+    return {
+      items: rows.map(mapPartListItem),
+      total: totalRow.total,
+      page,
+      pageSize,
+      stats: {
+        totalParts: statsRow.total_parts,
+        currentRevisionCount: statsRow.current_revision_count ?? 0,
+        commonPartCount: statsRow.common_part_count ?? 0
+      }
+    };
   }
 
   publishRevision(input: {

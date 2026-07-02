@@ -39,6 +39,7 @@ type Route =
   | { name: "approvals" }
   | { name: "settings" }
   | { name: "pdm" }
+  | { name: "pdmPending" }
   | { name: "pdmDetail"; id: number }
   | { name: "detail"; id: number };
 
@@ -50,6 +51,7 @@ const pageLoaders = {
   approvals: () => import("./pages/ApprovalsPage.tsx"),
   settings: () => import("./pages/SettingsPage.tsx"),
   pdm: () => import("./pages/PdmPartsPage.tsx"),
+  pdmPending: () => import("./pages/PdmPendingMetadataPage.tsx"),
   pdmDetail: () => import("./pages/PdmPartDetailPage.tsx"),
   detail: () => import("./pages/ApprovalDetailPage.tsx")
 };
@@ -61,6 +63,7 @@ const ProfilePage = lazy(() => pageLoaders.profile().then((module) => ({ default
 const ApprovalsPage = lazy(() => pageLoaders.approvals().then((module) => ({ default: module.ApprovalsPage })));
 const SettingsPage = lazy(() => pageLoaders.settings().then((module) => ({ default: module.SettingsPage })));
 const PdmPartsPage = lazy(() => pageLoaders.pdm().then((module) => ({ default: module.PdmPartsPage })));
+const PdmPendingMetadataPage = lazy(() => pageLoaders.pdmPending().then((module) => ({ default: module.PdmPendingMetadataPage })));
 const PdmPartDetailPage = lazy(() => pageLoaders.pdmDetail().then((module) => ({ default: module.PdmPartDetailPage })));
 const ApprovalDetailPage = lazy(() => pageLoaders.detail().then((module) => ({ default: module.ApprovalDetailPage })));
 
@@ -87,6 +90,7 @@ export function routeFromHash(hashValue: string): Route {
   const pdmDetail = /^\/pdm\/parts\/(\d+)$/.exec(hash);
   if (detail) return { name: "detail", id: Number(detail[1]) };
   if (pdmDetail) return { name: "pdmDetail", id: Number(pdmDetail[1]) };
+  if (hash === "/pdm/pending-metadata") return { name: "pdmPending" };
   if (hash === "/settings") return { name: "settings" };
   if (hash === "/submit") return { name: "submit" };
   if (hash === "/signature") return { name: "signature" };
@@ -458,6 +462,7 @@ export function App() {
             {routeAllowed && route.name === "approvals" && <ApprovalsPage user={user} />}
             {routeAllowed && route.name === "detail" && <ApprovalDetailPage id={route.id} user={user} />}
             {routeAllowed && route.name === "pdm" && <PdmPartsPage user={user} />}
+            {routeAllowed && route.name === "pdmPending" && <PdmPendingMetadataPage />}
             {routeAllowed && route.name === "pdmDetail" && <PdmPartDetailPage id={route.id} />}
             {routeAllowed && route.name === "signature" && <MySignaturePage onSignatureUpdated={applySignatureState} />}
             {routeAllowed && route.name === "profile" && <ProfilePage onUserUpdated={setUser} />}
@@ -615,6 +620,7 @@ function navIconForRoute(route: AppRouteName): LucideIcon {
     approvals: FileText,
     settings: SettingsIcon,
     pdm: PackageSearch,
+    pdmPending: PackageSearch,
     detail: FileText,
     pdmDetail: PackageSearch
   }[route];
@@ -653,6 +659,7 @@ function routeLabel(routeName: AppRouteName) {
     approvals: "全部图纸",
     settings: "系统管理",
     pdm: "零件库",
+    pdmPending: "PDM 待补录",
     detail: "图纸详情",
     pdmDetail: "零件详情"
   }[routeName];

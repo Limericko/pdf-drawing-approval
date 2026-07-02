@@ -14,6 +14,7 @@ describe("role access", () => {
     expect(routeAllowedForRole(user("designer"), "tasks")).toBe(false);
     expect(routeAllowedForRole(user("designer"), "submit")).toBe(true);
     expect(routeAllowedForRole(user("designer"), "pdm")).toBe(true);
+    expect(routeAllowedForRole(user("designer"), "pdmPending")).toBe(true);
     expect(routeAllowedForRole(user("designer"), "profile")).toBe(true);
     expect(defaultRouteForRole(user("designer"))).toBe("submit");
   });
@@ -26,8 +27,10 @@ describe("role access", () => {
     expect(processLabels).toEqual(["待我审核", "全部图纸", "零件库", "我的签名", "我的资料"]);
     expect(routeAllowedForRole(user("supervisor"), "submit")).toBe(false);
     expect(routeAllowedForRole(user("supervisor"), "pdm")).toBe(true);
+    expect(routeAllowedForRole(user("supervisor"), "pdmPending")).toBe(false);
     expect(routeAllowedForRole(user("process"), "profile")).toBe(true);
     expect(routeAllowedForRole(user("process"), "pdmDetail")).toBe(true);
+    expect(routeAllowedForRole(user("process"), "pdmPending")).toBe(false);
     expect(defaultRouteForRole(user("process"))).toBe("tasks");
   });
 
@@ -37,6 +40,7 @@ describe("role access", () => {
     expect(routeAllowedForRole(user("admin"), "settings")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "approvals")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "pdm")).toBe(true);
+    expect(routeAllowedForRole(user("admin"), "pdmPending")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "profile")).toBe(true);
     expect(routeAllowedForRole(user("admin"), "submit")).toBe(false);
     expect(routeAllowedForRole(user("admin"), "signature")).toBe(false);

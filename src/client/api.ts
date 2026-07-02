@@ -256,11 +256,18 @@ export type PdmPartListItem = PdmPart & {
   usageProjects: string[];
 };
 
+export type PdmPartListStats = {
+  totalParts: number;
+  currentRevisionCount: number;
+  commonPartCount: number;
+};
+
 export type PdmPartPage = {
   items: PdmPartListItem[];
   total: number;
   page: number;
   pageSize: number;
+  stats: PdmPartListStats;
 };
 
 export type PdmPartDetail = {
