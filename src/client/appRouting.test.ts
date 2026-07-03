@@ -37,6 +37,9 @@ describe("app hash routing", () => {
   it("keeps query-string risk links on the approvals route", () => {
     expect(routeFromHash("#/approvals?status=file_missing")).toEqual({ name: "approvals" });
     expect(routeFromHash("#/approvals/12?from=risk")).toEqual({ name: "detail", id: 12 });
+    expect(routeFromHash("#/pdm?keyword=400A")).toEqual({ name: "pdm" });
+    expect(routeFromHash("#/pdm/pending-metadata?from=risk")).toEqual({ name: "pdmPending" });
+    expect(routeFromHash("#/pdm/parts/8?from=list")).toEqual({ name: "pdmDetail", id: 8 });
     expect(routeFromHash("#/profile")).toEqual({ name: "profile" });
   });
 

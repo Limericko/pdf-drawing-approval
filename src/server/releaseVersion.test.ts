@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { appVersion } from "../shared/appVersion.ts";
 
-const expectedVersion = "0.9.1";
+const expectedVersion = "0.9.2";
 
 describe("release version metadata", () => {
   it("keeps package, health, desktop client, and server exe versions aligned", () => {

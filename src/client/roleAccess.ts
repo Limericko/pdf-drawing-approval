@@ -1,6 +1,16 @@
 import type { User } from "./api.ts";
 
-export type AppRouteName = "tasks" | "submit" | "signature" | "profile" | "approvals" | "settings" | "detail";
+export type AppRouteName =
+  | "tasks"
+  | "submit"
+  | "signature"
+  | "profile"
+  | "approvals"
+  | "settings"
+  | "pdm"
+  | "pdmPending"
+  | "detail"
+  | "pdmDetail";
 
 export type NavItem = {
   href: string;
@@ -13,6 +23,7 @@ export function navigationForRole(user: Pick<User, "role">): NavItem[] {
     return [
       { href: "#/submit", label: "提交图纸", route: "submit" },
       { href: "#/approvals", label: "全部图纸", route: "approvals" },
+      { href: "#/pdm", label: "零件库", route: "pdm" },
       { href: "#/signature", label: "我的签名", route: "signature" },
       { href: "#/profile", label: "我的资料", route: "profile" }
     ];
@@ -22,6 +33,7 @@ export function navigationForRole(user: Pick<User, "role">): NavItem[] {
     return [
       { href: "#/", label: "待我审核", route: "tasks" },
       { href: "#/approvals", label: "全部图纸", route: "approvals" },
+      { href: "#/pdm", label: "零件库", route: "pdm" },
       { href: "#/signature", label: "我的签名", route: "signature" },
       { href: "#/profile", label: "我的资料", route: "profile" }
     ];
@@ -31,6 +43,7 @@ export function navigationForRole(user: Pick<User, "role">): NavItem[] {
     return [
       { href: "#/settings", label: "系统管理", route: "settings" },
       { href: "#/approvals", label: "全部图纸", route: "approvals" },
+      { href: "#/pdm", label: "零件库", route: "pdm" },
       { href: "#/profile", label: "我的资料", route: "profile" }
     ];
   }
@@ -38,7 +51,7 @@ export function navigationForRole(user: Pick<User, "role">): NavItem[] {
   return [];
 }
 
-export function defaultRouteForRole(user: Pick<User, "role">): Exclude<AppRouteName, "detail"> {
+export function defaultRouteForRole(user: Pick<User, "role">): Exclude<AppRouteName, "detail" | "pdmDetail"> {
   if (user.role === "designer") return "submit";
   if (user.role === "supervisor" || user.role === "process") return "tasks";
   return "settings";
@@ -46,16 +59,20 @@ export function defaultRouteForRole(user: Pick<User, "role">): Exclude<AppRouteN
 
 export function routeAllowedForRole(user: Pick<User, "role">, route: AppRouteName) {
   if (route === "detail") return routeAllowedForRole(user, "approvals");
+  if (route === "pdmDetail") return routeAllowedForRole(user, "pdm");
+  if (route === "pdmPending") return user.role === "admin" || user.role === "designer";
   return navigationForRole(user).some((item) => item.route === route);
 }
 
-export function routePath(route: Exclude<AppRouteName, "detail">) {
+export function routePath(route: Exclude<AppRouteName, "detail" | "pdmDetail">) {
   return {
     tasks: "#/",
     submit: "#/submit",
     signature: "#/signature",
     profile: "#/profile",
     approvals: "#/approvals",
-    settings: "#/settings"
+    settings: "#/settings",
+    pdm: "#/pdm",
+    pdmPending: "#/pdm/pending-metadata"
   }[route];
 }

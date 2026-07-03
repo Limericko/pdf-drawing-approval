@@ -65,4 +65,12 @@ describe("Electron shell", () => {
     expect(preloadSource).toContain("checkForUpdates");
     expect(preloadSource).toContain("openDownloadedUpdateInstaller");
   });
+
+  it("does not auto-check updates before the approval server address is configured", () => {
+    const mainSource = read("main.cjs");
+
+    expect(mainSource).toContain("scheduleUpdateCheckIfConfigured");
+    expect(mainSource).toContain("readSettings(getUserDataDir()).serverUrl");
+    expect(mainSource).not.toContain("scheduleUpdateCheck(800)");
+  });
 });

@@ -516,14 +516,14 @@ npm run installer:package
 输出：
 
 ```text
-dist\installers\client\PDF图纸审批客户端-安装包-0.9.1.exe
-dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe
+dist\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe
+dist\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe
 ```
 
 安装方式：
 
-- 服务器电脑安装 `PDF图纸审批服务端-安装包-0.9.1.exe`。
-- 设计师、主管、工艺和管理员电脑安装 `PDF图纸审批客户端-安装包-0.9.1.exe`。
+- 服务器电脑安装 `PDF图纸审批服务端-安装包-0.9.2.exe`。
+- 设计师、主管、工艺和管理员电脑安装 `PDF图纸审批客户端-安装包-0.9.2.exe`。
 - 安装包会创建桌面快捷方式和开始菜单快捷方式。
 - 当前安装包未配置企业代码签名，Windows 可能显示安全提醒。确认来源是公司内部构建产物后继续安装。
 
@@ -535,8 +535,8 @@ dist\installers\server\PDF图纸审批服务端-安装包-0.9.1.exe
 dist\updates\latest.json
 dist\updates\latest.yml
 dist\updates\CHANGELOG.md
-dist\updates\PDF图纸审批客户端-安装包-0.9.1.exe
-dist\updates\PDF图纸审批客户端-安装包-0.9.1.exe.blockmap
+dist\updates\PDF图纸审批客户端-安装包-0.9.2.exe
+dist\updates\PDF图纸审批客户端-安装包-0.9.2.exe.blockmap
 ```
 
 服务端会直接托管安装目录下的 `releases` 发布目录。发布新版时，将文件放成：
@@ -548,13 +548,13 @@ PDF图纸审批服务端安装目录\
       latest.json
       latest.yml
       CHANGELOG.md
-      PDF图纸审批客户端-安装包-0.9.1.exe
-      PDF图纸审批客户端-安装包-0.9.1.exe.blockmap
+      PDF图纸审批客户端-安装包-0.9.2.exe
+      PDF图纸审批客户端-安装包-0.9.2.exe.blockmap
     installers\
       client\
-        PDF图纸审批客户端-安装包-0.9.1.exe
+        PDF图纸审批客户端-安装包-0.9.2.exe
       server\
-        PDF图纸审批服务端-安装包-0.9.1.exe
+        PDF图纸审批服务端-安装包-0.9.2.exe
 ```
 
 服务端会自动通过当前访问地址提供：
@@ -564,7 +564,7 @@ http://服务器IP:8080/updates/latest.json
 http://服务器IP:8080/updates/latest.yml
 ```
 
-管理端不再需要填写更新清单地址。`latest.json` 继续用于网页端版本更新说明和安装包下载地址，`latest.yml` 用于 Electron 客户端启动时自动检查更新。客户端发现新版后会自动下载并显示进度，下载完成后弹出安装步骤，由用户打开安装包按 Windows 向导完成升级，不会静默安装。服务端安装包仍只在管理员运维入口展示。服务端升级仍建议先备份数据库，再运行新版服务端安装包。
+管理端不再需要填写更新清单地址。`latest.json` 继续用于网页端版本更新说明和安装包下载地址，`latest.yml` 用于 Electron 客户端在已配置审批服务器地址后自动检查更新；首次未配置服务器地址时不会检查更新。客户端发现新版后会自动下载并显示进度，下载完成后弹出安装步骤，由用户打开安装包按 Windows 向导完成升级，不会静默安装。服务端安装包仍只在管理员运维入口展示。服务端升级仍建议先备份数据库，再运行新版服务端安装包。
 
 从 `0.8.7` 开始，服务端安装包升级时会保留安装目录里的 `data`、`backups`、`logs`、`releases` 和 `server-config.json`。如果旧版本升级后出现 `/updates/latest.json` 返回 404，说明 `releases\updates\latest.json` 缺失，需要重新同步发布目录。
 

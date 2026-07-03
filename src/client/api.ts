@@ -82,6 +82,13 @@ export type Approval = {
   currentFilePath: string;
   printedAt: string | null;
   archivedAt: string | null;
+  documentCode?: string | null;
+  materialCode?: string | null;
+  drawingName?: string | null;
+  pdmRevisionId?: number | null;
+  pdmMetadataStatus?: PdmMetadataStatus;
+  pdmPublishStatus?: PdmPublishStatus;
+  pdmPublishError?: string | null;
   history?: Approval[];
   relatedVersions?: Approval[];
 };
@@ -176,6 +183,137 @@ export type ApprovalPage = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+export type PdmMetadataStatus = "complete" | "missing_material_code" | "missing_document_code" | "missing_required";
+export type PdmPublishStatus = "not_applicable" | "metadata_pending" | "pending" | "published" | "failed";
+export type PdmRevisionStatus = "released" | "superseded" | "voided";
+
+export type PdmPart = {
+  id: number;
+  materialCode: string;
+  name: string;
+  isCommon: boolean;
+  currentRevisionId: number | null;
+  createdFromApprovalId: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PdmDrawingRevision = {
+  id: number;
+  partId: number;
+  materialCode: string;
+  documentCode: string | null;
+  drawingName: string;
+  version: string;
+  minorVersion: string;
+  majorVersion: string;
+  approvalId: number;
+  releaseStatus: PdmRevisionStatus;
+  originalFilePath: string;
+  originalFileHash: string | null;
+  signedFilePath: string | null;
+  signedFileHash: string | null;
+  annotatedFilePath: string | null;
+  releasedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PdmPartUsage = {
+  id: number;
+  partId: number;
+  materialCode: string;
+  projectName: string;
+  firstApprovalId: number;
+  lastApprovalId: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PdmPendingMetadataApproval = {
+  approvalId: number;
+  projectName: string;
+  partName: string;
+  version: string;
+  documentCode: string | null;
+  materialCode: string | null;
+  drawingName: string | null;
+  metadataStatus: PdmMetadataStatus;
+  publishStatus: PdmPublishStatus;
+  publishError: string | null;
+  submittedByUserId: number | null;
+  submittedAt: string;
+};
+
+export type PdmPartListItem = PdmPart & {
+  currentVersion: string | null;
+  currentDocumentCode: string | null;
+  currentApprovalId: number | null;
+  currentReleasedAt: string | null;
+  usageProjectCount: number;
+  usageProjects: string[];
+};
+
+export type PdmPartListStats = {
+  totalParts: number;
+  currentRevisionCount: number;
+  commonPartCount: number;
+};
+
+export type PdmPartPage = {
+  items: PdmPartListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  stats: PdmPartListStats;
+};
+
+export type PdmPartDetail = {
+  part: PdmPart;
+  currentRevision: PdmDrawingRevision | null;
+  revisions: PdmDrawingRevision[];
+  usages: PdmPartUsage[];
+  traceLogs: OperationLog[];
+};
+
+export type PdmRevisionVoidResult = {
+  voided: PdmDrawingRevision;
+  currentRevision: PdmDrawingRevision | null;
+};
+
+export type PdmMetadataRepairResult = {
+  approvalId: number;
+  documentCode: string | null;
+  materialCode: string | null;
+  drawingName: string;
+  metadataStatus: PdmMetadataStatus;
+  publishStatus: PdmPublishStatus;
+};
+
+export type PdmReleaseResult = {
+  status: "published" | "metadata_pending" | "failed" | "skipped" | "not_found";
+  part?: PdmPart;
+  revision?: PdmDrawingRevision;
+  reason?: string;
+  error?: string;
+};
+
+export type PdmBackfillItem = {
+  approvalId: number;
+  status: "published" | "skipped" | "failed";
+  reason?: string;
+  materialCode?: string;
+  version?: string;
+};
+
+export type PdmBackfillResult = {
+  scanned: number;
+  published: number;
+  skipped: number;
+  failed: number;
+  items: PdmBackfillItem[];
 };
 
 export type SignatureAsset = {
@@ -495,6 +633,59 @@ export function listApprovalsPage(
   if (params.status) query.set("status", params.status);
   if (params.signatureStatus) query.set("signatureStatus", params.signatureStatus);
   return requestJson<ApprovalPage>(`/api/approvals?${query}`);
+}
+
+export function listPdmParts(
+  params: {
+    page: number;
+    pageSize: number;
+    keyword?: string;
+    projectName?: string;
+    isCommon?: boolean;
+    hasCurrentRevision?: boolean;
+  }
+) {
+  const query = new URLSearchParams();
+  query.set("page", String(params.page));
+  query.set("pageSize", String(params.pageSize));
+  if (params.keyword?.trim()) query.set("keyword", params.keyword.trim());
+  if (params.projectName?.trim()) query.set("projectName", params.projectName.trim());
+  if (params.isCommon !== undefined) query.set("isCommon", params.isCommon ? "1" : "0");
+  if (params.hasCurrentRevision !== undefined) query.set("hasCurrentRevision", params.hasCurrentRevision ? "1" : "0");
+  return requestJson<PdmPartPage>(`/api/pdm/parts?${query}`);
+}
+
+export function getPdmPart(id: number) {
+  return requestJson<PdmPartDetail>(`/api/pdm/parts/${id}`);
+}
+
+export function listPendingPdmMetadata() {
+  return requestJson<{ items: PdmPendingMetadataApproval[] }>("/api/pdm/pending-metadata");
+}
+
+export function repairApprovalPdmMetadata(
+  approvalId: number,
+  input: { documentCode?: string | null; materialCode?: string | null; drawingName: string }
+) {
+  return requestJson<PdmMetadataRepairResult>(`/api/pdm/approvals/${approvalId}/repair-metadata`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function publishApprovalToPdm(approvalId: number) {
+  return requestJson<PdmReleaseResult>(`/api/pdm/approvals/${approvalId}/publish`, { method: "POST" });
+}
+
+export function runPdmApprovedBackfill() {
+  return requestJson<PdmBackfillResult>("/api/pdm/backfill-approved", { method: "POST" });
+}
+
+export function voidPdmRevision(revisionId: number, reason: string) {
+  return requestJson<PdmRevisionVoidResult>(`/api/pdm/revisions/${revisionId}/void`, {
+    method: "POST",
+    body: JSON.stringify({ reason })
+  });
 }
 
 export function getApproval(id: number) {

@@ -222,6 +222,142 @@ describe("approval list API", () => {
   });
 });
 
+describe("PDM part library API", () => {
+  it("requests paged PDM parts with library filters", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ items: [], total: 0, page: 2, pageSize: 20 });
+    const pdmApi = api as unknown as {
+      listPdmParts?: (params: {
+        page: number;
+        pageSize: number;
+        keyword?: string;
+        projectName?: string;
+        isCommon?: boolean;
+        hasCurrentRevision?: boolean;
+      }) => Promise<unknown>;
+    };
+
+    expect(pdmApi.listPdmParts).toBeTypeOf("function");
+    await pdmApi.listPdmParts!({
+      page: 2,
+      pageSize: 20,
+      keyword: "400A",
+      projectName: "项目A",
+      isCommon: true,
+      hasCurrentRevision: true
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/parts?page=2&pageSize=20&keyword=400A&projectName=%E9%A1%B9%E7%9B%AEA&isCommon=1&hasCurrentRevision=1",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
+
+  it("loads PDM part detail and pending metadata queues", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ items: [] });
+    const pdmApi = api as unknown as {
+      getPdmPart?: (id: number) => Promise<unknown>;
+      listPendingPdmMetadata?: () => Promise<unknown>;
+    };
+
+    expect(pdmApi.getPdmPart).toBeTypeOf("function");
+    expect(pdmApi.listPendingPdmMetadata).toBeTypeOf("function");
+
+    await pdmApi.getPdmPart!(8);
+    await pdmApi.listPendingPdmMetadata!();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/pdm/parts/8",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer token value" }) })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/pdm/pending-metadata",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer token value" }) })
+    );
+  });
+
+  it("repairs approval PDM metadata and retries publishing", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ status: "published" });
+    const pdmApi = api as unknown as {
+      repairApprovalPdmMetadata?: (approvalId: number, input: unknown) => Promise<unknown>;
+      publishApprovalToPdm?: (approvalId: number) => Promise<unknown>;
+    };
+
+    expect(pdmApi.repairApprovalPdmMetadata).toBeTypeOf("function");
+    expect(pdmApi.publishApprovalToPdm).toBeTypeOf("function");
+
+    await pdmApi.repairApprovalPdmMetadata!(9, {
+      documentCode: "MP300A000072",
+      materialCode: "0102A00700883",
+      drawingName: "400A按键"
+    });
+    await pdmApi.publishApprovalToPdm!(9);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/pdm/approvals/9/repair-metadata",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          documentCode: "MP300A000072",
+          materialCode: "0102A00700883",
+          drawingName: "400A按键"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/pdm/approvals/9/publish",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("runs the PDM approved drawing backfill endpoint", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ scanned: 1, published: 1, skipped: 0, failed: 0, items: [] });
+    const pdmApi = api as unknown as {
+      runPdmApprovedBackfill?: () => Promise<unknown>;
+    };
+
+    expect(pdmApi.runPdmApprovedBackfill).toBeTypeOf("function");
+    await pdmApi.runPdmApprovedBackfill!();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/backfill-approved",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
+
+  it("voids a PDM drawing revision with an admin reason", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ voided: { id: 12 }, currentRevision: null });
+    const pdmApi = api as unknown as {
+      voidPdmRevision?: (revisionId: number, reason: string) => Promise<unknown>;
+    };
+
+    expect(pdmApi.voidPdmRevision).toBeTypeOf("function");
+    await pdmApi.voidPdmRevision!(12, "重复发布");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pdm/revisions/12/void",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "重复发布" }),
+        headers: expect.objectContaining({ Authorization: "Bearer token value" })
+      })
+    );
+  });
+});
+
 describe("system cleanup API", () => {
   it("previews and executes cleanup operations", async () => {
     api.setToken("token value");

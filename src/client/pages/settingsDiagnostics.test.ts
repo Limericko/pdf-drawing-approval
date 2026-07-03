@@ -4,9 +4,11 @@ import path from "node:path";
 import {
   batchSubmissionStatusLabel,
   buildMaintenanceRunSummary,
+  buildPdmBackfillSummary,
   normalizeBatchSubmissions,
   normalizeDiagnostics,
   normalizeSystemRisks,
+  pdmBackfillReasonLabel,
   placementStateLabel,
   riskDashboardEmptyText,
   riskLevelLabel,
@@ -14,7 +16,7 @@ import {
   settingInputAutocomplete,
   settingsTabFromHash
 } from "./SettingsPage.tsx";
-import type { BatchSubmission, OperationLog, SystemDiagnostics, SystemRisk } from "../api.ts";
+import type { BatchSubmission, OperationLog, PdmBackfillResult, SystemDiagnostics, SystemRisk } from "../api.ts";
 
 const source = fs.readFileSync(path.resolve("src/client/pages/SettingsPage.tsx"), "utf8");
 const operationsTabSource = fs.readFileSync(path.resolve("src/client/pages/settings/OperationsTab.tsx"), "utf8");
@@ -159,6 +161,30 @@ describe("settings diagnostics view model", () => {
     ]);
   });
 
+  it("summarizes PDM historical backfill results for the admin operations panel", () => {
+    const result: PdmBackfillResult = {
+      scanned: 3,
+      published: 1,
+      skipped: 1,
+      failed: 1,
+      items: [
+        { approvalId: 10, status: "published", materialCode: "0102A00700883", version: "a0A0" },
+        { approvalId: 11, status: "skipped", reason: "filename_not_standard_pdm" },
+        { approvalId: 12, status: "failed", reason: "pdm_publish_failed", materialCode: "0102A00700884", version: "a1A0" }
+      ]
+    };
+
+    expect(buildPdmBackfillSummary(result)).toEqual({
+      headline: "扫描 3 / 发布 1 / 跳过 1 / 失败 1",
+      rows: [
+        "审批 #10 · 已发布 · 0102A00700883 · a0A0",
+        "审批 #11 · 已跳过 · 文件名不是完整 PDM 格式",
+        "审批 #12 · 失败 · PDM 发布失败 · 0102A00700884 · a1A0"
+      ]
+    });
+    expect(pdmBackfillReasonLabel("duplicate_material_version")).toBe("物料版本已存在");
+  });
+
   it("uses operations-focused admin copy", () => {
     expect(source).toContain("<OperationsTab");
     expect(source).toContain("系统运维控制台");
@@ -180,6 +206,9 @@ describe("settings diagnostics view model", () => {
     expect(combinedSource).toContain("服务端当前版本");
     expect(combinedSource).toContain("getSystemUpdateInfo");
     expect(combinedSource).toContain("服务端内置更新目录");
+    expect(combinedSource).toContain("PDM 历史回填");
+    expect(combinedSource).toContain("runPdmApprovedBackfill");
+    expect(combinedSource).toContain("回填已通过图纸");
     expect(combinedSource).not.toContain("本机更新日志");
     expect(combinedSource).not.toContain("release-note-entry");
     expect(combinedSource).not.toContain("update_manifest_url");

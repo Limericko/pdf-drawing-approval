@@ -3,9 +3,13 @@ import * as approvalDetailLogic from "./approvalDetailLogic.ts";
 import {
   canRegenerateSignedPdf,
   canEditSignaturePlacements,
+  canRepairPdmMetadata,
+  canRetryPdmPublish,
   canShowSignaturePlacementPanel,
   detailReloadErrorMessage,
   filterAnnotations,
+  pdmMetadataStatusCopy,
+  pdmPublishStatusCopy,
   shouldRefreshPdfState,
   signaturePlacementSaveMessage,
   timelinePreviewLimit,
@@ -120,6 +124,48 @@ describe("approval detail signed PDF permissions", () => {
         signatureStatus: "not_required"
       } as Approval)
     ).toBe(false);
+  });
+});
+
+describe("approval detail PDM permissions", () => {
+  const pendingOwnApproval = {
+    id: 4,
+    submittedByUserId: 2,
+    pdmMetadataStatus: "missing_material_code",
+    pdmPublishStatus: "metadata_pending"
+  } as Approval;
+  const publishedApproval = {
+    ...pendingOwnApproval,
+    pdmMetadataStatus: "complete",
+    pdmPublishStatus: "published",
+    materialCode: "0102A00700883"
+  } as Approval;
+
+  it("lets admins repair any pending metadata and designers only their own records", () => {
+    expect(canRepairPdmMetadata({ id: 1, role: "admin" } as User, pendingOwnApproval)).toBe(true);
+    expect(canRepairPdmMetadata({ id: 2, role: "designer" } as User, pendingOwnApproval)).toBe(true);
+    expect(canRepairPdmMetadata({ id: 3, role: "designer" } as User, pendingOwnApproval)).toBe(false);
+    expect(canRepairPdmMetadata({ id: 4, role: "supervisor" } as User, pendingOwnApproval)).toBe(false);
+    expect(canRepairPdmMetadata({ id: 5, role: "process" } as User, pendingOwnApproval)).toBe(false);
+    expect(canRepairPdmMetadata({ id: 1, role: "admin" } as User, publishedApproval)).toBe(false);
+  });
+
+  it("lets admins and owning designers retry failed or pending PDM publish", () => {
+    const failed = { ...pendingOwnApproval, materialCode: "0102A00700883", pdmPublishStatus: "failed" } as Approval;
+
+    expect(canRetryPdmPublish({ id: 1, role: "admin" } as User, failed)).toBe(true);
+    expect(canRetryPdmPublish({ id: 2, role: "designer" } as User, failed)).toBe(true);
+    expect(canRetryPdmPublish({ id: 3, role: "designer" } as User, failed)).toBe(false);
+    expect(canRetryPdmPublish({ id: 4, role: "process" } as User, failed)).toBe(false);
+    expect(canRetryPdmPublish({ id: 2, role: "designer" } as User, publishedApproval)).toBe(false);
+  });
+
+  it("uses maintenance-friendly PDM status copy", () => {
+    expect(pdmMetadataStatusCopy("missing_material_code")).toBe("待补物料号");
+    expect(pdmMetadataStatusCopy("missing_document_code")).toBe("体系文件号待补");
+    expect(pdmPublishStatusCopy("metadata_pending")).toBe("待补录");
+    expect(pdmPublishStatusCopy("failed")).toBe("发布失败");
+    expect(pdmPublishStatusCopy("published")).toBe("已发布");
   });
 });
 

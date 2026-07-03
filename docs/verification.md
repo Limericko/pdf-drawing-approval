@@ -3964,3 +3964,174 @@ Invoke-WebRequest -UseBasicParsing http://192.168.0.62:8080/updates/latest.yml
 
 - `0.9.0` 及更早客户端没有内置 `electron-updater`，无法自动升级到 `0.9.1`；团队电脑需要手动安装一次 `PDF图纸审批客户端-安装包-0.9.1.exe`。
 - 从 `0.9.1` 之后，客户端启动时才会自动检查后续新版，自动下载完成后仍由用户打开安装包并按安装向导升级，不执行静默安装或自动重启。
+
+## 2026-06-29 PDM V1 Foundation 验证
+
+范围：
+
+- 新增 PDM 标准图纸文件名解析，支持 `体系文件号 《管家婆物料号 图纸名称》 版本.pdf`，并兼容体系文件号后补和物料号缺失待补齐。
+- 新增 PDM 零件、图纸版本、项目使用记录、审批来源链接和元数据修复数据模型。
+- 审批通过后自动发布 PDM 图纸版本，保证同一管家婆物料号全局唯一、同一物料号同一版本不重复发布。
+- 新增零件库页面、零件详情页、审批详情 PDM 信息和元数据修复入口。
+- 新增 PDM 历史回填维护服务，可扫描已通过或已打印归档审批，将标准文件名且有效 PDF 的历史图纸补发布到零件库。
+
+命令：
+
+```powershell
+npm test -- --run src/server/services/pdmBackfillService.test.ts
+npm test
+npm run build
+npm run desktop:test
+```
+
+结果：
+
+```text
+PDM 回填聚焦测试: 1 个测试文件，2 个用例通过。
+npm test: 95 个测试文件，528 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+npm run desktop:test: 3 个测试文件，11 个用例通过。
+```
+
+构建说明：
+
+```text
+Vite 构建仍提示 assets/pdf-CJRVEglZ.js 约 531.35 kB 超过 500 kB。
+该文件是 PDF.js 预览依赖的独立 chunk，当前不阻断构建；后续如继续压缩首屏体积，可再拆分 PDF 预览加载时机或调整 manualChunks。
+```
+
+已知限制：
+
+- PDM 历史回填已接入管理员“系统管理”维护入口，可触发 `PdmBackfillService.backfillApprovedDrawings()` 并查看回填结果。
+- 标准 PDM 发布以管家婆物料号为主键；缺失物料号的历史审批不会自动发布，需要先通过元数据修复补齐。
+- 缺失体系文件号允许发布，后续可通过元数据修复补齐。
+
+## 2026-06-29 PDM 工作台布局优化验证
+
+范围：
+
+- 零件库首页从普通台账调整为“PDM 工作台”：顶部主搜索、筛选区、统计条、零件主表和待补录问题队列。
+- 零件详情页从信息面板调整为“零件主档案”：主键、当前有效版本、体系文件号、共用状态、使用项目、版本历史和审批追溯更集中。
+- 窄屏下 PDM 主表改为卡片式展示，避免不同窗口尺寸下横向挤压。
+
+命令：
+
+```powershell
+npm test -- --run src/client/pages/pdmPageLayout.test.ts
+npm test -- --run src/client/styles.test.ts
+npm run build
+```
+
+结果：
+
+```text
+PDM 页面布局测试: 1 个测试文件，7 个用例通过。
+样式规则测试: 1 个测试文件，15 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+```
+
+浏览器冒烟：
+
+```text
+Chrome headless 打开 http://127.0.0.1:5173/#/pdm，使用 admin / admin123 登录。
+桌面 1440x950: PDM 工作台、4 个统计卡、主表和待补录队列正常渲染，无横向溢出，控制台无 error。
+移动 390x840: 工作台单列展示，PDM 表格卡片化，thead 隐藏，无横向溢出，控制台无 error。
+零件详情 #/pdm/parts/1: 零件主档案、5 个关键字段和详情布局正常渲染，无横向溢出，控制台无 error。
+```
+
+说明：
+
+```text
+构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 页面优化。
+```
+
+## 2026-07-02 PDM 台账与待补录清单收口验证
+
+范围：
+
+- 零件库首页固化为三段式 PDM 台账：统计与风险概览、紧凑筛选区、零件主表。
+- 后端零件列表返回筛选后的总零件数、当前有效版本数和共用件数，避免前端只按当前页推断统计。
+- 待补录从零件库右侧风险队列拆出为独立清单页 `#/pdm/pending-metadata`，管理员和设计师可进入，主管和工艺不可进入。
+- 零件详情页固化为“主档案 + 当前有效版本 + 版本关系页签”，覆盖版本历史、使用项目、关联审批和文件哈希。
+- PDM 主表突出管家婆物料号、图纸名称、当前版本、体系文件号、项目复用、状态和最近发布。
+
+命令：
+
+```powershell
+npm test -- --run
+npm run build
+git diff --check
+```
+
+结果：
+
+```text
+npm test -- --run: 95 个测试文件，535 个用例通过。
+npm run build: TypeScript 与 Vite 生产构建通过。
+git diff --check: 无空白或补丁格式问题。
+```
+
+说明：
+
+```text
+构建仍保留既有 assets/pdf-CJRVEglZ.js 约 531.35 kB 的 Vite chunk 体积提示，该提示来自 PDF.js 预览依赖，不阻断本次 PDM 台账收口。
+
+## 2026-07-02 PDM V1 收口与 v0.9.2 发布验证
+
+变更范围：
+
+- PDM 零件详情页新增原始 PDF、签后 PDF、审查版 PDF 直接入口。
+- PDM 零件详情页新增操作时间线，直接展示该零件相关审批和 PDM 操作日志。
+- 新增管理员 PDM 图纸版本作废接口和页面入口；作废当前版本后会回退到最近的非作废历史版本。
+- PDM 待补录清单新增列表内快速补录和“发布到 PDM”重试。
+- 修正 PDM 历史回填验证文档中的过期限制说明。
+- 版本升级到 `0.9.2`，重新生成客户端、服务端安装包和更新清单。
+
+命令验证：
+
+```powershell
+npm test -- --run src/client/pages/pdmPageLayout.test.ts
+npm test -- --run src/server/repositories/pdmParts.test.ts
+npm test -- --run src/server/routes/pdm.test.ts
+npm test -- --run src/client/api.test.ts
+npm test
+npm run desktop:test
+npm run build
+npm run installer:package
+git diff --check
+```
+
+结果：
+
+- focused PDM 前端布局测试：10 个用例通过。
+- PDM repository 测试：9 个用例通过。
+- PDM routes 测试：8 个用例通过。
+- client API 测试：27 个用例通过。
+- 全量测试：95 个测试文件、541 个用例通过。
+- Electron 桌面壳测试：3 个测试文件、12 个用例通过。
+- Vite/TypeScript 构建通过；仍保留既有 `assets/pdf-CJRVEglZ.js` 约 531.35 kB 的 PDF.js chunk 提示，不阻断发布。
+- `git diff --check` 通过。
+
+浏览器冒烟：
+
+- 使用临时端口 `18080` 和临时数据库启动 `0.9.2` 开发服务，未占用真实服务端 `8080`。
+- Chrome/Playwright 打开 `http://127.0.0.1:18080/#/pdm`，使用 `admin / admin123` 登录。
+- PDM 工作台显示零件总数、当前有效版本、待补录、共用件数和零件主表。
+- PDM 待补录页显示“快速补录”“发布到 PDM”，点击“快速补录”后出现物料号、体系文件号、图纸名称内联表单。
+- PDM 零件详情页显示原始 PDF、签后 PDF、审查版 PDF、历史版本、作废版本控件。
+- 点击“操作时间线”后显示审核处理和发布到 PDM 记录。
+- Playwright console error 检查：0 个 error。
+
+发布产物：
+
+- `dist\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe`：103125185 bytes。
+- `dist\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe`：103396067 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\client\PDF图纸审批客户端-安装包-0.9.2.exe`：103125185 bytes。
+- `E:\PDF服务端\pdf-approval\releases\installers\server\PDF图纸审批服务端-安装包-0.9.2.exe`：103396067 bytes。
+- `E:\PDF服务端\pdf-approval\releases\updates\latest.json` 和 `latest.yml` 均已同步，version=`0.9.2`。
+- 真实服务端 `http://127.0.0.1:8080/updates/latest.json` 返回 version=`0.9.2`；`/updates/latest.yml` 首行为 `version: 0.9.2`。
+
+注意：
+
+- 验证时真实服务端 `/health` 仍显示 `0.9.1`，因为尚未安装新版服务端 exe；当前已同步的是更新目录。安装 `PDF图纸审批服务端-安装包-0.9.2.exe` 后，服务端运行版本才会变为 `0.9.2`。
+```

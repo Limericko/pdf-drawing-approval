@@ -92,7 +92,11 @@ describe("submission routes", () => {
       partName: "轴承座",
       version: "a0A0",
       minorVersion: "a0",
-      majorVersion: "A0"
+      majorVersion: "A0",
+      documentCode: null,
+      materialCode: null,
+      drawingName: "轴承座",
+      metadataStatus: "missing_material_code"
     });
     expect(context.operationLogs.listRecent().map((log) => log.action)).toContain("submission.uploaded");
   });
@@ -185,6 +189,33 @@ describe("submission routes", () => {
     expect(context.signaturePlacements.hasRequiredPlacements(response.body.id)).toBe(true);
     const actions = context.operationLogs.listForTarget("approval", response.body.id).map((log) => log.action);
     expect(actions).toEqual(expect.arrayContaining(["approval.created", "signature.placements_saved", "notification.email_skipped"]));
+  });
+
+  it("stores PDM metadata from the uploaded standard drawing filename", async () => {
+    const context = await appContext();
+    const upload = await uploadPdf(context.app, context.designerToken, "MP300A000072 《0102A00700883 400A按键》 a0A0.pdf").expect(200);
+
+    const response = await request(context.app)
+      .post("/api/submissions")
+      .set("Authorization", `Bearer ${context.designerToken}`)
+      .send({
+        uploadId: upload.body.uploadId,
+        projectName: "项目A",
+        partName: "400A按键",
+        version: "a0A0",
+        placements: requiredPlacements()
+      })
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        documentCode: "MP300A000072",
+        materialCode: "0102A00700883",
+        drawingName: "400A按键",
+        pdmMetadataStatus: "complete",
+        pdmPublishStatus: "pending"
+      })
+    );
   });
 
   it("rejects duplicate project part and version submissions", async () => {

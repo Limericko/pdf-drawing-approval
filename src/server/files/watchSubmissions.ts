@@ -94,7 +94,12 @@ export async function processSubmittedFile(filePath: string, deps: SubmissionHan
     originalFilePath: filePath,
     currentFilePath: nextPath,
     source: "folder_watch",
-    signatureStatus: "placement_required"
+    signatureStatus: "placement_required",
+    documentCode: parsed.documentCode,
+    materialCode: parsed.materialCode,
+    drawingName: parsed.drawingName,
+    pdmMetadataStatus: parsed.metadataStatus,
+    pdmPublishStatus: parsed.materialCode ? "pending" : "metadata_pending"
   });
 
   deps.operationLogs?.create({

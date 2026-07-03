@@ -5,6 +5,7 @@ import type {
   CleanupResult,
   MaintenanceSettings,
   OperationLog,
+  PdmBackfillResult,
   SystemDiagnostics,
   SystemRisk,
   SystemUpdateInfo,
@@ -40,6 +41,8 @@ export function OperationsTab({
   operationLogs,
   updateInfo,
   checkingUpdate,
+  pdmBackfillResult,
+  backfillingPdm,
   onRefreshRisks,
   onRefreshDiagnostics,
   onRunBackup,
@@ -54,7 +57,8 @@ export function OperationsTab({
   onReportFiltersChange,
   onExportReport,
   onRefreshOperationLogs,
-  onCheckUpdate
+  onCheckUpdate,
+  onRunPdmBackfill
 }: {
   risks: SystemRisk[];
   diagnostics: SystemDiagnostics | null;
@@ -73,6 +77,8 @@ export function OperationsTab({
   operationLogs: OperationLog[];
   updateInfo: SystemUpdateInfo | null;
   checkingUpdate: boolean;
+  pdmBackfillResult: PdmBackfillResult | null;
+  backfillingPdm: boolean;
   onRefreshRisks: () => void;
   onRefreshDiagnostics: () => void;
   onRunBackup: () => void;
@@ -88,12 +94,14 @@ export function OperationsTab({
   onExportReport: () => void;
   onRefreshOperationLogs: () => void;
   onCheckUpdate: () => void;
+  onRunPdmBackfill: () => void;
 }) {
   return (
     <div className="admin-panel">
       <RiskDashboard risks={risks} onRefresh={onRefreshRisks} />
       <VersionUpdatePanel updateInfo={updateInfo} checking={checkingUpdate} onCheck={onCheckUpdate} />
       <DiagnosticsPanel diagnostics={diagnostics} onRefresh={onRefreshDiagnostics} />
+      <PdmBackfillPanel result={pdmBackfillResult} running={backfillingPdm} onRun={onRunPdmBackfill} />
       <div className="ops-grid">
         <section className="management-panel">
           <div className="panel-heading">
@@ -167,6 +175,75 @@ export function OperationsTab({
       </section>
       <OperationLogPanel logs={operationLogs} onRefresh={onRefreshOperationLogs} />
     </div>
+  );
+}
+
+function PdmBackfillPanel(props: { result: PdmBackfillResult | null; running: boolean; onRun: () => void }) {
+  const summary = buildPdmBackfillSummary(props.result);
+  return (
+    <section className="management-panel pdm-backfill-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>PDM 历史回填</h2>
+          <span>将已通过或已归档的历史 PDF 按标准文件名补发布到零件库</span>
+        </div>
+        <button type="button" onClick={props.onRun} disabled={props.running}>
+          {props.running ? "回填中" : "回填已通过图纸"}
+        </button>
+      </div>
+      <div className="cleanup-summary-grid">
+        <DiagnosticItem label="扫描记录" value={`${props.result?.scanned ?? 0} 条`} ok />
+        <DiagnosticItem label="已发布" value={`${props.result?.published ?? 0} 条`} ok={(props.result?.failed ?? 0) === 0} />
+        <DiagnosticItem label="已跳过" value={`${props.result?.skipped ?? 0} 条`} ok={(props.result?.skipped ?? 0) === 0} />
+        <DiagnosticItem label="失败" value={`${props.result?.failed ?? 0} 条`} ok={(props.result?.failed ?? 0) === 0} />
+      </div>
+      {props.result ? (
+        <div className="cleanup-file-list pdm-backfill-result-list">
+          <strong>{summary.headline}</strong>
+          {summary.rows.slice(0, 8).map((row) => (
+            <span key={row} title={row}>{row}</span>
+          ))}
+          {summary.rows.length > 8 && <span>还有 {summary.rows.length - 8} 条明细未显示</span>}
+        </div>
+      ) : (
+        <div className="empty compact-empty">用于上线初期把历史审批记录补入 PDM；重复物料版本会被跳过并记录原因。</div>
+      )}
+    </section>
+  );
+}
+
+export function buildPdmBackfillSummary(result: PdmBackfillResult | null) {
+  if (!result) return { headline: "尚未执行历史回填", rows: [] };
+  return {
+    headline: `扫描 ${result.scanned} / 发布 ${result.published} / 跳过 ${result.skipped} / 失败 ${result.failed}`,
+    rows: result.items.map((item) => {
+      const parts = [`审批 #${item.approvalId}`, pdmBackfillStatusLabel(item.status)];
+      if (item.reason) parts.push(pdmBackfillReasonLabel(item.reason));
+      if (item.materialCode) parts.push(item.materialCode);
+      if (item.version) parts.push(item.version);
+      return parts.join(" · ");
+    })
+  };
+}
+
+function pdmBackfillStatusLabel(status: PdmBackfillResult["items"][number]["status"]) {
+  return {
+    published: "已发布",
+    skipped: "已跳过",
+    failed: "失败"
+  }[status];
+}
+
+export function pdmBackfillReasonLabel(reason: string) {
+  return (
+    {
+      already_published: "已发布过",
+      filename_not_standard_pdm: "文件名不是完整 PDM 格式",
+      file_missing: "PDF 文件丢失",
+      invalid_pdf: "PDF 文件无效",
+      duplicate_material_version: "物料版本已存在",
+      pdm_publish_failed: "PDM 发布失败"
+    }[reason] ?? reason
   );
 }
 
@@ -752,6 +829,13 @@ function operationActionLabel(action: string) {
       "approval.annotations_reset": "回退批注",
       "approval.annotated_pdf_opened": "打开审查版 PDF",
       "signature.template_created_from_approval": "保存签名模板",
+      "pdm.backfill_requested": "触发 PDM 回填",
+      "pdm.backfill_prepared": "准备 PDM 回填",
+      "pdm.backfill_skipped": "跳过 PDM 回填",
+      "pdm.metadata_pending": "PDM 待补录",
+      "pdm.metadata_repaired": "PDM 补录信息",
+      "pdm.revision_published": "发布 PDM 版本",
+      "pdm.publish_failed": "PDM 发布失败",
       "settings.smtp_test_sent": "SMTP 测试成功",
       "settings.smtp_test_failed": "SMTP 测试失败",
       "system.scan_completed": "扫描完成",
