@@ -12,8 +12,6 @@ export type StartConfiguredServerOptions<TLegacy, TPlatform = TLegacy> = {
   loadPlatform?: () => Promise<PlatformServerModule<TPlatform>>;
 };
 
-const platformServerModulePath = "./platform/startPlatformWebServer.ts";
-
 export function startConfiguredServer(): Promise<HttpServer>;
 export function startConfiguredServer<TLegacy, TPlatform>(
   options: StartConfiguredServerOptions<TLegacy, TPlatform>
@@ -31,6 +29,7 @@ export async function startConfiguredServer<TLegacy, TPlatform>(
     return platformModule.startPlatformWebServer();
   }
 
-  const platformModule = (await import(platformServerModulePath)) as PlatformServerModule<HttpServer>;
+  // @ts-expect-error Task 19 will add the platform runtime module.
+  const platformModule = (await import("./platform/startPlatformWebServer.ts")) as PlatformServerModule<HttpServer>;
   return platformModule.startPlatformWebServer();
 }

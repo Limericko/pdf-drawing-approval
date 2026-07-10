@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { startConfiguredServer } from "./startConfiguredServer.ts";
 
@@ -32,5 +33,11 @@ describe("startConfiguredServer", () => {
     expect(startLegacy).not.toHaveBeenCalled();
     expect(loadPlatform).toHaveBeenCalledOnce();
     expect(startPlatformWebServer).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the default platform entry as a literal dynamic import", () => {
+    const source = readFileSync(new URL("./startConfiguredServer.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('import("./platform/startPlatformWebServer.ts")');
   });
 });
