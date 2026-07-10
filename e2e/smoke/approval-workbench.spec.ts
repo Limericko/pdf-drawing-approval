@@ -35,7 +35,10 @@ test("reviewer opens the seeded approval and renders a nonblank PDF canvas", asy
 
   await expect(page).toHaveScreenshot("approval-workbench.png", {
     fullPage: true,
-    mask: [page.locator("time")]
+    mask: [
+      page.locator("time"),
+      page.locator(".drawing-meta-strip > div").filter({ hasText: "提交时间" }).locator("strong")
+    ]
   });
 });
 

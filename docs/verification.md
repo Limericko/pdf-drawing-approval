@@ -4169,7 +4169,7 @@ npm run e2e
 - `npm run e2e:typecheck`：通过，命令墙钟 `9.3s`。
 - `npm run build`：TypeScript 与 Vite 生产构建通过，命令墙钟 `26.8s`；保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告，不阻断构建。
 - `npm run desktop:test`：3 个测试文件、12 个用例通过；Vitest `5.24s`，命令墙钟 `13.7s`。
-- 移动 PDF 工作台定向复测：2 个用例通过，Playwright `37.8s`；移动基线为 `390x3604`、`238693` bytes、SHA-256 `DB714DEB33EAA16780B1D1496528D04459ADFF4C883EAA7EDE6187184AD422DC`。
+- 移动 PDF 工作台定向复测：2 个用例通过，Playwright `37.8s`；工作台快照已精确遮罩动态“提交时间”值。当前 desktop 基线为 `1440x1235`、`235902` bytes、SHA-256 `D28CA02DA90DAEE605ABCB5085169279765047040C18F094B9DE7451260CCC5E`，mobile 基线为 `390x3604`、`237530` bytes、SHA-256 `3F67D6B1ADE21DE6F3E0E35F363E74FF40A244CECD1FD58797823FC89D8AB2F0`。
 - 完整 Playwright：desktop 9 个、mobile 9 个，共 18 个用例通过；Playwright `1.2m`，命令墙钟 `74.8s`。退出后 `14173`、`18080` 均无监听。
 
 范围审计：
