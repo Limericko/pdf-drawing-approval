@@ -332,6 +332,7 @@ function assertProductionStorage(storage: PlatformStorageConfig) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
   if (
+    storage.accessKey !== storage.accessKey.trim() ||
     storage.accessKey.length < minimumProductionS3AccessKeyLength ||
     isUnsafeText(storage.accessKey) ||
     /minio/i.test(storage.accessKey)
@@ -339,6 +340,7 @@ function assertProductionStorage(storage: PlatformStorageConfig) {
     insecure("PDF_APPROVAL_STORAGE_S3_ACCESS_KEY");
   }
   if (
+    storage.secretKey !== storage.secretKey.trim() ||
     storage.secretKey.length < minimumProductionS3SecretKeyLength ||
     isUnsafeText(storage.secretKey) ||
     /minio/i.test(storage.secretKey)

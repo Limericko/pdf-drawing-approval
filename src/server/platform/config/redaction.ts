@@ -1,14 +1,53 @@
 const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|ACCESS_KEY|DATABASE_URL)/i;
+const stableIdentifierPattern =
+  /\b(?:PLATFORM_CONFIG_INVALID|INSECURE_PRODUCTION_CONFIG)\b|(?:^|(?<=[:\s]))PDF_APPROVAL_[A-Z0-9_]+\b/g;
+
+type ProtectedSegment = { kind: "text" | "stable-identifier"; value: string };
 
 export function redactConfigError(error: unknown, env: NodeJS.ProcessEnv = {}) {
   return redactConfigText(error instanceof Error ? error.message : String(error), env);
 }
 
 export function redactConfigText(value: string, env: NodeJS.ProcessEnv = {}) {
-  let redacted = String(value).replace(/([a-z][a-z0-9+.-]*:\/\/[^:/\s]+:)[^@\s/]+@/gi, "$1[REDACTED]@");
   const secrets = collectSecrets(env).sort((left, right) => right.length - left.length);
-  for (const secret of secrets) redacted = redacted.split(secret).join("[REDACTED]");
-  return redacted;
+  const protectedSegments = protectStableIdentifiers(String(value));
+  return restoreStableIdentifiers(
+    protectedSegments.map((segment) =>
+      segment.kind === "stable-identifier" ? segment : { ...segment, value: redactTextSegment(segment.value, secrets) }
+    )
+  );
+}
+
+function protectStableIdentifiers(value: string): ProtectedSegment[] {
+  const segments: ProtectedSegment[] = [];
+  let offset = 0;
+  for (const match of value.matchAll(stableIdentifierPattern)) {
+    const index = match.index;
+    if (index > offset) segments.push({ kind: "text", value: value.slice(offset, index) });
+    segments.push({ kind: "stable-identifier", value: match[0] });
+    offset = index + match[0].length;
+  }
+  if (offset < value.length) segments.push({ kind: "text", value: value.slice(offset) });
+  return segments;
+}
+
+function restoreStableIdentifiers(segments: ProtectedSegment[]) {
+  return segments.map((segment) => segment.value).join("");
+}
+
+function redactTextSegment(value: string, secrets: string[]) {
+  const withoutSecrets = replaceSecrets(value, secrets);
+  return withoutSecrets.replace(/([a-z][a-z0-9+.-]*:\/\/[^:/\s]+:)[^@\s/]+@/gi, "$1[REDACTED]@");
+}
+
+function replaceSecrets(value: string, secrets: string[]) {
+  if (secrets.length === 0) return value;
+  const pattern = new RegExp(secrets.map(escapeRegExp).join("|"), "g");
+  return value.replace(pattern, "[REDACTED]");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function collectSecrets(env: NodeJS.ProcessEnv) {

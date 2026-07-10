@@ -61,5 +61,19 @@ describe("platform config redaction", () => {
 
     expect(shortSecrets.some((secret) => output.includes(secret))).toBe(false);
     expect(output.includes(encodedDatabasePassword)).toBe(false);
+    expect(output).toContain("one=[REDACTED]");
+    expect(output).toContain("two=[REDACTED]");
+    expect(output).toContain("three=[REDACTED]");
+  });
+
+  it("preserves stable error and environment identifiers while redacting a one-character value", () => {
+    const output = redactConfigText(
+      "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER password=P",
+      { PDF_APPROVAL_SMTP_PASSWORD: "P" }
+    );
+
+    expect(output).toContain("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER");
+    expect(output).toContain("password=[REDACTED]");
+    expect(output.includes("password=P")).toBe(false);
   });
 });
