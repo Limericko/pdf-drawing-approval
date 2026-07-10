@@ -41,46 +41,49 @@ export async function seedE2eData(rootDir: string): Promise<E2eSeedResult> {
   await fs.writeFile(pdfPath, pdfBytes);
 
   const db = createDatabase(databasePath);
-  const users = new UserRepository(db);
-  const settings = new SettingsRepository(db);
-  const approvals = new ApprovalRepository(db);
-  const signatures = new SignatureAssetRepository(db);
-  users.ensureDefaultUsers();
-  const designer = users.create({
-    username: e2eUsers.designer.username,
-    password: e2eUsers.designer.password,
-    role: "designer",
-    displayName: "E2E设计师",
-    email: "designer-e2e@example.com"
-  });
+  try {
+    const users = new UserRepository(db);
+    const settings = new SettingsRepository(db);
+    const approvals = new ApprovalRepository(db);
+    const signatures = new SignatureAssetRepository(db);
+    users.ensureDefaultUsers();
+    const designer = users.create({
+      username: e2eUsers.designer.username,
+      password: e2eUsers.designer.password,
+      role: "designer",
+      displayName: "E2E设计师",
+      email: "designer-e2e@example.com"
+    });
 
-  for (const username of ["supervisor", "process", designer.username]) {
-    const user = users.findByUsername(username)!;
-    const signaturePath = path.join(signatureDir, `${username}.png`);
-    await fs.writeFile(signaturePath, transparentPng);
-    signatures.createForUser({ userId: user.id, kind: "uploaded_png", filePath: signaturePath });
+    for (const username of ["supervisor", "process", designer.username]) {
+      const user = users.findByUsername(username)!;
+      const signaturePath = path.join(signatureDir, `${username}.png`);
+      await fs.writeFile(signaturePath, transparentPng);
+      signatures.createForUser({ userId: user.id, kind: "uploaded_png", filePath: signaturePath });
+    }
+
+    settings.set("watch_root", watchRoot);
+    settings.set("app_base_url", "http://127.0.0.1:14173");
+    const approval = approvals.create({
+      projectName: "E2E项目",
+      partName: "E2E轴承座",
+      version: "a0A0",
+      minorVersion: "a0",
+      majorVersion: "A0",
+      originalFilePath: pdfPath,
+      currentFilePath: pdfPath,
+      submittedBy: designer.username,
+      submittedByUserId: designer.id,
+      source: "web_upload",
+      originalFileHash: createHash("sha256").update(pdfBytes).digest("hex"),
+      signatureStatus: "not_required",
+      documentCode: "E2EDOC0001",
+      materialCode: "E2EMAT0001",
+      drawingName: "E2E轴承座"
+    });
+
+    return { rootDir, dataDir, databasePath, watchRoot, pdfPath, approvalId: approval.id };
+  } finally {
+    db.close();
   }
-
-  settings.set("watch_root", watchRoot);
-  settings.set("app_base_url", "http://127.0.0.1:14173");
-  const approval = approvals.create({
-    projectName: "E2E项目",
-    partName: "E2E轴承座",
-    version: "a0A0",
-    minorVersion: "a0",
-    majorVersion: "A0",
-    originalFilePath: pdfPath,
-    currentFilePath: pdfPath,
-    submittedBy: designer.username,
-    submittedByUserId: designer.id,
-    source: "web_upload",
-    originalFileHash: createHash("sha256").update(pdfBytes).digest("hex"),
-    signatureStatus: "not_required",
-    documentCode: "E2EDOC0001",
-    materialCode: "E2EMAT0001",
-    drawingName: "E2E轴承座"
-  });
-  db.close();
-
-  return { rootDir, dataDir, databasePath, watchRoot, pdfPath, approvalId: approval.id };
 }
