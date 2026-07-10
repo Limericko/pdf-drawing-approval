@@ -76,4 +76,16 @@ describe("platform config redaction", () => {
     expect(output).toContain("password=[REDACTED]");
     expect(output.includes("password=P")).toBe(false);
   });
+
+  it("preserves a complete environment identifier after an equals sign", () => {
+    const output = redactConfigText(
+      "PLATFORM_CONFIG_INVALID field=PDF_APPROVAL_SMTP_PASSWORD password=P",
+      { PDF_APPROVAL_SMTP_PASSWORD: "P" }
+    );
+
+    expect(output).toContain("PLATFORM_CONFIG_INVALID");
+    expect(output).toContain("field=PDF_APPROVAL_SMTP_PASSWORD");
+    expect(output).toContain("password=[REDACTED]");
+    expect(output.includes("password=P")).toBe(false);
+  });
 });

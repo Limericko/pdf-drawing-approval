@@ -1,6 +1,6 @@
 const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|ACCESS_KEY|DATABASE_URL)/i;
 const stableIdentifierPattern =
-  /\b(?:PLATFORM_CONFIG_INVALID|INSECURE_PRODUCTION_CONFIG)\b|(?:^|(?<=[:\s]))PDF_APPROVAL_[A-Z0-9_]+\b/g;
+  /\b(?:PLATFORM_CONFIG_INVALID|INSECURE_PRODUCTION_CONFIG)\b|\bPDF_APPROVAL_[A-Z0-9_]+\b/g;
 
 type ProtectedSegment = { kind: "text" | "stable-identifier"; value: string };
 
