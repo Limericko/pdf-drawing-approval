@@ -288,7 +288,7 @@ export function LoginPage({ onLogin, resetToken }: { onLogin: (user: User) => vo
           <p>登录后处理提交、审核、签名和归档。</p>
         </div>
         <form className="login-panel" onSubmit={onSubmit}>
-          <div className="login-mode-switch" role="tablist" aria-label="登录方式">
+          <div className="login-mode-switch" role="group" aria-label="登录方式">
             <button type="button" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>
               登录
             </button>
