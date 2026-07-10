@@ -418,4 +418,47 @@ describe("production security gates", () => {
       )
     ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   });
+
+  it("enforces minimum S3 credential lengths in production", () => {
+    const productionOverrides = {
+      NODE_ENV: "production",
+      PDF_APPROVAL_SMTP_HOST: "smtp.example",
+      PDF_APPROVAL_SMTP_PORT: "465",
+      PDF_APPROVAL_SMTP_SECURE: "true",
+      PDF_APPROVAL_SMTP_USER: "mailer",
+      PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.example"
+    };
+
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          ...productionOverrides,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "1234567",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ACCESS_KEY");
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          ...productionOverrides,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcde"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_SECRET_KEY");
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          ...productionOverrides,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+        }),
+        "worker"
+      )
+    ).not.toThrow();
+  });
 });

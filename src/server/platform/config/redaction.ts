@@ -56,7 +56,7 @@ function visitJsonSecrets(value: unknown, secrets: Set<string>) {
 }
 
 function addSecret(secrets: Set<string>, value: string) {
-  if (value.length >= 4) secrets.add(value);
+  if (value.length > 0) secrets.add(value);
 }
 
 function safeDecode(value: string) {

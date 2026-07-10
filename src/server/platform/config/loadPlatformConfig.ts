@@ -34,6 +34,8 @@ const s3Fields = [
   "PDF_APPROVAL_STORAGE_S3_SECRET_KEY",
   "PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE"
 ] as const;
+const minimumProductionS3AccessKeyLength = 8;
+const minimumProductionS3SecretKeyLength = 16;
 
 type ParsedKeyring = { value: VersionedKeyring; raw: string; field: string };
 
@@ -329,8 +331,20 @@ function assertProductionStorage(storage: PlatformStorageConfig) {
   if (endpoint.protocol !== "https:" || ["127.0.0.1", "localhost", "::1", "minio"].includes(host)) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
-  if (isUnsafeText(storage.accessKey) || /minio/i.test(storage.accessKey)) insecure("PDF_APPROVAL_STORAGE_S3_ACCESS_KEY");
-  if (isUnsafeText(storage.secretKey) || /minio/i.test(storage.secretKey)) insecure("PDF_APPROVAL_STORAGE_S3_SECRET_KEY");
+  if (
+    storage.accessKey.length < minimumProductionS3AccessKeyLength ||
+    isUnsafeText(storage.accessKey) ||
+    /minio/i.test(storage.accessKey)
+  ) {
+    insecure("PDF_APPROVAL_STORAGE_S3_ACCESS_KEY");
+  }
+  if (
+    storage.secretKey.length < minimumProductionS3SecretKeyLength ||
+    isUnsafeText(storage.secretKey) ||
+    /minio/i.test(storage.secretKey)
+  ) {
+    insecure("PDF_APPROVAL_STORAGE_S3_SECRET_KEY");
+  }
 }
 
 function assertProductionKeyrings(environment: PlatformEnvironment, keyrings: ParsedKeyring[]) {
