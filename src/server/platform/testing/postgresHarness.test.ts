@@ -93,4 +93,25 @@ describe("postgresHarness", () => {
     expect(retryAdmin.end).toHaveBeenCalledOnce();
     expect(dropAttempts).toBe(2);
   });
+
+  it("retries role and admin Pool closure after DROP has already succeeded", async () => {
+    const admin = pool();
+    admin.end.mockRejectedValueOnce(new Error("admin close failed")).mockResolvedValueOnce(undefined);
+    const rolePool = pool();
+    rolePool.end.mockRejectedValueOnce(new Error("role close failed")).mockResolvedValueOnce(undefined);
+    const poolFactory = vi.fn().mockReturnValueOnce(admin).mockReturnValueOnce(rolePool);
+    const database = await createPlatformTestDatabase(localEnv, { poolFactory });
+    database.createPool("web");
+
+    await expect(database.dispose()).rejects.toThrow(database.databaseName);
+    expect(admin.query.mock.calls.filter(([sql]) => String(sql).startsWith("DROP DATABASE"))).toHaveLength(1);
+    expect(rolePool.end).toHaveBeenCalledTimes(1);
+    expect(admin.end).toHaveBeenCalledTimes(1);
+
+    await expect(database.dispose()).resolves.toBeUndefined();
+    await expect(database.dispose()).resolves.toBeUndefined();
+    expect(admin.query.mock.calls.filter(([sql]) => String(sql).startsWith("DROP DATABASE"))).toHaveLength(1);
+    expect(rolePool.end).toHaveBeenCalledTimes(2);
+    expect(admin.end).toHaveBeenCalledTimes(2);
+  });
 });

@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
-import { createPlatformTestDatabase, withPlatformTestDatabase } from "./postgresHarness.ts";
+import { type PlatformTestDatabase, withPlatformTestDatabase } from "./postgresHarness.ts";
 
 const adminUrl = process.env.PDF_APPROVAL_PLATFORM_TEST_ADMIN_DATABASE_URL;
 if (!adminUrl) throw new Error("PLATFORM_TEST_CONFIG_MISSING:PDF_APPROVAL_PLATFORM_TEST_ADMIN_DATABASE_URL");
@@ -20,29 +20,37 @@ async function databaseExists(databaseName: string) {
 
 describe("postgresHarness integration", () => {
   it("creates an isolated database where all four restricted roles can connect, then drops it", async () => {
-    const database = await createPlatformTestDatabase();
-    expect(await databaseExists(database.databaseName)).toBe(true);
+    let databaseName = "";
+    let databaseAfterCleanup!: PlatformTestDatabase;
 
-    for (const role of ["migration", "web", "worker", "bootstrap"] as const) {
-      const rolePool = database.createPool(role);
-      const result = await rolePool.query<{ current_user: string }>("SELECT current_user");
-      expect(result.rows[0]?.current_user).toBe(`platform_${role}`);
-    }
+    await withPlatformTestDatabase(async (database) => {
+      databaseName = database.databaseName;
+      databaseAfterCleanup = database;
+      expect(await databaseExists(database.databaseName)).toBe(true);
 
-    await database.dispose();
-    await database.dispose();
-    expect(await databaseExists(database.databaseName)).toBe(false);
+      for (const role of ["migration", "web", "worker", "bootstrap"] as const) {
+        const rolePool = database.createPool(role);
+        const result = await rolePool.query<{ current_user: string }>("SELECT current_user");
+        expect(result.rows[0]?.current_user).toBe(`platform_${role}`);
+      }
+    });
+
+    await databaseAfterCleanup.dispose();
+    expect(await databaseExists(databaseName)).toBe(false);
   });
 
-  it("drops the isolated database when the callback fails", async () => {
+  it("drops the isolated database when role verification fails after connecting", async () => {
     let databaseName = "";
 
     await expect(
       withPlatformTestDatabase(async (database) => {
         databaseName = database.databaseName;
-        throw new Error("callback failed");
+        const rolePool = database.createPool("web");
+        const result = await rolePool.query<{ current_user: string }>("SELECT current_user");
+        expect(result.rows[0]?.current_user).toBe("platform_web");
+        throw new Error("role verification failed");
       })
-    ).rejects.toThrow("callback failed");
+    ).rejects.toThrow("role verification failed");
 
     expect(databaseName).not.toBe("");
     expect(await databaseExists(databaseName)).toBe(false);

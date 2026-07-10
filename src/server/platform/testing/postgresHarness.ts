@@ -70,7 +70,7 @@ export async function createPlatformTestDatabase(
   const pools = new Set<Pool>();
   let acceptingPools = true;
   let databaseDropped = false;
-  let adminPoolClosed = false;
+  let cleanupAdmin: Pool | undefined = adminPool;
   let disposeInFlight: Promise<void> | undefined;
 
   async function performDispose() {
@@ -79,25 +79,35 @@ export async function createPlatformTestDatabase(
     for (const pool of pools) {
       try {
         await pool.end();
+        pools.delete(pool);
       } catch (error) {
         errors.push(new Error(`ROLE_POOL_CLOSE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
       }
     }
-    pools.clear();
 
-    const cleanupAdmin = adminPoolClosed ? poolFactory({ connectionString: parsed.admin.value, max: 1 }) : adminPool;
-    try {
-      await cleanupAdmin.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
-      databaseDropped = true;
-    } catch (error) {
-      errors.push(new Error(`DROP_DATABASE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+    if (!databaseDropped && !cleanupAdmin) {
+      try {
+        cleanupAdmin = poolFactory({ connectionString: parsed.admin.value, max: 1 });
+      } catch (error) {
+        errors.push(new Error(`ADMIN_POOL_CREATE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+      }
     }
-    try {
-      await cleanupAdmin.end();
-    } catch (error) {
-      errors.push(new Error(`ADMIN_POOL_CLOSE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+    if (!databaseDropped && cleanupAdmin) {
+      try {
+        await cleanupAdmin.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
+        databaseDropped = true;
+      } catch (error) {
+        errors.push(new Error(`DROP_DATABASE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+      }
     }
-    adminPoolClosed = true;
+    if (cleanupAdmin) {
+      try {
+        await cleanupAdmin.end();
+        cleanupAdmin = undefined;
+      } catch (error) {
+        errors.push(new Error(`ADMIN_POOL_CLOSE_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+      }
+    }
 
     if (errors.length > 0) {
       throw new AggregateError(errors, `PLATFORM_TEST_DATABASE_CLEANUP_FAILED:${databaseName}`);
@@ -114,7 +124,7 @@ export async function createPlatformTestDatabase(
       return pool;
     },
     async dispose() {
-      if (databaseDropped) return;
+      if (databaseDropped && pools.size === 0 && !cleanupAdmin) return;
       if (!disposeInFlight) {
         disposeInFlight = performDispose().finally(() => {
           disposeInFlight = undefined;
