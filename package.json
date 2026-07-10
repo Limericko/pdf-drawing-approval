@@ -13,7 +13,7 @@
     "e2e:typecheck": "tsc -p tsconfig.e2e.json",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
-    "e2e:update": "playwright test --update-snapshots",
+    "e2e:update": "playwright test --update-snapshots=all",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest",
     "icons:generate": "node scripts/generateAppIcons.mjs",
