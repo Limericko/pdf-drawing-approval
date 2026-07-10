@@ -4135,3 +4135,44 @@ git diff --check
 
 - 验证时真实服务端 `/health` 仍显示 `0.9.1`，因为尚未安装新版服务端 exe；当前已同步的是更新目录。安装 `PDF图纸审批服务端-安装包-0.9.2.exe` 后，服务端运行版本才会变为 `0.9.2`。
 ```
+
+## 2026-07-10 Phase 0 browser baseline
+
+验证范围：
+
+- Playwright 仅清理并重建 `.cache/e2e/runtime`，数据库、图纸、签名、日志、备份和发布目录均位于该隔离根目录；未使用或读取真实 `data`、`output`、`logs`、`backups`、`config` 目录。
+- 固定种子提供管理员、主管、工艺和设计师角色；登录后的落点和角色导航由可访问控件驱动并确定性断言。
+- 测试代码生成有效 PDF，并在桌面、移动项目中断言首个 PDF canvas 的非白像素数大于 100。
+- Axe 在桌面、移动项目的登录页和管理员主区域均为 0 个 critical 违规。
+- 视觉基线包括管理员外壳 desktop/mobile、审批 PDF 工作台 desktop/mobile，四张截图均已人工复核；登录与角色导航属于交互基线，没有单独截图。
+
+命令：
+
+```powershell
+npm test -- --run src/client
+npm test -- --run src/server/auth.test.ts src/server/domain src/server/repositories src/server/services src/server/files src/server/pdf
+npm test -- --run src/server/routes/auth.test.ts src/server/routes/submissions.test.ts src/server/routes/approvals.test.ts src/server/routes/approvalAnnotations.test.ts src/server/routes/approvalComments.test.ts src/server/routes/pdm.test.ts
+npm test -- --run src/server/routes/settings.test.ts src/server/routes/system.test.ts src/server/routes/users.test.ts src/server/routes/profile.test.ts src/server/routes/signatures.test.ts src/server/routes/signatureTemplates.test.ts src/server/routes/operationLogs.test.ts src/server/routes/reports.test.ts src/server/routes/tray.test.ts src/server/server.test.ts src/server/startServer.test.ts src/server/dbIndexes.test.ts
+npm run e2e:typecheck
+npm run build
+npm run desktop:test
+npm run e2e -- --project=mobile-chromium e2e/smoke/approval-workbench.spec.ts
+npm run e2e
+```
+
+结果：
+
+- client：32 个测试文件、223 个用例通过；Vitest `16.04s`，命令墙钟 `25.5s`。
+- server auth/domain/repositories/services/files/pdf：31 个测试文件、130 个用例通过；Vitest `15.20s`，命令墙钟 `24.7s`，低于 60 秒硬超时。
+- server 核心 routes：6 个测试文件、88 个用例通过；Vitest `36.64s`，命令墙钟 `45.6s`，低于 60 秒硬超时。
+- server settings/system/users 等：12 个测试文件、65 个用例通过；Vitest `13.79s`，命令墙钟 `21.8s`，低于 60 秒硬超时。
+- `npm run e2e:typecheck`：通过，命令墙钟 `9.3s`。
+- `npm run build`：TypeScript 与 Vite 生产构建通过，命令墙钟 `26.8s`；保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告，不阻断构建。
+- `npm run desktop:test`：3 个测试文件、12 个用例通过；Vitest `5.24s`，命令墙钟 `13.7s`。
+- 移动 PDF 工作台定向复测：2 个用例通过，Playwright `37.8s`；移动基线为 `390x3604`、`238693` bytes、SHA-256 `DB714DEB33EAA16780B1D1496528D04459ADFF4C883EAA7EDE6187184AD422DC`。
+- 完整 Playwright：desktop 9 个、mobile 9 个，共 18 个用例通过；Playwright `1.2m`，命令墙钟 `74.8s`。退出后 `14173`、`18080` 均无监听。
+
+范围审计：
+
+- Phase 0 未修改业务流程、数据库 schema 或桌面打包逻辑；`package.json` 和 lockfile 仅增加测试脚本及开发依赖。
+- 产品代码唯一改动是将登录方式切换容器的 ARIA 语义从 `tablist` 修正为 `group`，未改变交互或认证行为。
