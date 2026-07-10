@@ -1,6 +1,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadPlatformConfig } from "./loadPlatformConfig.ts";
+import { PlatformConfigError } from "./types.ts";
 
 const webDatabaseUrl = "postgresql://platform_web:p%40ss%3Aword@db.example:5432/platform";
 const workerDatabaseUrl = "postgresql://platform_worker:worker-password@db.example:5432/platform";
@@ -67,6 +68,21 @@ function bootstrapEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
+function productionWorkerEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return workerEnv({
+    NODE_ENV: "production",
+    PDF_APPROVAL_SMTP_HOST: "smtp.example",
+    PDF_APPROVAL_SMTP_PORT: "465",
+    PDF_APPROVAL_SMTP_SECURE: "true",
+    PDF_APPROVAL_SMTP_USER: "mailer",
+    PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+    PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.ap-east-1.amazonaws.com",
+    PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+    PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef",
+    ...overrides
+  });
+}
+
 describe("loadPlatformConfig target composition", () => {
   it("loads a filesystem-backed web config with secure session defaults", () => {
     const config = loadPlatformConfig(webEnv(), "web");
@@ -105,6 +121,7 @@ describe("loadPlatformConfig target composition", () => {
       port: 51025,
       from: "pdf-approval@local.test",
       secure: false,
+      requireTls: false,
       username: undefined,
       password: undefined
     });
@@ -159,6 +176,53 @@ describe("loadPlatformConfig target composition", () => {
     expect(() => loadPlatformConfig(workerEnv(), "worker")).not.toThrow();
   });
 });
+
+describe("platform environment validation", () => {
+  const migrationEnv = (nodeEnv?: string): NodeJS.ProcessEnv => ({
+    ...(nodeEnv === undefined ? {} : { NODE_ENV: nodeEnv }),
+    PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL: migrationDatabaseUrl
+  });
+
+  it("defaults to development only when NODE_ENV is undefined", () => {
+    expect(loadPlatformConfig(migrationEnv(), "migration").environment).toBe("development");
+  });
+
+  it.each(["development", "test", "production"])("accepts the exact NODE_ENV value %s", (nodeEnv) => {
+    expect(loadPlatformConfig(migrationEnv(nodeEnv), "migration").environment).toBe(nodeEnv);
+  });
+
+  it.each(["prodution", "staging", " production ", ""])("rejects the unknown NODE_ENV value %j", (nodeEnv) => {
+    expect(() => loadPlatformConfig(migrationEnv(nodeEnv), "migration")).toThrow(
+      "PLATFORM_CONFIG_INVALID:NODE_ENV"
+    );
+  });
+});
+
+describe("platform config error contract", () => {
+  it.each([
+    {
+      create: () => loadPlatformConfig(webEnv({ PDF_APPROVAL_STORAGE_DRIVER: "invalid" }), "web"),
+      code: "PLATFORM_CONFIG_INVALID",
+      field: "PDF_APPROVAL_STORAGE_DRIVER"
+    },
+    {
+      create: () => loadPlatformConfig(webEnv({ NODE_ENV: "production" }), "web"),
+      code: "INSECURE_PRODUCTION_CONFIG",
+      field: "PDF_APPROVAL_COOKIE_SECURE"
+    }
+  ] as const)("throws structured $code errors", ({ create, code, field }) => {
+    let thrown: unknown;
+    try {
+      create();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(PlatformConfigError);
+    expect(thrown).toMatchObject({ code, field });
+  });
+});
+
 describe("database and numeric validation", () => {
   it.each([
     ["web", "PDF_APPROVAL_PLATFORM_WEB_DATABASE_URL", () => webEnv()],
@@ -183,6 +247,12 @@ describe("database and numeric validation", () => {
     ["PDF_APPROVAL_PLATFORM_DB_TRANSACTION_TIMEOUT_MS", "not-a-number"]
   ])("rejects out-of-bounds database setting %s=%s", (key, value) => {
     expect(() => loadPlatformConfig(webEnv({ [key]: value }), "web")).toThrow(`PLATFORM_CONFIG_INVALID:${key}`);
+  });
+
+  it.each(["0x10", "1e1", "+1", "01", " 1 "])("rejects the non-canonical integer %j", (value) => {
+    expect(() => loadPlatformConfig(webEnv({ PDF_APPROVAL_PLATFORM_DB_POOL_MAX: value }), "web")).toThrow(
+      "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_PLATFORM_DB_POOL_MAX"
+    );
   });
 
   it("returns bounded database defaults", () => {
@@ -263,7 +333,7 @@ describe("web security validation", () => {
     expect(loadPlatformConfig(webEnv({ PDF_APPROVAL_TRUST_PROXY: value }), "web").trustedProxy).toBe(expected);
   });
 
-  it.each(["true", "6", "10.0.0.0/8", "proxy.example"])("rejects unsafe trusted proxy value %s", (value) => {
+  it.each(["true", "6", "+1", "01", "1e0", "0x1", "10.0.0.0/8", "proxy.example"])("rejects unsafe trusted proxy value %s", (value) => {
     expect(() => loadPlatformConfig(webEnv({ PDF_APPROVAL_TRUST_PROXY: value }), "web")).toThrow(
       "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_TRUST_PROXY"
     );
@@ -293,6 +363,57 @@ describe("web security validation", () => {
     expect(() =>
       loadPlatformConfig(webEnv({ PDF_APPROVAL_SESSION_ABSOLUTE_TTL_MS: "3000000" }), "web")
     ).toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_SESSION_IDLE_TTL_MS");
+  });
+});
+
+describe("SMTP validation", () => {
+  it.each([
+    "not-an-email",
+    "missing-domain@",
+    "pdf-approval@local.test\r\nBcc:attacker@example.com"
+  ])("rejects the invalid SMTP from address %j", (from) => {
+    expect(() => loadPlatformConfig(workerEnv({ PDF_APPROVAL_SMTP_FROM: from }), "worker")).toThrow(
+      "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_SMTP_FROM"
+    );
+  });
+
+  it("supports implicit TLS on port 465 and required STARTTLS on port 587", () => {
+    expect(loadPlatformConfig(productionWorkerEnv(), "worker").smtp).toEqual(
+      expect.objectContaining({ port: 465, secure: true, requireTls: false })
+    );
+    expect(
+      loadPlatformConfig(
+        productionWorkerEnv({
+          PDF_APPROVAL_SMTP_PORT: "587",
+          PDF_APPROVAL_SMTP_SECURE: "false",
+          PDF_APPROVAL_SMTP_REQUIRE_TLS: "true"
+        }),
+        "worker"
+      ).smtp
+    ).toEqual(expect.objectContaining({ port: 587, secure: false, requireTls: true }));
+  });
+
+  it("rejects production SMTP without transport encryption", () => {
+    expect(() =>
+      loadPlatformConfig(
+        productionWorkerEnv({
+          PDF_APPROVAL_SMTP_PORT: "587",
+          PDF_APPROVAL_SMTP_SECURE: "false",
+          PDF_APPROVAL_SMTP_REQUIRE_TLS: "false"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_SMTP_REQUIRE_TLS");
+    expect(() =>
+      loadPlatformConfig(
+        productionWorkerEnv({
+          PDF_APPROVAL_SMTP_PORT: "465",
+          PDF_APPROVAL_SMTP_SECURE: "false",
+          PDF_APPROVAL_SMTP_REQUIRE_TLS: "true"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_SMTP_SECURE");
   });
 });
 
@@ -417,6 +538,63 @@ describe("production security gates", () => {
         "worker"
       )
     ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ENDPOINT");
+  });
+
+  it.each([
+    "https://127.0.0.2",
+    "https://localhost.",
+    "https://bucket.localhost",
+    "https://0.0.0.0",
+    "https://169.254.1.1",
+    "https://10.1.2.3",
+    "https://172.16.1.1",
+    "https://192.168.1.1",
+    "https://[::1]",
+    "https://[::ffff:127.0.0.1]",
+    "https://[fc00::1]",
+    "https://[fe80::1]"
+  ])("rejects the non-public production S3 endpoint %s", (endpoint) => {
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          NODE_ENV: "production",
+          PDF_APPROVAL_SMTP_HOST: "smtp.example",
+          PDF_APPROVAL_SMTP_PORT: "465",
+          PDF_APPROVAL_SMTP_SECURE: "true",
+          PDF_APPROVAL_SMTP_USER: "mailer",
+          PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+          PDF_APPROVAL_STORAGE_S3_ENDPOINT: endpoint,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ENDPOINT");
+  });
+
+  it.each([
+    "https://s3.ap-east-1.amazonaws.com",
+    "https://8.8.8.8",
+    "https://[2606:4700:4700::1111]"
+  ])("accepts the public HTTPS production S3 endpoint %s", (endpoint) => {
+    const config = loadPlatformConfig(
+      workerEnv({
+        NODE_ENV: "production",
+        PDF_APPROVAL_SMTP_HOST: "smtp.example",
+        PDF_APPROVAL_SMTP_PORT: "465",
+        PDF_APPROVAL_SMTP_SECURE: "true",
+        PDF_APPROVAL_SMTP_USER: "mailer",
+        PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+        PDF_APPROVAL_STORAGE_S3_ENDPOINT: endpoint,
+        PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+        PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+      }),
+      "worker"
+    );
+
+    expect(config.storage).toEqual(
+      expect.objectContaining({ endpoint })
+    );
   });
 
   it("enforces minimum S3 credential lengths in production", () => {

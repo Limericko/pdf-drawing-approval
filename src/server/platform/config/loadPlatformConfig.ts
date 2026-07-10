@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { z } from "zod";
+import { isPublicEndpointHostname } from "./publicEndpoint.ts";
+import { PlatformConfigError } from "./types.ts";
 import type {
   BootstrapPlatformConfig,
   FilesystemStorageConfig,
@@ -36,6 +39,7 @@ const s3Fields = [
 ] as const;
 const minimumProductionS3AccessKeyLength = 8;
 const minimumProductionS3SecretKeyLength = 16;
+const smtpFromSchema = z.string().max(254).email();
 
 type ParsedKeyring = { value: VersionedKeyring; raw: string; field: string };
 
@@ -50,7 +54,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
 
   if (target === "migration") {
     const config: MigrationPlatformConfig = { target, environment, database };
-    assertProductionDatabase(config, databaseFields[target]);
+    if (environment === "production") assertProductionDatabase(database, databaseFields[target]);
     return config;
   }
 
@@ -64,8 +68,10 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       database,
       keyrings: { totpEncryption: totpEncryption.value, recoveryHmac: recoveryHmac.value }
     };
-    assertProductionDatabase(config, databaseFields[target]);
-    assertProductionKeyrings(config.environment, [totpEncryption, recoveryHmac]);
+    if (environment === "production") {
+      assertProductionDatabase(database, databaseFields[target]);
+      assertProductionKeyrings([totpEncryption, recoveryHmac]);
+    }
     return config;
   }
 
@@ -82,7 +88,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       worker: loadWorkerConfig(env),
       keyrings: { invitationHmac: invitationHmac.value }
     };
-    assertProductionWorker(config, env, invitationHmac);
+    assertProductionWorker(config, invitationHmac);
     return config;
   }
 
@@ -106,13 +112,14 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       csrfHmac: csrfHmac.value
     }
   };
-  assertProductionWeb(config, env, parsedKeyrings);
+  assertProductionWeb(config, parsedKeyrings);
   return config;
 }
 
 function resolveEnvironment(value: string | undefined): PlatformEnvironment {
-  if (value === "production" || value === "test") return value;
-  return "development";
+  if (value === undefined) return "development";
+  if (value === "development" || value === "test" || value === "production") return value;
+  configInvalid("NODE_ENV");
 }
 
 function loadDatabaseConfig(env: NodeJS.ProcessEnv, target: PlatformProcessTarget): PlatformDatabaseConfig {
@@ -202,11 +209,11 @@ function loadSessionConfig(env: NodeJS.ProcessEnv): PlatformSessionConfig {
 }
 
 function parseTrustedProxy(env: NodeJS.ProcessEnv): TrustedProxyConfig {
-  const value = env.PDF_APPROVAL_TRUST_PROXY?.trim() || "0";
-  if (value === "0") return false;
-  if (value === "loopback") return value;
-  const hops = Number(value);
-  if (!Number.isInteger(hops) || hops < 1 || hops > 5) configInvalid("PDF_APPROVAL_TRUST_PROXY");
+  const raw = env.PDF_APPROVAL_TRUST_PROXY;
+  if (raw === undefined || raw === "0") return false;
+  if (raw === "loopback") return raw;
+  const hops = parseCanonicalUnsignedInteger(raw, "PDF_APPROVAL_TRUST_PROXY");
+  if (hops < 1 || hops > 5) configInvalid("PDF_APPROVAL_TRUST_PROXY");
   return hops as 1 | 2 | 3 | 4 | 5;
 }
 
@@ -220,11 +227,15 @@ function parsePublicBaseUrl(env: NodeJS.ProcessEnv) {
 function loadSmtpConfig(env: NodeJS.ProcessEnv): PlatformSmtpConfig {
   const host = requiredTrimmed(env, "PDF_APPROVAL_SMTP_HOST");
   const port = boundedInteger(env, "PDF_APPROVAL_SMTP_PORT", 25, 1, 65535);
+  const rawFrom = requiredRaw(env, "PDF_APPROVAL_SMTP_FROM");
+  const from = rawFrom.trim();
+  if (/[\r\n]/.test(rawFrom) || !smtpFromSchema.safeParse(from).success) configInvalid("PDF_APPROVAL_SMTP_FROM");
   return {
     host,
     port,
-    from: requiredTrimmed(env, "PDF_APPROVAL_SMTP_FROM"),
+    from,
     secure: optionalBoolean(env, "PDF_APPROVAL_SMTP_SECURE", port === 465),
+    requireTls: optionalBoolean(env, "PDF_APPROVAL_SMTP_REQUIRE_TLS", false),
     username: optionalRaw(env, "PDF_APPROVAL_SMTP_USER"),
     password: optionalRaw(env, "PDF_APPROVAL_SMTP_PASSWORD")
   };
@@ -294,16 +305,16 @@ function assertDistinctKeyrings(keyrings: ParsedKeyring[]) {
   }
 }
 
-function assertProductionWeb(config: WebPlatformConfig, env: NodeJS.ProcessEnv, keyrings: ParsedKeyring[]) {
+function assertProductionWeb(config: WebPlatformConfig, keyrings: ParsedKeyring[]) {
   if (config.environment !== "production") return;
   if (!config.session.cookieSecure) insecure("PDF_APPROVAL_COOKIE_SECURE");
   if (!config.publicBaseUrl.startsWith("https://")) insecure("PDF_APPROVAL_PUBLIC_BASE_URL");
-  assertProductionDatabase(config, databaseFields.web);
+  assertProductionDatabase(config.database, databaseFields.web);
   assertProductionStorage(config.storage);
-  assertProductionKeyrings(config.environment, keyrings);
+  assertProductionKeyrings(keyrings);
 }
 
-function assertProductionWorker(config: WorkerPlatformConfig, env: NodeJS.ProcessEnv, invitationHmac: ParsedKeyring) {
+function assertProductionWorker(config: WorkerPlatformConfig, invitationHmac: ParsedKeyring) {
   if (config.environment !== "production") return;
   const host = config.smtp.host.toLowerCase();
   if (["127.0.0.1", "localhost", "::1", "mailpit"].includes(host) || [1025, 51025, 8025, 58025].includes(config.smtp.port)) {
@@ -312,23 +323,22 @@ function assertProductionWorker(config: WorkerPlatformConfig, env: NodeJS.Proces
   if (!config.smtp.username) insecure("PDF_APPROVAL_SMTP_USER");
   if (!config.smtp.password) insecure("PDF_APPROVAL_SMTP_PASSWORD");
   if ((config.smtp.port === 465) !== config.smtp.secure) insecure("PDF_APPROVAL_SMTP_SECURE");
+  if (!config.smtp.secure && !config.smtp.requireTls) insecure("PDF_APPROVAL_SMTP_REQUIRE_TLS");
   if (isUnsafeText(config.smtp.password)) insecure("PDF_APPROVAL_SMTP_PASSWORD");
-  assertProductionDatabase(config, databaseFields.worker);
+  assertProductionDatabase(config.database, databaseFields.worker);
   assertProductionStorage(config.storage);
-  assertProductionKeyrings(config.environment, [invitationHmac]);
+  assertProductionKeyrings([invitationHmac]);
 }
 
-function assertProductionDatabase(config: PlatformConfig, field: string) {
-  if (config.environment !== "production") return;
-  const url = new URL(config.database.connectionString);
-  if (isUnsafeText(config.database.connectionString) || isUnsafeText(safeDecode(url.password))) insecure(field);
+function assertProductionDatabase(database: PlatformDatabaseConfig, field: string) {
+  const url = new URL(database.connectionString);
+  if (isUnsafeText(database.connectionString) || isUnsafeText(safeDecode(url.password))) insecure(field);
 }
 
 function assertProductionStorage(storage: PlatformStorageConfig) {
   if (storage.driver !== "s3") return;
   const endpoint = new URL(storage.endpoint);
-  const host = endpoint.hostname.toLowerCase();
-  if (endpoint.protocol !== "https:" || ["127.0.0.1", "localhost", "::1", "minio"].includes(host)) {
+  if (endpoint.protocol !== "https:" || !isPublicEndpointHostname(endpoint.hostname)) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
   if (
@@ -349,8 +359,7 @@ function assertProductionStorage(storage: PlatformStorageConfig) {
   }
 }
 
-function assertProductionKeyrings(environment: PlatformEnvironment, keyrings: ParsedKeyring[]) {
-  if (environment !== "production") return;
+function assertProductionKeyrings(keyrings: ParsedKeyring[]) {
   for (const keyring of keyrings) {
     if (keyring.raw.startsWith("local-only-")) insecure(keyring.field);
     for (const material of keyring.value.keys.values()) {
@@ -377,10 +386,17 @@ function optionalRaw(env: NodeJS.ProcessEnv, field: string) {
 }
 
 function boundedInteger(env: NodeJS.ProcessEnv, field: string, fallback: number, min: number, max: number) {
-  const raw = env[field]?.trim();
-  if (!raw) return fallback;
+  const raw = env[field];
+  if (raw === undefined || raw === "") return fallback;
+  const value = parseCanonicalUnsignedInteger(raw, field);
+  if (value < min || value > max) configInvalid(field);
+  return value;
+}
+
+function parseCanonicalUnsignedInteger(raw: string, field: string) {
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) configInvalid(field);
   const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < min || value > max) configInvalid(field);
+  if (!Number.isSafeInteger(value)) configInvalid(field);
   return value;
 }
 
@@ -438,5 +454,5 @@ function insecure(field: string): never {
 }
 
 function throwConfigError(code: "PLATFORM_CONFIG_INVALID" | "INSECURE_PRODUCTION_CONFIG", field: string): never {
-  throw new Error(`${code}:${field}`);
+  throw new PlatformConfigError(code, field);
 }

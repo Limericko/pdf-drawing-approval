@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { redactConfigError, redactConfigText } from "./redaction.ts";
+import { PlatformConfigError } from "./types.ts";
 
 describe("platform config redaction", () => {
   it("redacts URL-encoded and decoded PostgreSQL passwords", () => {
@@ -37,8 +38,11 @@ describe("platform config redaction", () => {
     expect(output).not.toContain(keyMaterial);
   });
 
-  it("keeps stable error codes and field names", () => {
-    expect(redactConfigError(new Error("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER"))).toBe(
+  it("rebuilds structured config errors from trusted fields instead of the message", () => {
+    const error = new PlatformConfigError("PLATFORM_CONFIG_INVALID", "PDF_APPROVAL_STORAGE_DRIVER");
+    error.message = "untrusted message password=local-only-password";
+
+    expect(redactConfigError(error, { PDF_APPROVAL_SMTP_PASSWORD: "local-only-password" })).toBe(
       "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER"
     );
   });
@@ -66,26 +70,30 @@ describe("platform config redaction", () => {
     expect(output).toContain("three=[REDACTED]");
   });
 
-  it("preserves stable error and environment identifiers while redacting a one-character value", () => {
-    const output = redactConfigText(
-      "PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER password=P",
-      { PDF_APPROVAL_SMTP_PASSWORD: "P" }
-    );
+  it("does not protect an environment-looking secret in a generic error", () => {
+    const secret = "PDF_APPROVAL_SMTP_PASSWORD";
+    const output = redactConfigError(new Error(`mail failed password=${secret}`), {
+      PDF_APPROVAL_SMTP_PASSWORD: secret
+    });
 
-    expect(output).toContain("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_DRIVER");
-    expect(output).toContain("password=[REDACTED]");
-    expect(output.includes("password=P")).toBe(false);
+    expect(output.includes(secret)).toBe(false);
   });
 
-  it("preserves a complete environment identifier after an equals sign", () => {
-    const output = redactConfigText(
-      "PLATFORM_CONFIG_INVALID field=PDF_APPROVAL_SMTP_PASSWORD password=P",
-      { PDF_APPROVAL_SMTP_PASSWORD: "P" }
-    );
+  it("redacts URL userinfo with an empty username", () => {
+    const encodedPassword = "p%40";
+    const decodedPassword = "p@";
+    const databaseUrl = `postgresql://:${encodedPassword}@db.example/platform`;
+    const output = redactConfigText(`connection failed: ${databaseUrl}; decoded=${decodedPassword}`);
 
-    expect(output).toContain("PLATFORM_CONFIG_INVALID");
-    expect(output).toContain("field=PDF_APPROVAL_SMTP_PASSWORD");
-    expect(output).toContain("password=[REDACTED]");
-    expect(output.includes("password=P")).toBe(false);
+    expect([databaseUrl, encodedPassword, decodedPassword].some((secret) => output.includes(secret))).toBe(false);
+  });
+
+  it("chooses a marker that cannot reproduce a secret", () => {
+    const secrets = ["[REDACTED]", "REDACTED"];
+
+    for (const secret of secrets) {
+      const output = redactConfigText(`password=${secret}`, { PDF_APPROVAL_SMTP_PASSWORD: secret });
+      expect(output.includes(secret)).toBe(false);
+    }
   });
 });

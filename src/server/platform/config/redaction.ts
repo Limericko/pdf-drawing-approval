@@ -1,49 +1,27 @@
-const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|ACCESS_KEY|DATABASE_URL)/i;
-const stableIdentifierPattern =
-  /\b(?:PLATFORM_CONFIG_INVALID|INSECURE_PRODUCTION_CONFIG)\b|\bPDF_APPROVAL_[A-Z0-9_]+\b/g;
+import { PlatformConfigError } from "./types.ts";
 
-type ProtectedSegment = { kind: "text" | "stable-identifier"; value: string };
+const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|ACCESS_KEY|DATABASE_URL)/i;
+const urlCredentialsPattern = /([a-z][a-z0-9+.-]*:\/\/[^@\s/:]*:)([^@\s/]+)@/gi;
+const defaultRedactionMarker = "[REDACTED]";
 
 export function redactConfigError(error: unknown, env: NodeJS.ProcessEnv = {}) {
+  if (error instanceof PlatformConfigError) return `${error.code}:${error.field}`;
   return redactConfigText(error instanceof Error ? error.message : String(error), env);
 }
 
 export function redactConfigText(value: string, env: NodeJS.ProcessEnv = {}) {
-  const secrets = collectSecrets(env).sort((left, right) => right.length - left.length);
-  const protectedSegments = protectStableIdentifiers(String(value));
-  return restoreStableIdentifiers(
-    protectedSegments.map((segment) =>
-      segment.kind === "stable-identifier" ? segment : { ...segment, value: redactTextSegment(segment.value, secrets) }
-    )
-  );
+  const input = String(value);
+  const secrets = collectSecrets(env);
+  addUrlSecrets(secrets, input);
+  const orderedSecrets = [...secrets].sort((left, right) => right.length - left.length);
+  const marker = chooseRedactionMarker(orderedSecrets);
+  return redactUrlCredentials(replaceSecrets(input, orderedSecrets, marker), marker);
 }
 
-function protectStableIdentifiers(value: string): ProtectedSegment[] {
-  const segments: ProtectedSegment[] = [];
-  let offset = 0;
-  for (const match of value.matchAll(stableIdentifierPattern)) {
-    const index = match.index;
-    if (index > offset) segments.push({ kind: "text", value: value.slice(offset, index) });
-    segments.push({ kind: "stable-identifier", value: match[0] });
-    offset = index + match[0].length;
-  }
-  if (offset < value.length) segments.push({ kind: "text", value: value.slice(offset) });
-  return segments;
-}
-
-function restoreStableIdentifiers(segments: ProtectedSegment[]) {
-  return segments.map((segment) => segment.value).join("");
-}
-
-function redactTextSegment(value: string, secrets: string[]) {
-  const withoutSecrets = replaceSecrets(value, secrets);
-  return withoutSecrets.replace(/([a-z][a-z0-9+.-]*:\/\/[^:/\s]+:)[^@\s/]+@/gi, "$1[REDACTED]@");
-}
-
-function replaceSecrets(value: string, secrets: string[]) {
+function replaceSecrets(value: string, secrets: string[], marker: string) {
   if (secrets.length === 0) return value;
   const pattern = new RegExp(secrets.map(escapeRegExp).join("|"), "g");
-  return value.replace(pattern, "[REDACTED]");
+  return value.replace(pattern, marker);
 }
 
 function escapeRegExp(value: string) {
@@ -59,7 +37,28 @@ function collectSecrets(env: NodeJS.ProcessEnv) {
     if (/DATABASE_URL/i.test(field)) addDatabaseUrlSecrets(secrets, rawValue);
     if (/KEYRING/i.test(field)) addJsonSecrets(secrets, rawValue);
   }
-  return [...secrets];
+  return secrets;
+}
+
+function addUrlSecrets(secrets: Set<string>, value: string) {
+  for (const match of value.matchAll(urlCredentialsPattern)) {
+    addSecret(secrets, match[2]);
+    addSecret(secrets, safeDecode(match[2]));
+  }
+}
+
+function redactUrlCredentials(value: string, marker: string) {
+  return value.replace(urlCredentialsPattern, (_match, prefix: string) => `${prefix}${marker}@`);
+}
+
+function chooseRedactionMarker(secrets: string[]) {
+  if (secrets.every((secret) => !defaultRedactionMarker.includes(secret))) return defaultRedactionMarker;
+  for (let codePoint = 0xe000; codePoint <= 0x10fffd; codePoint += 1) {
+    if (codePoint === 0xf900) codePoint = 0xf0000;
+    const candidate = String.fromCodePoint(codePoint);
+    if (secrets.every((secret) => !secret.includes(candidate))) return candidate;
+  }
+  throw new Error("REDACTION_MARKER_UNAVAILABLE");
 }
 
 function addDatabaseUrlSecrets(secrets: Set<string>, rawValue: string) {

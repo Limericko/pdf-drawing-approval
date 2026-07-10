@@ -1,5 +1,16 @@
 export type PlatformProcessTarget = "web" | "worker" | "migration" | "bootstrap-admin";
 export type PlatformEnvironment = "development" | "test" | "production";
+export type PlatformConfigErrorCode = "PLATFORM_CONFIG_INVALID" | "INSECURE_PRODUCTION_CONFIG";
+
+export class PlatformConfigError extends Error {
+  constructor(
+    readonly code: PlatformConfigErrorCode,
+    readonly field: string
+  ) {
+    super(`${code}:${field}`);
+    this.name = "PlatformConfigError";
+  }
+}
 
 export type PlatformDatabaseConfig = {
   connectionString: string;
@@ -45,6 +56,7 @@ export type PlatformSmtpConfig = {
   port: number;
   from: string;
   secure: boolean;
+  requireTls: boolean;
   username: string | undefined;
   password: string | undefined;
 };
