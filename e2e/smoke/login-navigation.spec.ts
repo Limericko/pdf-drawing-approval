@@ -16,6 +16,14 @@ test("reviewer lands on the review queue", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "待我审核" })).toHaveClass(/active/);
 });
 
+test("process reviewer lands on the review queue", async ({ page }) => {
+  await loginAs(page, "process");
+  await expect(page.getByRole("heading", { name: "我的待审图纸" })).toBeVisible();
+  const navigation = page.getByRole("navigation", { name: "主导航" });
+  await expect(navigation.getByRole("link", { name: "待我审核" })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: "待我审核" })).toHaveClass(/active/);
+});
+
 test("designer with a configured signature can open submission", async ({ page }) => {
   await loginAs(page, "designer");
   await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "提交图纸" })).toHaveClass(/active/);

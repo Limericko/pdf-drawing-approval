@@ -4141,10 +4141,10 @@ git diff --check
 验证范围：
 
 - Playwright 仅清理并重建 `.cache/e2e/runtime`，数据库、图纸、签名、日志、备份和发布目录均位于该隔离根目录；未使用或读取真实 `data`、`output`、`logs`、`backups`、`config` 目录。
-- 固定种子提供管理员、主管、工艺和设计师角色；登录后的落点和角色导航由可访问控件驱动并确定性断言。
+- 固定种子提供管理员、主管、工艺和设计师角色；四种角色均有独立的浏览器落点和角色导航断言，失败时可直接定位到具体角色。
 - 测试代码生成有效 PDF，并在桌面、移动项目中断言首个 PDF canvas 的非白像素数大于 100。
 - Axe 在桌面、移动项目的登录页和管理员主区域均为 0 个 critical 违规。
-- 视觉基线包括管理员外壳 desktop/mobile、审批 PDF 工作台 desktop/mobile，四张截图均已人工复核；登录与角色导航属于交互基线，没有单独截图。
+- 视觉基线包括管理员外壳 desktop/mobile、审批 PDF 工作台 desktop/mobile，四张截图均已人工复核；截图断言禁用动画并使用固定 `maxDiffPixels: 1000`，避免全页高度放大可接受差异。相同的两份截图 spec 已连续定向复测三次且全部通过，未更新快照；登录与角色导航属于交互基线，没有单独截图。
 
 命令：
 
@@ -4157,6 +4157,8 @@ npm run e2e:typecheck
 npm run build
 npm run desktop:test
 npm run e2e -- --project=mobile-chromium e2e/smoke/approval-workbench.spec.ts
+npm run e2e -- e2e/smoke/login-navigation.spec.ts
+npm run e2e -- e2e/smoke/approval-workbench.spec.ts e2e/smoke/responsive-accessibility.spec.ts
 npm run e2e
 ```
 
@@ -4170,7 +4172,9 @@ npm run e2e
 - `npm run build`：TypeScript 与 Vite 生产构建通过，命令墙钟 `26.8s`；保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告，不阻断构建。
 - `npm run desktop:test`：3 个测试文件、12 个用例通过；Vitest `5.24s`，命令墙钟 `13.7s`。
 - 移动 PDF 工作台定向复测：2 个用例通过，Playwright `37.8s`；工作台快照已精确遮罩动态“提交时间”值。当前 desktop 基线为 `1440x1235`、`235902` bytes、SHA-256 `D28CA02DA90DAEE605ABCB5085169279765047040C18F094B9DE7451260CCC5E`，mobile 基线为 `390x3604`、`237530` bytes、SHA-256 `3F67D6B1ADE21DE6F3E0E35F363E74FF40A244CECD1FD58797823FC89D8AB2F0`。
-- 完整 Playwright：desktop 9 个、mobile 9 个，共 18 个用例通过；Playwright `1.2m`，命令墙钟 `74.8s`。退出后 `14173`、`18080` 均无监听。
+- 登录与角色导航定向复测：desktop 5 个、mobile 5 个，共 10 个用例通过；管理员、主管、工艺和设计师的独立浏览器断言均通过。Playwright `46.4s`，命令墙钟 `52.5s`。
+- 固定截图容差定向校准：`maxDiffPixels: 1000` 下连续三次均为 desktop 5 个、mobile 5 个，共 10 个用例通过；三次 Playwright 均为 `1.0m`，命令墙钟依次为 `68.5s`、`68.6s`、`66.9s`，未更新快照。
+- 完整 Playwright：desktop 10 个、mobile 10 个，共 20 个用例通过；Playwright `1.2m`，命令墙钟 `74.7s`。退出后 `14173`、`18080` 均无监听。
 
 范围审计：
 

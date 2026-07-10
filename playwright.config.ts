@@ -15,7 +15,7 @@ export default defineConfig({
   reporter: [["list"], ["html", { outputFolder: ".cache/e2e/playwright-report", open: "never" }]],
   expect: {
     timeout: 10_000,
-    toHaveScreenshot: { animations: "disabled", maxDiffPixelRatio: 0.02 }
+    toHaveScreenshot: { animations: "disabled", maxDiffPixels: 1000 }
   },
   use: {
     baseURL: webUrl,
