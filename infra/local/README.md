@@ -24,6 +24,6 @@ npm run infra:down
 node scripts/platform-deps.mjs reset --confirm-local-data-loss
 ```
 
-普通停止保留命名卷。重置只删除 `pdf-approval-phase1-postgres-data` 和 `pdf-approval-phase1-minio-data`，会永久清除本地平台测试数据，缺少确认参数时命令拒绝执行。
+普通停止保留命名卷。重置仅允许连接本机 Docker named pipe；它会先按 `pdf-approval-phase1` project label 核对并列出真实容器和卷，再移除这些容器以及 `pdf-approval-phase1-postgres-data`、`pdf-approval-phase1-minio-data`。该操作会永久清除本地平台测试数据，缺少确认参数或资源标签不匹配时命令拒绝执行。
 
 测试不会自动启动 Docker。先运行 `infra:up`，再显式执行对应的 platform integration test。
