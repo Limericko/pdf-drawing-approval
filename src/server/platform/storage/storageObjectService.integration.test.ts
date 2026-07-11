@@ -4,19 +4,25 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { runMigrations } from "../database/migrationRunner.ts";
+import type { QueryExecutor } from "../database/queryExecutor.ts";
 import { withTransaction } from "../database/transaction.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testing/postgresHarness.ts";
 import type { CleanupIntent, CleanupIntentPublisher } from "./cleanupIntentPublisher.ts";
 import type { StorageAdapter, StorageDriver } from "./storageAdapter.ts";
 import { StorageError } from "./storageErrors.ts";
 import { PostgresStorageObjectRepository } from "./postgres/PostgresStorageObjectRepository.ts";
-import { deleteStorageObjectBytes, StorageObjectService } from "./storageObjectService.ts";
+import {
+  deleteStorageObjectBytes,
+  requestStorageObjectDeletion,
+  StorageObjectService
+} from "./storageObjectService.ts";
 import { StorageReconciler } from "./storageReconciler.ts";
 
 const WRITE_FAILURE_ID = "019f524e-d487-71a9-9853-199234c29b91";
 const HEAD_MISMATCH_ID = "019f524e-d487-71a9-9853-199234c29b92";
 const FINAL_UPDATE_FAILURE_ID = "019f524e-d487-71a9-9853-199234c29b93";
 const INTERRUPTED_UPLOAD_ID = "019f524e-d487-71a9-9853-199234c29b94";
+const OWNERSHIP_ID = "019f524e-d487-71a9-9853-199234c29b95";
 
 let database: PlatformTestDatabase;
 let migration: Pool;
@@ -42,12 +48,14 @@ const transactionRunner = <T>(callback: Parameters<typeof withTransaction<T>>[1]
 class MemoryStorage implements StorageAdapter {
   readonly calls: string[] = [];
   readonly objects = new Map<string, Buffer>();
+  readonly contentTypes: string[] = [];
   writeFailure?: Error;
   deleteFailure?: Error;
   headSizeDelta = 0;
   constructor(readonly driver: StorageDriver = "filesystem") {}
   async write(key: string, body: Readable, _contentType: string) {
     this.calls.push("write");
+    this.contentTypes.push(_contentType);
     if (this.writeFailure) throw this.writeFailure;
     const chunks: Buffer[] = [];
     for await (const chunk of body) chunks.push(Buffer.from(chunk));
@@ -73,12 +81,18 @@ class MemoryStorage implements StorageAdapter {
   async checkHealth() {}
 }
 
-function service(storage: StorageAdapter, runner = transactionRunner, createId?: () => string) {
+function service(
+  storage: StorageAdapter,
+  runner = transactionRunner,
+  createId?: () => string,
+  clock?: () => Date
+) {
   return new StorageObjectService({
     storage,
     transactionRunner: runner,
     createRepository: (executor) => new PostgresStorageObjectRepository(executor),
-    createId
+    createId,
+    clock
   });
 }
 
@@ -103,12 +117,91 @@ describe("StorageObjectService", () => {
     expect(Buffer.concat(chunks).toString()).toBe("pdf");
   });
 
+  it("owns body and normalized media type before awaiting the staging transaction", async () => {
+    const storage = new MemoryStorage();
+    let release!: () => void;
+    let entered!: () => void;
+    const stagingEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const barrierRunner = async <T>(callback: Parameters<typeof withTransaction<T>>[1]) => {
+      calls += 1;
+      if (calls === 1) {
+        entered();
+        await barrier;
+      }
+      return transactionRunner(callback);
+    };
+    const input = { body: Readable.from("original"), mediaType: "  application/pdf  " };
+
+    const creating = service(storage, barrierRunner, () => OWNERSHIP_ID).create(input);
+    await stagingEntered;
+    input.body = Readable.from("replacement");
+    input.mediaType = "text/plain";
+    release();
+    const created = await creating;
+
+    expect(storage.objects.get(created.objectKey)?.toString()).toBe("original");
+    expect(storage.contentTypes).toEqual(["application/pdf"]);
+    const metadata = await web.query<{ media_type: string }>(
+      "SELECT media_type FROM platform.storage_objects WHERE id = $1", [OWNERSHIP_ID]
+    );
+    expect(metadata.rows[0]?.media_type).toBe("application/pdf");
+  });
+
+  it("rejects control characters in media type and destroys the unowned body", async () => {
+    const storage = new MemoryStorage();
+    const body = Readable.from("pdf");
+    let transactionCalls = 0;
+    const runner = async <T>(_callback: Parameters<typeof withTransaction<T>>[1]) => {
+      transactionCalls += 1;
+      throw new Error("SHOULD_NOT_RUN");
+    };
+
+    await expect(service(storage, runner).create({
+      body,
+      mediaType: "application/pdf\ntext/plain"
+    })).rejects.toMatchObject({ code: "INVALID_STORAGE_OBJECT_MEDIA_TYPE" });
+    expect(body.destroyed).toBe(true);
+    expect(transactionCalls).toBe(0);
+  });
+
+  it.each([
+    {
+      name: "id generation",
+      create: (storage: MemoryStorage, body: Readable, failure: Error) =>
+        service(storage, transactionRunner, () => { throw failure; }).create({ body, mediaType: "application/pdf" })
+    },
+    {
+      name: "clock validation",
+      create: (storage: MemoryStorage, body: Readable, _failure: Error) =>
+        service(storage, transactionRunner, () => uuidv7(), () => new Date(Number.NaN))
+          .create({ body, mediaType: "application/pdf" })
+    },
+    {
+      name: "staging database write",
+      create: (storage: MemoryStorage, body: Readable, failure: Error) =>
+        service(storage, async () => { throw failure; }).create({ body, mediaType: "application/pdf" })
+    }
+  ])("destroys the unowned body when $name fails before storage.write", async ({ create }) => {
+    const storage = new MemoryStorage();
+    const body = Readable.from("pdf");
+    const failure = new Error("PREWRITE_FAILED");
+
+    await expect(create(storage, body, failure)).rejects.toSatisfy(
+      (error: unknown) => error === failure || (error as { code?: string }).code === "INVALID_STORAGE_OBJECT_CLOCK"
+    );
+    expect(body.destroyed).toBe(true);
+    expect(storage.calls).toEqual([]);
+  });
+
   it("keeps staging diagnostic state when object write fails", async () => {
     const storage = new MemoryStorage();
     storage.writeFailure = new StorageError("STORAGE_IO_ERROR", "write failed");
     const objectService = service(storage, transactionRunner, () => WRITE_FAILURE_ID);
+    const body = Readable.from("pdf");
 
-    await expect(objectService.create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
+    await expect(objectService.create({ body, mediaType: "application/pdf" }))
       .rejects.toMatchObject({ code: "STORAGE_IO_ERROR" });
 
     const objectKey = `objects/original/${WRITE_FAILURE_ID}`;
@@ -116,6 +209,7 @@ describe("StorageObjectService", () => {
       status: "staging", driver: "filesystem", object_key: objectKey
     });
     expect(storage.objects.has(objectKey)).toBe(false);
+    expect(body.destroyed).toBe(false);
   });
 
   it("rejects a head mismatch without reporting ready", async () => {
@@ -222,5 +316,63 @@ describe("StorageObjectService", () => {
     await expect(deleteStorageObjectBytes(storage, {
       driver: "filesystem", objectKey: `objects/original/${uuidv7()}`
     })).rejects.toBe(failure);
+  });
+
+  it("captures deletion id and requestedAt before awaiting reference removal", async () => {
+    const firstId = uuidv7();
+    const secondId = uuidv7();
+    for (const id of [firstId, secondId]) {
+      await migration.query(
+        `INSERT INTO platform.storage_objects
+          (id, status, driver, object_key, size_bytes, sha256, media_type, created_at, updated_at, ready_at)
+         VALUES ($1, 'ready', 'filesystem', $2, 1, $3, 'application/pdf', $4, $4, $4)`,
+        [id, `objects/original/${id}`, Buffer.alloc(32), new Date("2026-07-01T00:00:00.000Z")]
+      );
+    }
+    let entered!: () => void;
+    let release!: () => void;
+    const removing = new Promise<void>((resolve) => { entered = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const requestedAt = new Date("2026-07-02T00:00:00.000Z");
+    const options = {
+      storageObjectId: firstId,
+      requestedAt,
+      transactionRunner,
+      createRepository: (executor: QueryExecutor) => new PostgresStorageObjectRepository(executor),
+      publisher: { publish: async () => undefined } satisfies CleanupIntentPublisher,
+      async removeReferences() {
+        entered();
+        await barrier;
+      }
+    };
+
+    const deleting = requestStorageObjectDeletion(options);
+    await removing;
+    options.storageObjectId = secondId;
+    requestedAt.setUTCDate(10);
+    release();
+    await deleting;
+
+    const states = await web.query<{ id: string; status: string; delete_requested_at: Date | null }>(
+      "SELECT id, status, delete_requested_at FROM platform.storage_objects WHERE id = ANY($1::uuid[]) ORDER BY id",
+      [[firstId, secondId]]
+    );
+    const first = states.rows.find((row) => row.id === firstId);
+    const second = states.rows.find((row) => row.id === secondId);
+    expect(first).toMatchObject({ status: "delete_pending", delete_requested_at: new Date("2026-07-02T00:00:00.000Z") });
+    expect(second).toMatchObject({ status: "ready", delete_requested_at: null });
+  });
+
+  it("rejects an invalid deletion timestamp before opening a transaction", async () => {
+    let transactionCalls = 0;
+    await expect(requestStorageObjectDeletion({
+      storageObjectId: uuidv7(),
+      requestedAt: new Date(Number.NaN),
+      transactionRunner: async () => { transactionCalls += 1; throw new Error("SHOULD_NOT_RUN"); },
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher: { publish: async () => undefined },
+      removeReferences: async () => undefined
+    })).rejects.toMatchObject({ code: "INVALID_STORAGE_OBJECT_DATE" });
+    expect(transactionCalls).toBe(0);
   });
 });

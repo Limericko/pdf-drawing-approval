@@ -30,8 +30,17 @@ type StorageObjectRow = QueryResultRow & {
   deleted_at: Date | null;
 };
 
+type TransitionRow = StorageObjectRow & {
+  outcome: "updated" | "missing" | "date_order" | "state_conflict";
+};
+
 const COLUMNS = `id, status, driver, object_key, size_bytes, sha256, media_type, last_error,
   created_at, updated_at, ready_at, delete_requested_at, deleted_at`;
+const NULL_TRANSITION_COLUMNS = `NULL::uuid AS id, NULL::text AS status, NULL::text AS driver,
+  NULL::text AS object_key, NULL::bigint AS size_bytes, NULL::bytea AS sha256,
+  NULL::text AS media_type, NULL::text AS last_error, NULL::timestamptz AS created_at,
+  NULL::timestamptz AS updated_at, NULL::timestamptz AS ready_at,
+  NULL::timestamptz AS delete_requested_at, NULL::timestamptz AS deleted_at`;
 
 export class PostgresStorageObjectRepository implements StorageObjectRepository {
   constructor(private readonly executor: QueryExecutor) {}
@@ -62,30 +71,62 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
   async markReady(id: string, content: ReadyStorageObjectContent) {
     assertId(id);
     const owned = ownReadyContent(content);
-    const result = await this.executor.query<StorageObjectRow>(
-      `UPDATE platform.storage_objects
-       SET status = 'ready', size_bytes = $2, sha256 = $3, media_type = $4,
-         ready_at = $5, updated_at = $5
-       WHERE id = $1 AND status = 'staging' AND created_at <= $5
-       RETURNING ${COLUMNS}`,
+    const result = await this.executor.query<TransitionRow>(
+      `WITH existing AS MATERIALIZED (
+         SELECT status, created_at AS prior_at
+         FROM platform.storage_objects WHERE id = $1
+       ), updated AS (
+         UPDATE platform.storage_objects
+         SET status = 'ready', size_bytes = $2, sha256 = $3, media_type = $4,
+           ready_at = $5, updated_at = $5
+         WHERE id = $1 AND status = 'staging' AND created_at <= $5
+         RETURNING ${COLUMNS}
+       ), classified AS (
+         SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM existing) THEN 'missing'
+           WHEN EXISTS (
+             SELECT 1 FROM existing WHERE status = 'staging' AND prior_at > $5
+           ) THEN 'date_order'
+           ELSE 'state_conflict'
+         END AS outcome
+         WHERE NOT EXISTS (SELECT 1 FROM updated)
+       )
+       SELECT 'updated'::text AS outcome, ${COLUMNS} FROM updated
+       UNION ALL
+       SELECT outcome, ${NULL_TRANSITION_COLUMNS} FROM classified`,
       [id, owned.sizeBytes, owned.sha256, owned.mediaType, owned.readyAt]
     );
-    if (result.rows[0]) return mapStorageObject(result.rows[0]);
-    return this.throwTransitionFailure(id, "staging", owned.readyAt, "created_at");
+    return transitionResult(result.rows[0]!, "staging");
   }
 
   async markDeletePending(id: string, requestedAt: Date) {
     assertId(id);
     const ownedDate = ownDate(requestedAt);
-    const result = await this.executor.query<StorageObjectRow>(
-      `UPDATE platform.storage_objects
-       SET status = 'delete_pending', delete_requested_at = $2, updated_at = $2
-       WHERE id = $1 AND status = 'ready' AND ready_at <= $2
-       RETURNING ${COLUMNS}`,
+    const result = await this.executor.query<TransitionRow>(
+      `WITH existing AS MATERIALIZED (
+         SELECT status, ready_at AS prior_at
+         FROM platform.storage_objects WHERE id = $1
+       ), updated AS (
+         UPDATE platform.storage_objects
+         SET status = 'delete_pending', delete_requested_at = $2, updated_at = $2
+         WHERE id = $1 AND status = 'ready' AND ready_at <= $2
+         RETURNING ${COLUMNS}
+       ), classified AS (
+         SELECT CASE
+           WHEN NOT EXISTS (SELECT 1 FROM existing) THEN 'missing'
+           WHEN EXISTS (
+             SELECT 1 FROM existing WHERE status = 'ready' AND prior_at > $2
+           ) THEN 'date_order'
+           ELSE 'state_conflict'
+         END AS outcome
+         WHERE NOT EXISTS (SELECT 1 FROM updated)
+       )
+       SELECT 'updated'::text AS outcome, ${COLUMNS} FROM updated
+       UNION ALL
+       SELECT outcome, ${NULL_TRANSITION_COLUMNS} FROM classified`,
       [id, ownedDate]
     );
-    if (result.rows[0]) return mapStorageObject(result.rows[0]);
-    return this.throwTransitionFailure(id, "ready", ownedDate, "ready_at");
+    return transitionResult(result.rows[0]!, "ready");
   }
 
   async listStaleStaging(createdBefore: Date, limit: number) {
@@ -111,33 +152,23 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return result.rows.map(mapStorageObject);
   }
 
-  private async throwTransitionFailure(
-    id: string,
-    expectedStatus: StorageObjectStatus,
-    attemptedAt: Date,
-    priorTimestamp: "created_at" | "ready_at"
-  ): Promise<never> {
-    const existing = await this.executor.query<{ status: StorageObjectStatus; prior_at: Date | null }>(
-      `SELECT status, ${priorTimestamp} AS prior_at FROM platform.storage_objects WHERE id = $1`, [id]
-    );
-    if (!existing.rows[0]) {
-      throw new StorageObjectRepositoryError("STORAGE_OBJECT_NOT_FOUND", "Storage object metadata was not found");
-    }
-    if (
-      existing.rows[0].status === expectedStatus &&
-      existing.rows[0].prior_at !== null &&
-      attemptedAt.getTime() < existing.rows[0].prior_at.getTime()
-    ) {
-      throw new StorageObjectRepositoryError(
-        "INVALID_STORAGE_OBJECT_DATE_ORDER",
-        "Storage object lifecycle timestamp is before the prior transition"
-      );
-    }
+}
+
+function transitionResult(row: TransitionRow, expectedStatus: StorageObjectStatus): StorageObject {
+  if (row.outcome === "updated") return mapStorageObject(row);
+  if (row.outcome === "missing") {
+    throw new StorageObjectRepositoryError("STORAGE_OBJECT_NOT_FOUND", "Storage object metadata was not found");
+  }
+  if (row.outcome === "date_order") {
     throw new StorageObjectRepositoryError(
-      "STORAGE_OBJECT_STATE_CONFLICT",
-      `Storage object is not in expected ${expectedStatus} state`
+      "INVALID_STORAGE_OBJECT_DATE_ORDER",
+      "Storage object lifecycle timestamp is before the prior transition"
     );
   }
+  throw new StorageObjectRepositoryError(
+    "STORAGE_OBJECT_STATE_CONFLICT",
+    `Storage object is not in expected ${expectedStatus} state`
+  );
 }
 
 function mapStorageObject(row: StorageObjectRow): StorageObject {
@@ -171,7 +202,13 @@ function ownReadyContent(content: ReadyStorageObjectContent): ReadyStorageObject
   if (!Number.isSafeInteger(content.sizeBytes) || content.sizeBytes < 0 || !Buffer.isBuffer(content.sha256) || content.sha256.length !== 32) {
     throw invalidContent();
   }
-  if (typeof content.mediaType !== "string" || !content.mediaType.trim() || content.mediaType.length > 255) {
+  if (
+    typeof content.mediaType !== "string" ||
+    !content.mediaType ||
+    content.mediaType !== content.mediaType.trim() ||
+    content.mediaType.length > 255 ||
+    /[\u0000-\u001f\u007f]/.test(content.mediaType)
+  ) {
     throw invalidContent();
   }
   return {

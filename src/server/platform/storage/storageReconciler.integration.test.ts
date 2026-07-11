@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { runMigrations } from "../database/migrationRunner.ts";
 import { withTransaction } from "../database/transaction.ts";
@@ -34,6 +34,12 @@ afterAll(async () => {
   await database?.dispose();
 });
 
+beforeEach(async () => {
+  await migration.query(
+    "TRUNCATE platform.test_storage_refs, platform.test_cleanup_intents, platform.storage_objects"
+  );
+});
+
 const transactionRunner = <T>(callback: (tx: QueryExecutor) => Promise<T>) => withTransaction(web, callback);
 
 class RecordingPublisher implements CleanupIntentPublisher {
@@ -65,6 +71,99 @@ async function insertObject(status: "staging" | "ready" | "delete_pending", crea
 }
 
 describe("StorageReconciler", () => {
+  it("alternates staging and delete_pending priority when batchSize is one", async () => {
+    await insertObject("staging", new Date("2026-01-01T00:00:00.000Z"));
+    await insertObject("delete_pending", new Date("2026-01-01T00:00:00.000Z"));
+    const publisher = new RecordingPublisher();
+    const reconciler = new StorageReconciler({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher,
+      clock: () => new Date("2026-07-12T00:00:00.000Z"),
+      stagingMaxAgeMs: 60_000,
+      batchSize: 1
+    });
+
+    await reconciler.runOnce();
+    await reconciler.runOnce();
+
+    expect(publisher.intents.map((intent) => intent.expectedStatus)).toEqual(["staging", "delete_pending"]);
+  });
+
+  it("does not advance batchSize-one priority after a failed transaction", async () => {
+    await insertObject("staging", new Date("2026-01-02T00:00:00.000Z"));
+    await insertObject("delete_pending", new Date("2026-01-02T00:00:00.000Z"));
+    const statuses: string[] = [];
+    let fail = true;
+    const publisher: CleanupIntentPublisher = {
+      async publish(_executor, intent) {
+        if (fail) { fail = false; throw new Error("PUBLISH_FAILED"); }
+        statuses.push(intent.expectedStatus);
+      }
+    };
+    const reconciler = new StorageReconciler({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher,
+      clock: () => new Date("2026-07-12T00:00:00.000Z"),
+      stagingMaxAgeMs: 60_000,
+      batchSize: 1
+    });
+
+    await expect(reconciler.runOnce()).rejects.toThrow("PUBLISH_FAILED");
+    await reconciler.runOnce();
+    await reconciler.runOnce();
+    expect(statuses).toEqual(["staging", "delete_pending"]);
+  });
+
+  it("reserves capacity for both states and fills unused capacity when batchSize is larger", async () => {
+    await insertObject("staging", new Date("2026-01-03T00:00:00.000Z"));
+    await insertObject("staging", new Date("2026-01-04T00:00:00.000Z"));
+    await insertObject("delete_pending", new Date("2026-01-03T00:00:00.000Z"));
+    const publisher = new RecordingPublisher();
+    const options = {
+      transactionRunner,
+      createRepository: (executor: QueryExecutor) => new PostgresStorageObjectRepository(executor),
+      publisher,
+      clock: () => new Date("2026-07-12T00:00:00.000Z"),
+      stagingMaxAgeMs: 60_000,
+      batchSize: 2
+    };
+    const reconciler = new StorageReconciler(options);
+    options.batchSize = 99;
+    options.stagingMaxAgeMs = 1;
+
+    const result = await reconciler.runOnce();
+
+    expect(result.published).toBe(2);
+    expect(publisher.intents).toHaveLength(2);
+    expect(new Set(publisher.intents.map((intent) => intent.expectedStatus))).toEqual(
+      new Set(["staging", "delete_pending"])
+    );
+  });
+
+  it.each(["staging", "delete_pending"] as const)(
+    "fills unused capacity from %s candidates without exceeding the batch",
+    async (status) => {
+      for (let day = 1; day <= 3; day += 1) {
+        await insertObject(status, new Date(`2026-02-0${day}T00:00:00.000Z`));
+      }
+      const publisher = new RecordingPublisher();
+      const reconciler = new StorageReconciler({
+        transactionRunner,
+        createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+        publisher,
+        clock: () => new Date("2026-07-12T00:00:00.000Z"),
+        stagingMaxAgeMs: 60_000,
+        batchSize: 3
+      });
+
+      await expect(reconciler.runOnce()).resolves.toEqual({ published: 3 });
+      expect(publisher.intents).toHaveLength(3);
+      expect(publisher.intents.every((intent) => intent.expectedStatus === status)).toBe(true);
+    }
+  );
+
   it("publishes bounded stable intents for stale staging and delete_pending without deleting bytes", async () => {
     const now = new Date("2026-07-12T00:00:00.000Z");
     const stale = await insertObject("staging", new Date("2026-07-10T00:00:00.000Z"));
