@@ -456,11 +456,29 @@ function ensureRootExists(root: string): void {
     }
 
     const parent = dirname(root);
-    const parentStats = lstatSync(parent);
-    if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
+    const parentStatsBefore = lstatSync(parent);
+    if (parentStatsBefore.isSymbolicLink() || !parentStatsBefore.isDirectory()) {
       throw unsafeStoragePath();
     }
+    const canonicalParentBefore = realpathSync.native(parent);
+    if (!pathsEqual(parent, canonicalParentBefore)) {
+      throw unsafeStoragePath();
+    }
+
     mkdirSync(root);
+
+    const parentStatsAfter = lstatSync(parent);
+    const canonicalParentAfter = realpathSync.native(parent);
+    if (
+      parentStatsAfter.isSymbolicLink() ||
+      !parentStatsAfter.isDirectory() ||
+      parentStatsAfter.dev !== parentStatsBefore.dev ||
+      parentStatsAfter.ino !== parentStatsBefore.ino ||
+      !pathsEqual(parent, canonicalParentAfter) ||
+      !pathsEqual(canonicalParentBefore, canonicalParentAfter)
+    ) {
+      throw unsafeStoragePath();
+    }
   }
 }
 

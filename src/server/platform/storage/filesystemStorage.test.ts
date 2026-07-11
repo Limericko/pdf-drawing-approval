@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   link as fsLink,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
@@ -33,6 +34,29 @@ describe("FilesystemStorage path safety and cleanup", () => {
     expect(() => new FilesystemStorage({ root: "relative-storage-root" })).toThrowError(
       expect.objectContaining({ code: "INVALID_STORAGE_ROOT" }),
     );
+  });
+
+  it("does not create a missing root through a symlinked ancestor", async (context) => {
+    const safeBase = await mkdtemp(join(tmpdir(), "pdf-approval-storage-safe-base-"));
+    const outside = await mkdtemp(join(tmpdir(), "pdf-approval-storage-outside-parent-"));
+    const outsideParent = join(outside, "parent");
+    const outsideLeaf = join(outsideParent, "storage-root");
+    try {
+      await mkdir(outsideParent);
+      if (!(await tryCreateSymlink(outside, join(safeBase, "link"), "junction"))) {
+        context.skip("Platform policy does not permit directory symlink/junction creation");
+        return;
+      }
+
+      const root = join(safeBase, "link", "parent", "storage-root");
+      expect(() => new FilesystemStorage({ root })).toThrowError(
+        expect.objectContaining({ code: "UNSAFE_STORAGE_PATH" }),
+      );
+      await expect(lstat(outsideLeaf)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(safeBase, { force: true, recursive: true });
+      await rm(outside, { force: true, recursive: true });
+    }
   });
 
   it("removes partial files after an input stream failure", async () => {
