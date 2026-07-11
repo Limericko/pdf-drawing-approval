@@ -98,7 +98,7 @@ async function seedPermissionFixtures(migration: Pool) {
     `INSERT INTO platform.invitations
       (id, token_hash, token_key_version, email_normalized, platform_role, project_id, project_role,
        invited_by_user_id, expires_at)
-     VALUES ($1, decode(repeat('11', 32), 'hex'), 1, 'invitee@example.test', 'member', $2, 'viewer', $3,
+     VALUES ($1, decode(repeat('11', 32), 'hex'), 'v1', 'invitee@example.test', 'member', $2, 'viewer', $3,
        clock_timestamp() + interval '24 hours')`,
     [ids.invitation, ids.project, ids.user]
   );
@@ -168,6 +168,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
                ('totp_credentials', 'encrypted_secret'), ('recovery_codes', 'code_hash'),
                ('mfa_challenges', 'token_hash'), ('mfa_enrollments', 'encrypted_totp_secret'),
                ('sessions', 'token_hash'), ('storage_objects', 'sha256'),
+               ('invitations', 'token_key_version'), ('totp_credentials', 'key_version'),
+               ('recovery_codes', 'key_version'), ('mfa_enrollments', 'key_version'),
                ('outbox_events', 'payload'), ('jobs', 'payload'),
                ('users', 'created_at'), ('jobs', 'lease_expires_at')
              ))`
@@ -194,6 +196,14 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(byColumn.get("jobs.payload")?.data_type).toBe("jsonb");
       expect(byColumn.get("users.created_at")?.data_type).toBe("timestamp with time zone");
       expect(byColumn.get("jobs.lease_expires_at")?.data_type).toBe("timestamp with time zone");
+      for (const key of [
+        "invitations.token_key_version",
+        "totp_credentials.key_version",
+        "recovery_codes.key_version",
+        "mfa_enrollments.key_version"
+      ]) {
+        expect(byColumn.get(key)?.data_type, `${key} type`).toBe("text");
+      }
 
       const structuralViolations = await migration.query<{ violation: string }>(
         `SELECT format('%s lacks a primary key', table_name) AS violation
@@ -335,11 +345,101 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         migration.query(
           `INSERT INTO platform.totp_credentials
             (id, user_id, encrypted_secret, key_version, confirmed_at, created_at, updated_at)
-           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000041', $1, decode('0102', 'hex'), 1,
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000041', $1, decode('0102', 'hex'), 'v1',
              '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z')`,
           [userId]
         )
       ).resolves.toMatchObject({ rowCount: 1 });
+    });
+  });
+
+  it("persists VersionedKeyring string versions and rejects blank versions", async () => {
+    await withMigratedDatabase(async (database, migration) => {
+      const userId = "01890f1e-9b4a-7cc2-8f00-000000000050";
+      const bootstrapUserId = "01890f1e-9b4a-7cc2-8f00-000000000051";
+      const projectId = "01890f1e-9b4a-7cc2-8f00-000000000052";
+      const invitationId = "01890f1e-9b4a-7cc2-8f00-000000000053";
+      await migration.query(
+        `INSERT INTO platform.users
+          (id, email_normalized, display_name, password_hash, platform_role, status, mfa_status)
+         VALUES ($1, 'keyring-owner@example.test', 'Keyring Owner', '$argon2id$keyring', 'member', 'active', 'enabled')`,
+        [userId]
+      );
+      await migration.query(
+        "INSERT INTO platform.projects (id, name, status) VALUES ($1, 'Keyring Project', 'active')",
+        [projectId]
+      );
+
+      const web = database.createPool("web");
+      await expectTransactionAllowed(web, [
+        [
+          `INSERT INTO platform.invitations
+            (id, token_hash, token_key_version, email_normalized, platform_role, project_id, project_role,
+             invited_by_user_id, expires_at)
+           VALUES ($1, decode(repeat('91', 32), 'hex'), 'v1', 'keyring-invite@example.test', 'member', $2,
+             'viewer', $3, clock_timestamp() + interval '24 hours')`,
+          [invitationId, projectId, userId]
+        ],
+        [
+          `INSERT INTO platform.mfa_enrollments
+            (id, invitation_id, token_hash, encrypted_totp_secret, key_version, expires_at, max_attempts)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000054', $1, decode(repeat('92', 32), 'hex'),
+             decode('010203', 'hex'), 'local-v1', clock_timestamp() + interval '10 minutes', 5)`,
+          [invitationId]
+        ]
+      ]);
+
+      const bootstrap = database.createPool("bootstrap");
+      await expectTransactionAllowed(bootstrap, [
+        [
+          `INSERT INTO platform.users
+            (id, email_normalized, display_name, password_hash, platform_role, status, mfa_status)
+           VALUES ($1, 'keyring-bootstrap@example.test', 'Keyring Bootstrap', '$argon2id$bootstrap',
+             'admin', 'active', 'enabled')`,
+          [bootstrapUserId]
+        ],
+        [
+          `INSERT INTO platform.totp_credentials
+            (id, user_id, encrypted_secret, key_version, confirmed_at)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000055', $1, decode('0102', 'hex'), 'local-v1',
+             clock_timestamp())`,
+          [bootstrapUserId]
+        ],
+        [
+          `INSERT INTO platform.recovery_codes (id, user_id, code_hash, key_version)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000056', $1, decode(repeat('93', 32), 'hex'), 'v1')`,
+          [bootstrapUserId]
+        ]
+      ]);
+
+      await migration.query(
+        `INSERT INTO platform.invitations
+          (id, token_hash, token_key_version, email_normalized, platform_role, project_id, project_role,
+           invited_by_user_id, expires_at)
+         VALUES ($1, decode(repeat('94', 32), 'hex'), 'v1', 'blank-version-base@example.test', 'member', $2,
+           'viewer', $3, clock_timestamp() + interval '24 hours')`,
+        [invitationId, projectId, userId]
+      );
+      for (const statement of [
+        `INSERT INTO platform.invitations
+          (id, token_hash, token_key_version, email_normalized, platform_role, project_id, project_role,
+           invited_by_user_id, expires_at)
+         VALUES ('01890f1e-9b4a-7cc2-8f00-000000000057', decode(repeat('95', 32), 'hex'), '  ',
+           'blank-invite@example.test', 'member', '${projectId}', 'viewer', '${userId}',
+           clock_timestamp() + interval '24 hours')`,
+        `INSERT INTO platform.totp_credentials
+          (id, user_id, encrypted_secret, key_version, confirmed_at)
+         VALUES ('01890f1e-9b4a-7cc2-8f00-000000000058', '${userId}', decode('0102', 'hex'), '  ',
+           clock_timestamp())`,
+        `INSERT INTO platform.recovery_codes (id, user_id, code_hash, key_version)
+         VALUES ('01890f1e-9b4a-7cc2-8f00-000000000059', '${userId}', decode(repeat('96', 32), 'hex'), '  ')`,
+        `INSERT INTO platform.mfa_enrollments
+          (id, invitation_id, token_hash, encrypted_totp_secret, key_version, expires_at, max_attempts)
+         VALUES ('01890f1e-9b4a-7cc2-8f00-00000000005a', '${invitationId}', decode(repeat('97', 32), 'hex'),
+           decode('010203', 'hex'), '  ', clock_timestamp() + interval '10 minutes', 5)`
+      ]) {
+        await expect(migration.query(statement)).rejects.toMatchObject({ code: "23514" });
+      }
     });
   });
 
@@ -630,7 +730,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         "UPDATE platform.sessions SET token_hash = decode(repeat('66', 32), 'hex')",
         "UPDATE platform.sessions SET created_at = clock_timestamp()",
         "UPDATE platform.invitations SET token_hash = decode(repeat('77', 32), 'hex')",
-        "UPDATE platform.invitations SET token_key_version = 2",
+        "UPDATE platform.invitations SET token_key_version = 'v2'",
         "UPDATE platform.invitations SET project_id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
         "UPDATE platform.storage_objects SET driver = 's3'",
         "UPDATE platform.storage_objects SET object_key = 'forbidden/object.pdf'",
@@ -696,12 +796,12 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         [
           `INSERT INTO platform.totp_credentials
             (id, user_id, encrypted_secret, key_version, confirmed_at)
-           VALUES ($1, '01890f1e-9b4a-7cc2-8f00-00000000000d', decode('0102', 'hex'), 1, clock_timestamp())`,
+           VALUES ($1, '01890f1e-9b4a-7cc2-8f00-00000000000d', decode('0102', 'hex'), 'local-v1', clock_timestamp())`,
           [ids.totp]
         ],
         [
           `INSERT INTO platform.recovery_codes (id, user_id, code_hash, key_version)
-           VALUES ($1, '01890f1e-9b4a-7cc2-8f00-00000000000d', decode(repeat('33', 32), 'hex'), 1)`,
+           VALUES ($1, '01890f1e-9b4a-7cc2-8f00-00000000000d', decode(repeat('33', 32), 'hex'), 'v1')`,
           [ids.recoveryCode]
         ],
         [

@@ -65,7 +65,7 @@ CREATE INDEX project_members_user_id_idx ON platform.project_members (user_id);
 CREATE TABLE platform.invitations (
   id uuid PRIMARY KEY,
   token_hash bytea NOT NULL,
-  token_key_version integer NOT NULL,
+  token_key_version text NOT NULL,
   email_normalized text NOT NULL,
   platform_role text NOT NULL,
   project_id uuid NOT NULL,
@@ -81,7 +81,9 @@ CREATE TABLE platform.invitations (
   ),
   CONSTRAINT invitations_token_hash_unique UNIQUE (token_hash),
   CONSTRAINT invitations_token_hash_check CHECK (octet_length(token_hash) = 32),
-  CONSTRAINT invitations_token_key_version_check CHECK (token_key_version > 0),
+  CONSTRAINT invitations_token_key_version_check CHECK (
+    btrim(token_key_version) <> '' AND length(token_key_version) <= 32
+  ),
   CONSTRAINT invitations_email_normalized_check CHECK (
     email_normalized = lower(btrim(email_normalized)) AND email_normalized <> ''
   ),

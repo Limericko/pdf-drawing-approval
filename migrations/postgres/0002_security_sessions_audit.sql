@@ -2,7 +2,7 @@ CREATE TABLE platform.totp_credentials (
   id uuid PRIMARY KEY,
   user_id uuid NOT NULL,
   encrypted_secret bytea NOT NULL,
-  key_version integer NOT NULL,
+  key_version text NOT NULL,
   confirmed_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -13,7 +13,9 @@ CREATE TABLE platform.totp_credentials (
   CONSTRAINT totp_credentials_user_fk FOREIGN KEY (user_id)
     REFERENCES platform.users(id) ON DELETE RESTRICT,
   CONSTRAINT totp_credentials_secret_check CHECK (octet_length(encrypted_secret) > 0),
-  CONSTRAINT totp_credentials_key_version_check CHECK (key_version > 0),
+  CONSTRAINT totp_credentials_key_version_check CHECK (
+    btrim(key_version) <> '' AND length(key_version) <= 32
+  ),
   CONSTRAINT totp_credentials_updated_at_check CHECK (updated_at >= created_at)
 );
 
@@ -21,7 +23,7 @@ CREATE TABLE platform.recovery_codes (
   id uuid PRIMARY KEY,
   user_id uuid NOT NULL,
   code_hash bytea NOT NULL,
-  key_version integer NOT NULL,
+  key_version text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   used_at timestamptz,
   CONSTRAINT recovery_codes_id_uuid_v7_check CHECK (
@@ -31,7 +33,9 @@ CREATE TABLE platform.recovery_codes (
   CONSTRAINT recovery_codes_user_fk FOREIGN KEY (user_id)
     REFERENCES platform.users(id) ON DELETE RESTRICT,
   CONSTRAINT recovery_codes_hash_check CHECK (octet_length(code_hash) = 32),
-  CONSTRAINT recovery_codes_key_version_check CHECK (key_version > 0),
+  CONSTRAINT recovery_codes_key_version_check CHECK (
+    btrim(key_version) <> '' AND length(key_version) <= 32
+  ),
   CONSTRAINT recovery_codes_used_at_check CHECK (used_at IS NULL OR used_at >= created_at)
 );
 
@@ -67,7 +71,7 @@ CREATE TABLE platform.mfa_enrollments (
   invitation_id uuid NOT NULL,
   token_hash bytea NOT NULL,
   encrypted_totp_secret bytea NOT NULL,
-  key_version integer NOT NULL,
+  key_version text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   expires_at timestamptz NOT NULL,
   attempt_count integer NOT NULL DEFAULT 0,
@@ -82,7 +86,9 @@ CREATE TABLE platform.mfa_enrollments (
     REFERENCES platform.invitations(id) ON DELETE RESTRICT,
   CONSTRAINT mfa_enrollments_token_hash_check CHECK (octet_length(token_hash) = 32),
   CONSTRAINT mfa_enrollments_secret_check CHECK (octet_length(encrypted_totp_secret) > 0),
-  CONSTRAINT mfa_enrollments_key_version_check CHECK (key_version > 0),
+  CONSTRAINT mfa_enrollments_key_version_check CHECK (
+    btrim(key_version) <> '' AND length(key_version) <= 32
+  ),
   CONSTRAINT mfa_enrollments_expiry_check CHECK (expires_at > created_at),
   CONSTRAINT mfa_enrollments_attempts_check CHECK (
     attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts
