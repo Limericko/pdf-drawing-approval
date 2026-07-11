@@ -331,6 +331,24 @@ describe("Phase 1 PostgreSQL platform schema", () => {
            VALUES ($1, 'state.test', 1, '{}'::jsonb, $2, $3, $4, $5, clock_timestamp())`,
           [id, `state-${id}`, status, attemptCount, maxAttempts]
         );
+      const claimNextJob = (workerId: string, leaseExpiresAt: Date, leaseToken: string) =>
+        migration.query<{ id: string; status: string; attempt_count: number; started_at: Date | null }>(
+          `WITH next_job AS (
+             SELECT id FROM platform.jobs
+             WHERE (status = 'pending' AND next_run_at <= now())
+                OR (status = 'running' AND lease_expires_at <= now() AND attempt_count < max_attempts)
+             ORDER BY next_run_at, created_at, id
+             FOR UPDATE SKIP LOCKED
+             LIMIT 1
+           )
+           UPDATE platform.jobs j
+           SET status = 'running', worker_id = $1, lease_expires_at = $2,
+             lease_token = $3, attempt_count = attempt_count + 1
+           FROM next_job
+           WHERE j.id = next_job.id
+           RETURNING j.id, j.status, j.attempt_count, j.started_at`,
+          [workerId, leaseExpiresAt, leaseToken]
+        );
 
       await expect(
         insertJob("01890f1e-9b4a-7cc2-8f00-000000000020", "pending", 5, 5)
@@ -362,30 +380,33 @@ describe("Phase 1 PostgreSQL platform schema", () => {
 
       const retryJobId = "01890f1e-9b4a-7cc2-8f00-000000000024";
       await insertJob(retryJobId, "pending", 0, 3);
-      await migration.query(
-        `UPDATE platform.jobs
-         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-a',
-           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000024',
-           lease_expires_at = clock_timestamp() + interval '1 minute', started_at = clock_timestamp(),
-           updated_at = clock_timestamp()
-         WHERE id = $1`,
-        [retryJobId]
+      const initialClaim = await claimNextJob(
+        "worker-a",
+        new Date(Date.now() + 60_000),
+        "11890f1e-9b4a-4cc2-8f00-000000000024"
       );
+      expect(initialClaim.rows).toEqual([
+        { id: retryJobId, status: "running", attempt_count: 1, started_at: null }
+      ]);
       await migration.query(
         `UPDATE platform.jobs
          SET status = 'pending', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
-           next_run_at = clock_timestamp() + interval '1 minute', updated_at = clock_timestamp()
+           next_run_at = clock_timestamp(), updated_at = clock_timestamp()
          WHERE id = $1`,
         [retryJobId]
       );
-      await migration.query(
-        `UPDATE platform.jobs
-         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-b',
-           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000025',
-           lease_expires_at = clock_timestamp() + interval '1 minute', updated_at = clock_timestamp()
-         WHERE id = $1`,
-        [retryJobId]
+      const retryClaim = await claimNextJob(
+        "worker-b",
+        new Date(Date.now() - 1_000),
+        "11890f1e-9b4a-4cc2-8f00-000000000025"
       );
+      expect(retryClaim.rows[0]).toMatchObject({ id: retryJobId, status: "running", attempt_count: 2, started_at: null });
+      const recoveredClaim = await claimNextJob(
+        "worker-c",
+        new Date(Date.now() + 60_000),
+        "11890f1e-9b4a-4cc2-8f00-000000000027"
+      );
+      expect(recoveredClaim.rows[0]).toMatchObject({ id: retryJobId, status: "running", attempt_count: 3, started_at: null });
       await migration.query(
         `UPDATE platform.jobs
          SET status = 'succeeded', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
@@ -396,15 +417,12 @@ describe("Phase 1 PostgreSQL platform schema", () => {
 
       const deadJobId = "01890f1e-9b4a-7cc2-8f00-000000000026";
       await insertJob(deadJobId, "pending", 0, 1);
-      await migration.query(
-        `UPDATE platform.jobs
-         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-c',
-           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000026',
-           lease_expires_at = clock_timestamp() - interval '1 second', started_at = clock_timestamp(),
-           updated_at = clock_timestamp()
-         WHERE id = $1`,
-        [deadJobId]
+      const maxAttemptClaim = await claimNextJob(
+        "worker-d",
+        new Date(Date.now() - 1_000),
+        "11890f1e-9b4a-4cc2-8f00-000000000026"
       );
+      expect(maxAttemptClaim.rows[0]).toMatchObject({ id: deadJobId, status: "running", attempt_count: 1, started_at: null });
       await migration.query(
         `UPDATE platform.jobs
          SET status = 'dead', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
@@ -418,7 +436,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         [[retryJobId, deadJobId]]
       );
       expect(terminalRows.rows).toEqual([
-        { id: retryJobId, status: "succeeded", attempt_count: 2 },
+        { id: retryJobId, status: "succeeded", attempt_count: 3 },
         { id: deadJobId, status: "dead", attempt_count: 1 }
       ]);
     });

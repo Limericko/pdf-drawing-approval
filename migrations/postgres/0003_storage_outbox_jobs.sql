@@ -118,8 +118,8 @@ CREATE TABLE platform.jobs (
   ),
   CONSTRAINT jobs_execution_state_check CHECK (
     (status = 'pending' AND completed_at IS NULL)
-    OR (status = 'running' AND attempt_count > 0 AND started_at IS NOT NULL AND completed_at IS NULL)
-    OR (status IN ('succeeded', 'dead') AND attempt_count > 0 AND started_at IS NOT NULL AND completed_at IS NOT NULL)
+    OR (status = 'running' AND attempt_count > 0 AND completed_at IS NULL)
+    OR (status IN ('succeeded', 'dead') AND attempt_count > 0 AND completed_at IS NOT NULL)
   ),
   CONSTRAINT jobs_lease_state_check CHECK (
     (status = 'running' AND worker_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_token IS NOT NULL)
