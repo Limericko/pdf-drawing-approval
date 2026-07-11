@@ -122,12 +122,27 @@ FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA platform TO platform_web, platform_worker, platform_bootstrap;
 
-GRANT SELECT, INSERT, UPDATE ON TABLE
+GRANT SELECT, INSERT ON TABLE
   platform.users,
   platform.projects,
   platform.project_members,
   platform.invitations
 TO platform_web;
+
+GRANT UPDATE (
+  email_normalized,
+  display_name,
+  password_hash,
+  platform_role,
+  status,
+  mfa_status,
+  mfa_enabled_at,
+  updated_at
+) ON TABLE platform.users TO platform_web;
+GRANT UPDATE (name, status, updated_at) ON TABLE platform.projects TO platform_web;
+GRANT UPDATE (role, status, updated_at) ON TABLE platform.project_members TO platform_web;
+GRANT UPDATE (revoked_at, accepted_at, accepted_by_user_id)
+  ON TABLE platform.invitations TO platform_web;
 
 GRANT SELECT ON TABLE
   platform.users,

@@ -13,7 +13,8 @@ const ids = {
   auditSubject: "01890f1e-9b4a-7cc2-8f00-00000000000f",
   storage: "01890f1e-9b4a-7cc2-8f00-000000000007",
   outbox: "01890f1e-9b4a-7cc2-8f00-000000000008",
-  job: "01890f1e-9b4a-7cc2-8f00-000000000009"
+  job: "01890f1e-9b4a-7cc2-8f00-000000000009",
+  session: "01890f1e-9b4a-7cc2-8f00-000000000013"
 } as const;
 
 const expectedTables = [
@@ -78,6 +79,16 @@ async function seedPermissionFixtures(migration: Pool) {
       (id, email_normalized, display_name, password_hash, platform_role, status, mfa_status)
      VALUES ($1, 'seed@example.test', 'Seed User', '$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA', 'member', 'active', 'enabled')`,
     [ids.user]
+  );
+  await migration.query(
+    `WITH times AS (SELECT clock_timestamp() AS now)
+     INSERT INTO platform.sessions
+       (id, user_id, token_hash, created_at, absolute_expires_at, idle_expires_at,
+        last_activity_at, last_touch_at, client_summary)
+     SELECT $1, $2, decode(repeat('55', 32), 'hex'), now, now + interval '12 hours',
+       now + interval '1 hour', now, now, 'seed browser'
+     FROM times`,
+    [ids.session, ids.user]
   );
   await migration.query(
     "INSERT INTO platform.projects (id, name, status) VALUES ($1, 'Seed Project', 'active')",
@@ -310,6 +321,195 @@ describe("Phase 1 PostgreSQL platform schema", () => {
     });
   });
 
+  it("enforces job status invariants without blocking retry, lease recovery, success, or dead transitions", async () => {
+    await withMigratedDatabase(async (_database, migration) => {
+      const insertJob = (id: string, status: string, attemptCount: number, maxAttempts: number) =>
+        migration.query(
+          `INSERT INTO platform.jobs
+            (id, job_type, payload_version, payload, idempotency_key, status, attempt_count, max_attempts,
+             next_run_at)
+           VALUES ($1, 'state.test', 1, '{}'::jsonb, $2, $3, $4, $5, clock_timestamp())`,
+          [id, `state-${id}`, status, attemptCount, maxAttempts]
+        );
+
+      await expect(
+        insertJob("01890f1e-9b4a-7cc2-8f00-000000000020", "pending", 5, 5)
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        migration.query(
+          `INSERT INTO platform.jobs
+            (id, job_type, payload_version, payload, idempotency_key, status, attempt_count, max_attempts,
+             next_run_at, worker_id, lease_token, lease_expires_at)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000021', 'state.test', 1, '{}'::jsonb, 'running-zero',
+             'running', 0, 5, clock_timestamp(), 'worker-a', '11890f1e-9b4a-4cc2-8f00-000000000021',
+             clock_timestamp() + interval '1 minute')`
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+      for (const [id, status] of [
+        ["01890f1e-9b4a-7cc2-8f00-000000000022", "succeeded"],
+        ["01890f1e-9b4a-7cc2-8f00-000000000023", "dead"]
+      ] as const) {
+        await expect(
+          migration.query(
+            `INSERT INTO platform.jobs
+              (id, job_type, payload_version, payload, idempotency_key, status, attempt_count, max_attempts,
+               next_run_at, started_at)
+             VALUES ($1, 'state.test', 1, '{}'::jsonb, $2, $3, 1, 5, clock_timestamp(), clock_timestamp())`,
+            [id, `terminal-${status}`, status]
+          )
+        ).rejects.toMatchObject({ code: "23514" });
+      }
+
+      const retryJobId = "01890f1e-9b4a-7cc2-8f00-000000000024";
+      await insertJob(retryJobId, "pending", 0, 3);
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-a',
+           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000024',
+           lease_expires_at = clock_timestamp() + interval '1 minute', started_at = clock_timestamp(),
+           updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [retryJobId]
+      );
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'pending', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+           next_run_at = clock_timestamp() + interval '1 minute', updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [retryJobId]
+      );
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-b',
+           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000025',
+           lease_expires_at = clock_timestamp() + interval '1 minute', updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [retryJobId]
+      );
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'succeeded', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+           completed_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [retryJobId]
+      );
+
+      const deadJobId = "01890f1e-9b4a-7cc2-8f00-000000000026";
+      await insertJob(deadJobId, "pending", 0, 1);
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'running', attempt_count = attempt_count + 1, worker_id = 'worker-c',
+           lease_token = '11890f1e-9b4a-4cc2-8f00-000000000026',
+           lease_expires_at = clock_timestamp() - interval '1 second', started_at = clock_timestamp(),
+           updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [deadJobId]
+      );
+      await migration.query(
+        `UPDATE platform.jobs
+         SET status = 'dead', worker_id = NULL, lease_token = NULL, lease_expires_at = NULL,
+           completed_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE id = $1`,
+        [deadJobId]
+      );
+
+      const terminalRows = await migration.query<{ id: string; status: string; attempt_count: number }>(
+        "SELECT id, status, attempt_count FROM platform.jobs WHERE id = ANY($1::uuid[]) ORDER BY id",
+        [[retryJobId, deadJobId]]
+      );
+      expect(terminalRows.rows).toEqual([
+        { id: retryJobId, status: "succeeded", attempt_count: 2 },
+        { id: deadJobId, status: "dead", attempt_count: 1 }
+      ]);
+    });
+  });
+
+  it("orders storage lifecycle timestamps while allowing stale staging cleanup", async () => {
+    await withMigratedDatabase(async (_database, migration) => {
+      const insertReady = (id: string, objectKey: string, readyAt: string) =>
+        migration.query(
+          `INSERT INTO platform.storage_objects
+            (id, status, driver, object_key, size_bytes, sha256, media_type, created_at, updated_at, ready_at)
+           VALUES ($1, 'ready', 'filesystem', $2, 4, decode(repeat('88', 32), 'hex'), 'application/pdf',
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', $3)`,
+          [id, objectKey, readyAt]
+        );
+
+      const deletedBeforeRequestId = "01890f1e-9b4a-7cc2-8f00-000000000030";
+      await insertReady(deletedBeforeRequestId, "invalid/deleted-before-request.pdf", "2026-01-01T01:00:00Z");
+      await migration.query(
+        `UPDATE platform.storage_objects
+         SET status = 'delete_pending', delete_requested_at = '2026-01-01T03:00:00Z'
+         WHERE id = $1`,
+        [deletedBeforeRequestId]
+      );
+      await expect(
+        migration.query(
+          `UPDATE platform.storage_objects
+           SET status = 'deleted', deleted_at = '2026-01-01T02:00:00Z'
+           WHERE id = $1`,
+          [deletedBeforeRequestId]
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+
+      const requestBeforeReadyId = "01890f1e-9b4a-7cc2-8f00-000000000031";
+      await insertReady(requestBeforeReadyId, "invalid/request-before-ready.pdf", "2026-01-01T03:00:00Z");
+      await expect(
+        migration.query(
+          `UPDATE platform.storage_objects
+           SET status = 'delete_pending', delete_requested_at = '2026-01-01T02:00:00Z'
+           WHERE id = $1`,
+          [requestBeforeReadyId]
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+
+      const validReadyId = "01890f1e-9b4a-7cc2-8f00-000000000032";
+      await insertReady(validReadyId, "valid/ready-delete.pdf", "2026-01-01T01:00:00Z");
+      await migration.query(
+        `UPDATE platform.storage_objects
+         SET status = 'delete_pending', delete_requested_at = '2026-01-01T02:00:00Z'
+         WHERE id = $1`,
+        [validReadyId]
+      );
+      await migration.query(
+        `UPDATE platform.storage_objects
+         SET status = 'deleted', deleted_at = '2026-01-01T03:00:00Z'
+         WHERE id = $1`,
+        [validReadyId]
+      );
+
+      const staleStagingId = "01890f1e-9b4a-7cc2-8f00-000000000033";
+      await migration.query(
+        `INSERT INTO platform.storage_objects
+          (id, status, driver, object_key, created_at, updated_at)
+         VALUES ($1, 'staging', 'filesystem', 'valid/stale-staging.pdf',
+           '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+        [staleStagingId]
+      );
+      await migration.query(
+        `UPDATE platform.storage_objects
+         SET status = 'delete_pending', delete_requested_at = '2026-01-01T02:00:00Z'
+         WHERE id = $1`,
+        [staleStagingId]
+      );
+      await migration.query(
+        `UPDATE platform.storage_objects
+         SET status = 'deleted', deleted_at = '2026-01-01T03:00:00Z'
+         WHERE id = $1`,
+        [staleStagingId]
+      );
+
+      const deletedRows = await migration.query<{ id: string; status: string; ready_at: Date | null }>(
+        "SELECT id, status, ready_at FROM platform.storage_objects WHERE id = ANY($1::uuid[]) ORDER BY id",
+        [[validReadyId, staleStagingId]]
+      );
+      expect(deletedRows.rows).toEqual([
+        { id: validReadyId, status: "deleted", ready_at: new Date("2026-01-01T01:00:00Z") },
+        { id: staleStagingId, status: "deleted", ready_at: null }
+      ]);
+    });
+  });
+
   it("enforces PUBLIC, migration, web, worker, and bootstrap privileges with real role connections", async () => {
     await withMigratedDatabase(async (database, migration) => {
       await seedPermissionFixtures(migration);
@@ -359,7 +559,10 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         rowCount: 1
       });
       await expectTransactionAllowed(web, [
+        ["UPDATE platform.users SET display_name = 'Updated User', updated_at = clock_timestamp() WHERE id = $1", [ids.user]],
         ["UPDATE platform.sessions SET last_activity_at = clock_timestamp() WHERE false"],
+        ["UPDATE platform.invitations SET revoked_at = clock_timestamp() WHERE id = $1", [ids.invitation]],
+        ["UPDATE platform.storage_objects SET last_error = 'retryable', updated_at = clock_timestamp() WHERE id = $1", [ids.storage]],
         [
           `INSERT INTO platform.audit_events
             (id, actor_user_id, actor_type, action, target_type, target_id, request_id, result, metadata)
@@ -380,6 +583,21 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       await expectDenied(web, "DELETE FROM platform.audit_events");
       await expectDenied(web, "UPDATE platform.audit_events SET result = 'failure'");
       await expectDenied(web, "UPDATE platform.jobs SET status = 'running'");
+      for (const statement of [
+        "UPDATE platform.users SET id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
+        "UPDATE platform.users SET created_at = clock_timestamp()",
+        "UPDATE platform.sessions SET user_id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
+        "UPDATE platform.sessions SET token_hash = decode(repeat('66', 32), 'hex')",
+        "UPDATE platform.sessions SET created_at = clock_timestamp()",
+        "UPDATE platform.invitations SET token_hash = decode(repeat('77', 32), 'hex')",
+        "UPDATE platform.invitations SET token_key_version = 2",
+        "UPDATE platform.invitations SET project_id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
+        "UPDATE platform.storage_objects SET driver = 's3'",
+        "UPDATE platform.storage_objects SET object_key = 'forbidden/object.pdf'",
+        "UPDATE platform.storage_objects SET created_at = clock_timestamp()"
+      ]) {
+        await expectDenied(web, statement);
+      }
       await expectDenied(web, "TRUNCATE platform.projects");
       await expectDenied(web, "CREATE TABLE platform.web_ddl_forbidden (id integer)");
 

@@ -32,6 +32,12 @@ CREATE TABLE platform.storage_objects (
     delete_requested_at IS NULL OR delete_requested_at >= created_at
   ),
   CONSTRAINT storage_objects_deleted_at_check CHECK (deleted_at IS NULL OR deleted_at >= created_at),
+  CONSTRAINT storage_objects_deleted_after_request_check CHECK (
+    deleted_at IS NULL OR (delete_requested_at IS NOT NULL AND deleted_at >= delete_requested_at)
+  ),
+  CONSTRAINT storage_objects_delete_after_ready_check CHECK (
+    ready_at IS NULL OR delete_requested_at IS NULL OR delete_requested_at >= ready_at
+  ),
   CONSTRAINT storage_objects_ready_state_check CHECK (
     status <> 'ready' OR ready_at IS NOT NULL
   ),
@@ -107,6 +113,14 @@ CREATE TABLE platform.jobs (
   CONSTRAINT jobs_attempts_check CHECK (
     attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts
   ),
+  CONSTRAINT jobs_pending_attempts_check CHECK (
+    status <> 'pending' OR attempt_count < max_attempts
+  ),
+  CONSTRAINT jobs_execution_state_check CHECK (
+    (status = 'pending' AND completed_at IS NULL)
+    OR (status = 'running' AND attempt_count > 0 AND started_at IS NOT NULL AND completed_at IS NULL)
+    OR (status IN ('succeeded', 'dead') AND attempt_count > 0 AND started_at IS NOT NULL AND completed_at IS NOT NULL)
+  ),
   CONSTRAINT jobs_lease_state_check CHECK (
     (status = 'running' AND worker_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_token IS NOT NULL)
     OR (status <> 'running' AND worker_id IS NULL AND lease_expires_at IS NULL AND lease_token IS NULL)
@@ -145,7 +159,17 @@ REVOKE ALL ON TABLE
   platform.worker_heartbeats
 FROM PUBLIC;
 
-GRANT SELECT, INSERT, UPDATE ON TABLE platform.storage_objects TO platform_web;
+GRANT SELECT, INSERT ON TABLE platform.storage_objects TO platform_web;
+GRANT UPDATE (
+  status,
+  size_bytes,
+  sha256,
+  media_type,
+  last_error,
+  updated_at,
+  ready_at,
+  delete_requested_at
+) ON TABLE platform.storage_objects TO platform_web;
 GRANT SELECT, INSERT ON TABLE platform.outbox_events, platform.jobs TO platform_web;
 
 GRANT SELECT ON TABLE platform.storage_objects, platform.outbox_events TO platform_worker;

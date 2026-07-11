@@ -193,7 +193,7 @@ REVOKE ALL ON TABLE
   platform.audit_events
 FROM PUBLIC;
 
-GRANT SELECT, INSERT, UPDATE ON TABLE
+GRANT SELECT, INSERT ON TABLE
   platform.totp_credentials,
   platform.recovery_codes,
   platform.mfa_challenges,
@@ -201,6 +201,22 @@ GRANT SELECT, INSERT, UPDATE ON TABLE
   platform.sessions,
   platform.security_rate_limit_buckets
 TO platform_web;
+
+GRANT UPDATE (encrypted_secret, key_version, confirmed_at, updated_at)
+  ON TABLE platform.totp_credentials TO platform_web;
+GRANT UPDATE (used_at) ON TABLE platform.recovery_codes TO platform_web;
+GRANT UPDATE (attempt_count, completed_at) ON TABLE platform.mfa_challenges TO platform_web;
+GRANT UPDATE (attempt_count, invalidated_at, completed_at)
+  ON TABLE platform.mfa_enrollments TO platform_web;
+GRANT UPDATE (
+  idle_expires_at,
+  last_activity_at,
+  last_touch_at,
+  revoked_at,
+  client_summary
+) ON TABLE platform.sessions TO platform_web;
+GRANT UPDATE (window_started_at, attempt_count, blocked_until, updated_at)
+  ON TABLE platform.security_rate_limit_buckets TO platform_web;
 
 GRANT SELECT, INSERT ON TABLE platform.audit_events TO platform_web;
 GRANT INSERT ON TABLE platform.audit_events TO platform_worker;
