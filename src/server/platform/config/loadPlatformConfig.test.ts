@@ -310,7 +310,7 @@ describe("selective storage validation", () => {
     expect(() =>
       loadPlatformConfig(
         webEnv({
-          PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.example",
+          PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.ap-east-1.amazonaws.com",
           PDF_APPROVAL_STORAGE_S3_REGION: "eu-west-1",
           PDF_APPROVAL_STORAGE_S3_BUCKET: "bucket",
           PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "access",
@@ -605,7 +605,7 @@ describe("production security gates", () => {
       PDF_APPROVAL_SMTP_SECURE: "true",
       PDF_APPROVAL_SMTP_USER: "mailer",
       PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
-      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.example"
+      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.ap-east-1.amazonaws.com"
     };
 
     expect(() =>
@@ -648,7 +648,7 @@ describe("production security gates", () => {
       PDF_APPROVAL_SMTP_SECURE: "true",
       PDF_APPROVAL_SMTP_USER: "mailer",
       PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
-      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.example"
+      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://s3.ap-east-1.amazonaws.com"
     };
 
     for (const accessKey of ["       a", "12345678 "]) {
