@@ -80,6 +80,13 @@ describe("TOTP", () => {
     expect(verifyTotp(rfcSecret, "287083", 59_000)).toBe(false);
   });
 
+  it.each([1, 19, 21])("rejects a %i-byte secret for generation and verification", (size) => {
+    const invalidSecret = Buffer.alloc(size, 0x41);
+
+    expect(() => totpAt(invalidSecret, 59_000)).toThrowError(TotpInputError);
+    expect(() => verifyTotp(invalidSecret, "287082", 59_000)).toThrowError(TotpInputError);
+  });
+
   it("rejects empty secrets, invalid timestamps, and wrong-sized generated randomness", () => {
     for (const action of [
       () => totpAt(Buffer.alloc(0), 59_000),

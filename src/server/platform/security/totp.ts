@@ -21,7 +21,7 @@ export class TotpInputError extends Error {
 const secureRandom: TotpRandomSource = (size) => randomBytes(size);
 
 function validateSecretAndTime(secret: Buffer, timeMs: number): void {
-  if (secret.length === 0 || !Number.isFinite(timeMs) || timeMs < 0) {
+  if (secret.length !== SECRET_BYTES || !Number.isFinite(timeMs) || timeMs < 0) {
     throw new TotpInputError();
   }
 }
