@@ -4,7 +4,7 @@ import type { QueryExecutor } from "./queryExecutor.ts";
 
 type TransactionClient = {
   query<R extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<R>>;
-  release(): void;
+  release(error?: Error | boolean): void;
 };
 
 type TransactionPool = {
@@ -22,6 +22,7 @@ export async function withTransaction<T>(
   let primaryError: unknown;
   let rollbackError: unknown;
   let releaseError: unknown;
+  let releaseSignal: Error | true | undefined;
   let hasPrimaryError = false;
   let hasRollbackError = false;
   let hasReleaseError = false;
@@ -45,11 +46,13 @@ export async function withTransaction<T>(
     } catch (error) {
       hasRollbackError = true;
       rollbackError = error;
+      releaseSignal = error instanceof Error ? error : true;
     }
   }
 
   try {
-    client.release();
+    if (releaseSignal === undefined) client.release();
+    else client.release(releaseSignal);
   } catch (error) {
     hasReleaseError = true;
     releaseError = error;

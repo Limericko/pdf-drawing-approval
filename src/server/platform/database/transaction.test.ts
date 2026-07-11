@@ -108,7 +108,53 @@ describe("withTransaction", () => {
     expect(thrown).toBeInstanceOf(AggregateError);
     expect([...(thrown as AggregateError).errors]).toEqual([callbackError, rollbackError]);
     expect((thrown as Error).cause).toBe(callbackError);
-    expect(client.release).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(rollbackError);
+  });
+
+  it("discards the client with a boolean signal when rollback throws a non-Error value", async () => {
+    const { client, pool } = transactionFixture();
+    const callbackError = new Error("callback failed");
+    const rollbackError = "rollback failed";
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "ROLLBACK") throw rollbackError;
+      return queryResult();
+    });
+
+    const thrown = await captureError(() =>
+      withTransaction(pool as never, async () => {
+        throw callbackError;
+      })
+    );
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect([...(thrown as AggregateError).errors]).toEqual([callbackError, rollbackError]);
+    expect((thrown as Error).cause).toBe(callbackError);
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps primary, rollback and release failures in order when discarding the client fails", async () => {
+    const { client, pool } = transactionFixture();
+    const callbackError = new Error("callback failed");
+    const rollbackError = new Error("rollback failed");
+    const releaseError = new Error("release failed");
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "ROLLBACK") throw rollbackError;
+      return queryResult();
+    });
+    client.release.mockImplementation(() => {
+      throw releaseError;
+    });
+
+    const thrown = await captureError(() =>
+      withTransaction(pool as never, async () => {
+        throw callbackError;
+      })
+    );
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect([...(thrown as AggregateError).errors]).toEqual([callbackError, rollbackError, releaseError]);
+    expect((thrown as Error).cause).toBe(callbackError);
+    expect(client.release).toHaveBeenCalledWith(rollbackError);
   });
 
   it("keeps the primary error visible when release also fails", async () => {
@@ -141,5 +187,29 @@ describe("withTransaction", () => {
 
     expect(thrown).toBe(releaseError);
     expect(client.query.mock.calls.at(-1)).toEqual(["COMMIT"]);
+  });
+
+  it.each([
+    ["BEGIN", 0],
+    ["statement_timeout", 1],
+    ["lock_timeout", 2],
+    ["idle_in_transaction_session_timeout", 3],
+    ["COMMIT", 4]
+  ] as const)("rolls back and normally releases when %s fails", async (_stage, failAt) => {
+    const { client, pool } = transactionFixture();
+    const primaryError = new Error(`transaction stage ${failAt} failed`);
+    let queryIndex = 0;
+    client.query.mockImplementation(async () => {
+      const currentIndex = queryIndex;
+      queryIndex += 1;
+      if (currentIndex === failAt) throw primaryError;
+      return queryResult();
+    });
+
+    const thrown = await captureError(() => withTransaction(pool as never, async () => "ok"));
+
+    expect(thrown).toBe(primaryError);
+    expect(client.query.mock.calls.at(-1)).toEqual(["ROLLBACK"]);
+    expect(client.release.mock.calls).toEqual([[]]);
   });
 });
