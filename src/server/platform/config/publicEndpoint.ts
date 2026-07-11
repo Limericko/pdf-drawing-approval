@@ -98,11 +98,12 @@ const ipv6SpecialPurposeRanges = ipv6SpecialPurposeDefinitions
 const ipv6GlobalUnicastDefault = compileIpv6Range(["2000::/3", true, "Global Unicast default"]);
 
 export function isPublicEndpointHostname(rawHostname: string) {
-  const hostname = unwrapIpv6Brackets(removeDnsRootDot(rawHostname));
-  const ipVersion = isIP(hostname);
-  if (ipVersion === 4) return isGloballyReachableIpv4(hostname);
-  if (ipVersion === 6) return isGloballyReachableIpv6(hostname);
-  return isPublicDomainName(hostname);
+  const normalizedHostname = normalizeHostname(rawHostname);
+  if (normalizedHostname === null) return false;
+  const ipVersion = isIP(normalizedHostname);
+  if (ipVersion === 4) return isGloballyReachableIpv4(normalizedHostname);
+  if (ipVersion === 6) return isGloballyReachableIpv6(normalizedHostname);
+  return isPublicDomainName(normalizedHostname);
 }
 
 function isPublicDomainName(hostname: string) {
@@ -181,11 +182,13 @@ function parseHexWord(value: string) {
   return Number.parseInt(value, 16);
 }
 
-function unwrapIpv6Brackets(hostname: string) {
-  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-}
-
-function removeDnsRootDot(hostname: string) {
+function normalizeHostname(hostname: string) {
+  if (hostname.startsWith("[")) {
+    if (!hostname.endsWith("]")) return null;
+    const unwrappedHostname = hostname.slice(1, -1);
+    return isIP(unwrappedHostname) === 6 ? unwrappedHostname : null;
+  }
+  if (hostname.endsWith("..")) return null;
   return hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
 }
 
