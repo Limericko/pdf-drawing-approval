@@ -1,0 +1,132 @@
+import type { QueryResultRow } from "pg";
+import { createIdentityId } from "../../ids.ts";
+import type { Project, ProjectMember, ProjectMemberRole, ProjectMemberStatus, ProjectStatus } from "../../models.ts";
+import type { QueryExecutor } from "../../../../platform/database/queryExecutor.ts";
+import type {
+  AddProjectMemberInput,
+  CreateProjectInput,
+  CreateProjectResult,
+  ProjectRepository
+} from "../projectRepository.ts";
+
+type ProjectRow = QueryResultRow & {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type ProjectMemberRow = QueryResultRow & {
+  id: string;
+  project_id: string;
+  user_id: string;
+  role: ProjectMemberRole;
+  status: ProjectMemberStatus;
+  created_at: Date;
+  updated_at: Date;
+};
+
+type CreatedProjectRow = QueryResultRow & {
+  project_id: string;
+  project_name: string;
+  project_status: ProjectStatus;
+  project_created_at: Date;
+  project_updated_at: Date;
+  membership_id: string;
+  membership_user_id: string;
+  membership_role: ProjectMemberRole;
+  membership_status: ProjectMemberStatus;
+  membership_created_at: Date;
+  membership_updated_at: Date;
+};
+
+function mapProject(row: ProjectRow): Project {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapProjectMember(row: ProjectMemberRow): ProjectMember {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    role: row.role,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+export class PostgresProjectRepository implements ProjectRepository {
+  constructor(private readonly executor: QueryExecutor) {}
+
+  async create(input: CreateProjectInput): Promise<CreateProjectResult> {
+    const projectId = createIdentityId();
+    const membershipId = createIdentityId();
+    const result = await this.executor.query<CreatedProjectRow>(
+      `WITH inserted_project AS (
+         INSERT INTO platform.projects (id, name, status)
+         VALUES ($1, $2, $3)
+         RETURNING id, name, status, created_at, updated_at
+       ), inserted_membership AS (
+         INSERT INTO platform.project_members (id, project_id, user_id, role, status)
+         SELECT $4, id, $5, 'manager', 'active' FROM inserted_project
+         RETURNING id, project_id, user_id, role, status, created_at, updated_at
+       )
+       SELECT p.id AS project_id, p.name AS project_name, p.status AS project_status,
+         p.created_at AS project_created_at, p.updated_at AS project_updated_at,
+         m.id AS membership_id, m.user_id AS membership_user_id, m.role AS membership_role,
+         m.status AS membership_status, m.created_at AS membership_created_at,
+         m.updated_at AS membership_updated_at
+       FROM inserted_project p CROSS JOIN inserted_membership m`,
+      [projectId, input.name, input.status, membershipId, input.createdByUserId]
+    );
+    const row = result.rows[0]!;
+    return {
+      project: {
+        id: row.project_id,
+        name: row.project_name,
+        status: row.project_status,
+        createdAt: row.project_created_at,
+        updatedAt: row.project_updated_at
+      },
+      creatorMembership: {
+        id: row.membership_id,
+        projectId: row.project_id,
+        userId: row.membership_user_id,
+        role: row.membership_role,
+        status: row.membership_status,
+        createdAt: row.membership_created_at,
+        updatedAt: row.membership_updated_at
+      }
+    };
+  }
+
+  async addMember(input: AddProjectMemberInput) {
+    const result = await this.executor.query<ProjectMemberRow>(
+      `INSERT INTO platform.project_members (id, project_id, user_id, role, status)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, project_id, user_id, role, status, created_at, updated_at`,
+      [createIdentityId(), input.projectId, input.userId, input.role, input.status]
+    );
+    return mapProjectMember(result.rows[0]!);
+  }
+
+  async findByIdForMember(projectId: string, requesterUserId: string) {
+    const result = await this.executor.query<ProjectRow>(
+      `SELECT p.id, p.name, p.status, p.created_at, p.updated_at
+       FROM platform.projects p
+       INNER JOIN platform.project_members pm
+         ON pm.project_id = p.id AND pm.user_id = $2 AND pm.status = 'active'
+       WHERE p.id = $1`,
+      [projectId, requesterUserId]
+    );
+    return result.rows[0] ? mapProject(result.rows[0]) : undefined;
+  }
+}
