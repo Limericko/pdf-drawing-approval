@@ -50,13 +50,11 @@ interface S3CleanupFailureDiagnostic {
 }
 
 interface S3StorageDiagnostics {
-  reportCleanupFailure(diagnostic: S3CleanupFailureDiagnostic): void;
+  reportCleanupFailure(diagnostic: S3CleanupFailureDiagnostic): void | Promise<void>;
 }
 
 const DEFAULT_S3_STORAGE_DIAGNOSTICS: S3StorageDiagnostics = {
-  reportCleanupFailure(diagnostic) {
-    console.error("S3 storage spool cleanup failed", diagnostic);
-  },
+  reportCleanupFailure: reportCleanupFallback,
 };
 
 export type S3StorageOptions = S3StorageConfig & {
@@ -159,10 +157,19 @@ export class S3Storage implements StorageAdapter {
       committed,
       dependencyCode: storageDependencyCode(error),
     };
+    let reporterResult: void | Promise<void>;
     try {
-      this.diagnostics.reportCleanupFailure(diagnostic);
+      reporterResult = this.diagnostics.reportCleanupFailure(diagnostic);
     } catch {
-      DEFAULT_S3_STORAGE_DIAGNOSTICS.reportCleanupFailure(diagnostic);
+      reportCleanupFallback(diagnostic);
+      return;
+    }
+    if (reporterResult !== undefined) {
+      try {
+        void Promise.resolve(reporterResult).catch(() => reportCleanupFallback(diagnostic));
+      } catch {
+        reportCleanupFallback(diagnostic);
+      }
     }
   }
 
@@ -451,6 +458,15 @@ function storageDependencyCode(error: StorageError): string | undefined {
   }
   const code = (cause as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
+}
+
+function reportCleanupFallback(diagnostic: S3CleanupFailureDiagnostic): void {
+  try {
+    const fallbackResult: unknown = console.error("S3 storage spool cleanup failed", diagnostic);
+    void Promise.resolve(fallbackResult).catch(() => undefined);
+  } catch {
+    // Cleanup diagnostics are terminal: they cannot alter the committed or primary operation result.
+  }
 }
 
 function objectNotFound(): StorageError {

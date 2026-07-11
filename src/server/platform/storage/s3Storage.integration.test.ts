@@ -176,6 +176,124 @@ describe("S3Storage two-stage streaming cleanup", () => {
     }
   });
 
+  it.each(cleanupReporterFailures)(
+    "isolates a $name cleanup reporter after a committed write",
+    async ({ createReporter }) => {
+      const spoolParent = await mkdtemp(join(tmpdir(), "pdf-approval-s3-spool-test-"));
+      const payload = "sensitive committed reporter payload";
+      const key = objectKey();
+      const reporterMessage = "sensitive cleanup reporter failure";
+      const fallback = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      const reporter = createReporter(reporterMessage);
+      const storage = new S3Storage(
+        { ...config, spoolParent },
+        { async send(command) { return cleanupBlockingSend(command); } },
+        { reportCleanupFailure: reporter.report },
+      );
+      try {
+        const outcome = await settle(
+          storage.write(key, Readable.from([payload]), "application/pdf"),
+        );
+        reporter.reject?.();
+        await flushAsyncFailures();
+
+        expect(outcome).toMatchObject({ status: "fulfilled" });
+        expect(unhandled).toEqual([]);
+        expect(fallback).toHaveBeenCalledTimes(1);
+        const fallbackOutput = JSON.stringify(fallback.mock.calls);
+        for (const sensitive of [reporterMessage, spoolParent, key, payload]) {
+          expect(fallbackOutput).not.toContain(sensitive);
+        }
+      } finally {
+        storage.destroy();
+        process.off("unhandledRejection", onUnhandled);
+        fallback.mockRestore();
+        await rm(spoolParent, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each(cleanupReporterFailures)(
+    "isolates a $name cleanup reporter while preserving the primary failure",
+    async ({ createReporter }) => {
+      const spoolParent = await mkdtemp(join(tmpdir(), "pdf-approval-s3-spool-test-"));
+      const reporterMessage = "sensitive cleanup reporter failure";
+      const primaryFailure = Object.assign(new Error("synthetic PUT failure"), {
+        code: "ETIMEDOUT",
+      });
+      const fallback = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      const reporter = createReporter(reporterMessage);
+      const storage = new S3Storage(
+        { ...config, spoolParent },
+        { async send(command) { return cleanupBlockingSend(command, primaryFailure); } },
+        { reportCleanupFailure: reporter.report },
+      );
+      try {
+        const outcome = await settle(
+          storage.write(objectKey(), Readable.from(["candidate"]), "application/pdf"),
+        );
+        reporter.reject?.();
+        await flushAsyncFailures();
+
+        expect(outcome).toMatchObject({
+          status: "rejected",
+          reason: expect.objectContaining({
+            code: "STORAGE_IO_ERROR",
+            cause: expect.objectContaining({ code: "ETIMEDOUT" }),
+          }),
+        });
+        expect(unhandled).toEqual([]);
+        expect(fallback).toHaveBeenCalledTimes(1);
+      } finally {
+        storage.destroy();
+        process.off("unhandledRejection", onUnhandled);
+        fallback.mockRestore();
+        await rm(spoolParent, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.each(["throw", "reject"] as const)(
+    "isolates a final fallback console %s",
+    async (failureMode) => {
+      const spoolParent = await mkdtemp(join(tmpdir(), "pdf-approval-s3-spool-test-"));
+      const fallback = vi.spyOn(console, "error").mockImplementation(() => {
+        if (failureMode === "throw") {
+          throw new Error("fallback throw");
+        }
+        return Promise.reject(new Error("fallback rejection")) as never;
+      });
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      const storage = new S3Storage(
+        { ...config, spoolParent },
+        { async send(command) { return cleanupBlockingSend(command); } },
+        { reportCleanupFailure() { throw new Error("reporter failure"); } },
+      );
+      try {
+        const outcome = await settle(
+          storage.write(objectKey(), Readable.from(["candidate"]), "application/pdf"),
+        );
+        await flushAsyncFailures();
+
+        expect(outcome).toMatchObject({ status: "fulfilled" });
+        expect(unhandled).toEqual([]);
+      } finally {
+        storage.destroy();
+        process.off("unhandledRejection", onUnhandled);
+        fallback.mockRestore();
+        await rm(spoolParent, { force: true, recursive: true });
+      }
+    },
+  );
+
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 5 * 1024 ** 3])(
     "rejects the invalid single-PUT byte limit %s",
     (maxObjectBytes) => {
@@ -480,4 +598,64 @@ class AsyncDestroyFailureReadable extends Readable {
   override _destroy(_error: Error | null, callback: (error?: Error | null) => void): void {
     setImmediate(() => callback(Object.assign(new Error("async destroy failure"), { code: "EIO" })));
   }
+}
+
+const cleanupReporterFailures: ReadonlyArray<{
+  name: string;
+  createReporter(message: string): {
+    report(): void | Promise<void>;
+    reject?(): void;
+  };
+}> = [
+  {
+    name: "synchronous throwing",
+    createReporter: (message) => ({
+      report() {
+        throw new Error(message);
+      },
+    }),
+  },
+  {
+    name: "asynchronously rejecting",
+    createReporter(message) {
+      let reject!: (error: Error) => void;
+      const pending = new Promise<void>((_resolve, rejectPending) => {
+        reject = rejectPending;
+      });
+      return {
+        report: () => pending,
+        reject: () => reject(new Error(message)),
+      };
+    },
+  },
+];
+
+async function cleanupBlockingSend(command: unknown, failure?: Error): Promise<object> {
+  if (!(command instanceof PutObjectCommand)) {
+    throw new Error("Unexpected S3 command");
+  }
+  await consume(command.input.Body as Readable);
+  await writeFile(join(dirname(readStreamPath(command)), "cleanup-blocker"), "block");
+  if (failure !== undefined) {
+    throw failure;
+  }
+  return {};
+}
+
+async function settle<T>(promise: Promise<T>): Promise<
+  | { status: "fulfilled"; value: T }
+  | { status: "rejected"; reason: unknown }
+> {
+  try {
+    return { status: "fulfilled", value: await promise };
+  } catch (reason) {
+    return { status: "rejected", reason };
+  }
+}
+
+async function flushAsyncFailures(): Promise<void> {
+  await Promise.resolve();
+  await new Promise<void>((resolveFlush) => setImmediate(resolveFlush));
+  await new Promise<void>((resolveFlush) => setTimeout(resolveFlush, 0));
+  await new Promise<void>((resolveFlush) => setImmediate(resolveFlush));
 }
