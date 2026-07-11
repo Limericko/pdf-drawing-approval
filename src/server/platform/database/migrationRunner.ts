@@ -37,9 +37,17 @@ class UnsafeMigrationSessionError extends AggregateError {
   constructor(
     readonly primaryError: unknown,
     readonly discardSignal: Error | true,
-    cleanupError: unknown
+    cleanupError: unknown,
+    message = "MIGRATION_TRANSACTION_CLEANUP_FAILED"
   ) {
-    super([primaryError, cleanupError], "MIGRATION_TRANSACTION_CLEANUP_FAILED", { cause: primaryError });
+    super([primaryError, cleanupError], message, { cause: primaryError });
+  }
+}
+
+class MigrationCommitOutcomeUnknownError extends Error {
+  constructor(fileName: string, cause: unknown) {
+    super(`MIGRATION_COMMIT_OUTCOME_UNKNOWN:${fileName}`, { cause });
+    this.name = "MigrationCommitOutcomeUnknownError";
   }
 }
 
@@ -56,6 +64,7 @@ export async function runMigrations(
   let releaseError: unknown;
   let summary: MigrationRunSummary | undefined;
   let lockAcquisitionUncertain = false;
+  let unsafeSessionSignal: Error | true | undefined;
 
   try {
     lockAcquisitionUncertain = true;
@@ -76,10 +85,15 @@ export async function runMigrations(
     summary = { applied, verified, total: migrations.length };
   } catch (error) {
     primaryError = error;
-    if (error instanceof UnsafeMigrationSessionError) unsafeError = error;
+    if (error instanceof UnsafeMigrationSessionError) {
+      unsafeError = error;
+      unsafeSessionSignal = error.discardSignal;
+    } else if (error instanceof MigrationCommitOutcomeUnknownError) {
+      unsafeSessionSignal = error;
+    }
   }
 
-  if (lockHeld && !unsafeError) {
+  if (lockHeld && unsafeSessionSignal === undefined) {
     try {
       const result = await client.query<{ unlocked: boolean }>("SELECT pg_advisory_unlock($1) AS unlocked", [
         MIGRATION_LOCK_ID
@@ -92,7 +106,7 @@ export async function runMigrations(
   }
 
   const discardSignal =
-    unsafeError?.discardSignal ??
+    unsafeSessionSignal ??
     errorReleaseSignal(unlockError) ??
     (lockAcquisitionUncertain ? errorReleaseSignal(primaryError) : undefined);
   try {
@@ -169,26 +183,42 @@ function verifyHistoryField(
 
 async function applyMigration(client: MigrationClient, migration: MigrationFile) {
   let primaryError: unknown;
+  let stage: "begin" | "migration" | "metadata" | "commit" = "begin";
   try {
     await client.query("BEGIN");
+    stage = "migration";
     await client.query(migration.sql);
+    stage = "metadata";
     await client.query(insertMigrationHistorySql, [
       migration.version,
       migration.fileName,
       migration.name,
       migration.checksum
     ]);
+    stage = "commit";
     await client.query("COMMIT");
     return;
   } catch (error) {
     primaryError = error;
   }
 
+  const commitOutcomeError =
+    stage === "commit" ? new MigrationCommitOutcomeUnknownError(migration.fileName, primaryError) : undefined;
+
   try {
     await client.query("ROLLBACK");
   } catch (rollbackError) {
+    if (commitOutcomeError) {
+      throw new UnsafeMigrationSessionError(
+        primaryError,
+        commitOutcomeError,
+        rollbackError,
+        commitOutcomeError.message
+      );
+    }
     throw new UnsafeMigrationSessionError(primaryError, errorReleaseSignal(rollbackError) ?? true, rollbackError);
   }
+  if (commitOutcomeError) throw commitOutcomeError;
   throw primaryError;
 }
 

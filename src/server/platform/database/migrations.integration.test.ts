@@ -103,6 +103,25 @@ describe("PostgreSQL migrations", () => {
     });
   });
 
+  it("rejects explicit transaction control before it can leave partial schema changes", async () => {
+    const directory = await createMigrationDirectory({
+      "0001_escape.sql": "CREATE TABLE platform.partial_escape(id integer); COMMIT; SELECT 1 / 0;"
+    });
+    await withMigrationPool(async (_database, migrationPool) => {
+      const thrown = await captureError(() => runMigrations(migrationPool, directory));
+
+      const state = await migrationPool.query<{ partial_escape: string | null; metadata: string | null }>(
+        `SELECT
+          to_regclass('platform.partial_escape')::text AS partial_escape,
+          to_regclass('platform.schema_migrations')::text AS metadata`
+      );
+      expect({ message: (thrown as Error).message, state: state.rows[0] }).toEqual({
+        message: "MIGRATION_TRANSACTION_CONTROL_FORBIDDEN:0001_escape.sql",
+        state: { partial_escape: null, metadata: null }
+      });
+    });
+  });
+
   it("serializes concurrent runners on the same advisory lock", async () => {
     const directory = await createMigrationDirectory({
       "0001_serial.sql": "SELECT pg_sleep(0.1); CREATE TABLE platform.serialized_once(id integer);"
@@ -124,3 +143,12 @@ describe("PostgreSQL migrations", () => {
     });
   });
 });
+
+async function captureError(run: () => Promise<unknown>) {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("EXPECTED_PROMISE_TO_REJECT");
+}

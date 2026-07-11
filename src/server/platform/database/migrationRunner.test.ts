@@ -102,6 +102,54 @@ describe("loadMigrationFiles", () => {
     await expect(loadMigrationFiles(directory)).rejects.toThrow("MIGRATION_SQL_ENCODING_INVALID:0001_invalid.sql");
   });
 
+  it("rejects a SQL symlink instead of silently ignoring it", async () => {
+    const directory = await createMigrationDirectory({ "0001_link.sql": "SELECT 1;" });
+    const open = vi.fn();
+    const fileSystem = {
+      readDirectory: vi.fn(async () => ["0001_link.sql"]),
+      lstat: vi.fn(async () => ({
+        dev: 1n,
+        ino: 1n,
+        size: 9n,
+        mtimeNs: 1n,
+        ctimeNs: 1n,
+        isFile: () => false,
+        isSymbolicLink: () => true
+      })),
+      open
+    };
+
+    await expect(loadMigrationFiles(directory, fileSystem)).rejects.toThrow("MIGRATION_FILE_TYPE_INVALID:0001_link.sql");
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("rejects a migration path replaced between lstat and opening the file", async () => {
+    const directory = await createMigrationDirectory({ "0001_changed.sql": "SELECT 1;" });
+    const close = vi.fn(async () => undefined);
+    const identity = (ino: bigint) => ({
+      dev: 1n,
+      ino,
+      size: 9n,
+      mtimeNs: 1n,
+      ctimeNs: 1n,
+      isFile: () => true
+    });
+    const fileSystem = {
+      readDirectory: vi.fn(async () => ["0001_changed.sql"]),
+      lstat: vi.fn(async () => identity(1n)),
+      open: vi.fn(async () => ({
+        readFile: vi.fn(async () => Buffer.from("SELECT 2;")),
+        stat: vi.fn(async () => identity(2n)),
+        close
+      }))
+    };
+
+    await expect(loadMigrationFiles(directory, fileSystem)).rejects.toThrow(
+      "MIGRATION_FILE_CHANGED_DURING_READ:0001_changed.sql"
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("hashes the exact raw bytes before UTF-8 decoding", async () => {
     const raw = Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("SELECT 1;\r\n")]);
     const directory = await createMigrationDirectory({ "0001_bytes.sql": raw });
@@ -110,6 +158,39 @@ describe("loadMigrationFiles", () => {
 
     expect(migration?.checksum).toBe(createHash("sha256").update(raw).digest("hex"));
     expect(migration?.sql).toBe(raw.toString("utf8"));
+  });
+
+  it.each([
+    "BEGIN; SELECT 1;",
+    "START TRANSACTION; SELECT 1;",
+    "COMMIT; SELECT 1;",
+    "END; SELECT 1;",
+    "ROLLBACK; SELECT 1;",
+    "ABORT; SELECT 1;",
+    "SAVEPOINT before_change; SELECT 1;",
+    "RELEASE SAVEPOINT before_change; SELECT 1;",
+    "PREPARE TRANSACTION 'migration'; SELECT 1;"
+  ])("rejects top-level transaction control before execution: %s", async (sql) => {
+    const directory = await createMigrationDirectory({ "0001_control.sql": sql });
+
+    await expect(loadMigrationFiles(directory)).rejects.toThrow(
+      "MIGRATION_TRANSACTION_CONTROL_FORBIDDEN:0001_control.sql"
+    );
+  });
+
+  it("allows transaction words inside comments, quoted values, identifiers and dollar-quoted bodies", async () => {
+    const sql = `-- COMMIT;
+/* ROLLBACK; /* nested BEGIN; */ END; */
+DO $migration$
+BEGIN
+  PERFORM 'COMMIT;';
+END
+$migration$;
+SELECT 'ROLLBACK;', "commit" FROM (SELECT 1 AS "commit") AS values;
+SELECT $$BEGIN; COMMIT; END;$$;`;
+    const directory = await createMigrationDirectory({ "0001_allowed.sql": sql });
+
+    await expect(loadMigrationFiles(directory)).resolves.toMatchObject([{ sql }]);
   });
 });
 
@@ -160,6 +241,17 @@ describe("runMigrations", () => {
     const { pool } = migrationPool();
 
     await expect(runMigrations(pool as never, directory)).rejects.toThrow("MIGRATION_DUPLICATE_VERSION:1");
+
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+
+  it("does not connect when a migration contains top-level transaction control", async () => {
+    const directory = await createMigrationDirectory({ "0001_commit.sql": "CREATE TABLE leaked(id int); COMMIT;" });
+    const { pool } = migrationPool();
+
+    await expect(runMigrations(pool as never, directory)).rejects.toThrow(
+      "MIGRATION_TRANSACTION_CONTROL_FORBIDDEN:0001_commit.sql"
+    );
 
     expect(pool.connect).not.toHaveBeenCalled();
   });
@@ -235,6 +327,54 @@ describe("runMigrations", () => {
     expect(client.release).toHaveBeenCalledWith();
   });
 
+  it("destroys the session when COMMIT outcome is unknown even if ROLLBACK resolves", async () => {
+    const directory = await createMigrationDirectory({ "0001_commit.sql": "SELECT 1;" });
+    const { client, pool } = migrationPool();
+    const commitError = new Error("connection lost during commit");
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "COMMIT") throw commitError;
+      if (text === "SELECT version, file_name, name, checksum FROM platform.schema_migrations ORDER BY version") {
+        return queryResult();
+      }
+      return queryResult();
+    });
+
+    const thrown = await captureError(() => runMigrations(pool as never, directory));
+
+    expect(thrown).toMatchObject({
+      name: "MigrationCommitOutcomeUnknownError",
+      message: "MIGRATION_COMMIT_OUTCOME_UNKNOWN:0001_commit.sql",
+      cause: commitError
+    });
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK");
+    expect(client.query).not.toHaveBeenCalledWith("SELECT pg_advisory_unlock($1) AS unlocked", [MIGRATION_LOCK_ID]);
+    expect(client.release).toHaveBeenCalledWith(thrown);
+  });
+
+  it("preserves COMMIT and ROLLBACK failures while destroying the session", async () => {
+    const directory = await createMigrationDirectory({ "0001_commit.sql": "SELECT 1;" });
+    const { client, pool } = migrationPool();
+    const commitError = new Error("connection lost during commit");
+    const rollbackError = new Error("rollback failed");
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "COMMIT") throw commitError;
+      if (text === "ROLLBACK") throw rollbackError;
+      if (text === "SELECT version, file_name, name, checksum FROM platform.schema_migrations ORDER BY version") {
+        return queryResult();
+      }
+      return queryResult();
+    });
+
+    const thrown = await captureError(() => runMigrations(pool as never, directory));
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as Error).message).toBe("MIGRATION_COMMIT_OUTCOME_UNKNOWN:0001_commit.sql");
+    expect([...(thrown as AggregateError).errors]).toEqual([commitError, rollbackError]);
+    expect((thrown as Error).cause).toBe(commitError);
+    expect(client.query).not.toHaveBeenCalledWith("SELECT pg_advisory_unlock($1) AS unlocked", [MIGRATION_LOCK_ID]);
+    expect(client.release).toHaveBeenCalledWith(expect.any(Error));
+  });
+
   it("destroys a session and aggregates errors when rollback fails", async () => {
     const directory = await createMigrationDirectory({ "0001_failing.sql": "SELECT broken;" });
     const { client, pool } = migrationPool();
@@ -276,6 +416,45 @@ describe("runMigrations", () => {
     expect([...(thrown as AggregateError).errors]).toEqual([primaryError, unlockError]);
     expect((thrown as Error).cause).toBe(primaryError);
     expect(client.release).toHaveBeenCalledWith(unlockError);
+  });
+
+  it("treats an advisory unlock false result as failure and destroys the session", async () => {
+    const { client, pool } = migrationPool();
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "SELECT version, file_name, name, checksum FROM platform.schema_migrations ORDER BY version") {
+        return queryResult();
+      }
+      if (text === "SELECT pg_advisory_unlock($1) AS unlocked") return queryResult([{ unlocked: false }]);
+      return queryResult();
+    });
+
+    const thrown = await captureError(() => runMigrations(pool as never, fixtureDirectory));
+
+    expect((thrown as Error).message).toBe("MIGRATION_ADVISORY_UNLOCK_FAILED");
+    expect(client.release).toHaveBeenCalledWith(thrown);
+  });
+
+  it("aggregates primary, unlock and release failures without losing the primary cause", async () => {
+    const { client, pool } = migrationPool();
+    const primaryError = new Error("history failed");
+    const unlockError = new Error("unlock failed");
+    const releaseError = new Error("release failed");
+    client.query.mockImplementation(async (text: string) => {
+      if (text === "SELECT version, file_name, name, checksum FROM platform.schema_migrations ORDER BY version") {
+        throw primaryError;
+      }
+      if (text === "SELECT pg_advisory_unlock($1) AS unlocked") throw unlockError;
+      return queryResult();
+    });
+    client.release.mockImplementation(() => {
+      throw releaseError;
+    });
+
+    const thrown = await captureError(() => runMigrations(pool as never, fixtureDirectory));
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect([...(thrown as AggregateError).errors]).toEqual([primaryError, unlockError, releaseError]);
+    expect((thrown as Error).cause).toBe(primaryError);
   });
 });
 
