@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   link as fsLink,
   mkdtemp,
@@ -99,6 +100,44 @@ describe("FilesystemStorage path safety and cleanup", () => {
       expect(failedFirstPartialUnlink).toBe(true);
       await expect(storage.head(key)).resolves.toBeNull();
       expect(await listFiles(root)).toEqual([]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("reports success when partial cleanup completed before reporting an error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pdf-approval-storage-cleanup-completed-"));
+    let removedPartialBeforeError = false;
+    try {
+      const storage = new FilesystemStorage({
+        root,
+        commitOperations: {
+          link: fsLink,
+          async unlink(path) {
+            if (!removedPartialBeforeError && path.includes(".partial-")) {
+              removedPartialBeforeError = true;
+              await fsUnlink(path);
+              const error = new Error("synthetic post-cleanup failure") as NodeJS.ErrnoException;
+              error.code = "EACCES";
+              throw error;
+            }
+            await fsUnlink(path);
+          },
+        },
+      });
+      const key = objectKey();
+      const body = Buffer.from("committed payload");
+
+      await expect(
+        storage.write(key, Readable.from([body]), "application/pdf"),
+      ).resolves.toEqual({
+        sizeBytes: body.byteLength,
+        sha256: createHash("sha256").update(body).digest(),
+      });
+
+      expect(removedPartialBeforeError).toBe(true);
+      expect(await readStream(await storage.openRead(key))).toEqual(body);
+      expect((await listFiles(root)).filter((path) => path.includes(".partial-"))).toEqual([]);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -260,6 +299,14 @@ async function listFiles(root: string, relative = ""): Promise<string[]> {
     }
   }
   return files.sort();
+}
+
+async function readStream(body: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
 
 async function tryCreateSymlink(

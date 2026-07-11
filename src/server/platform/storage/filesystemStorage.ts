@@ -414,20 +414,31 @@ export class FilesystemStorage implements StorageAdapter {
     partialPath: string,
     targetPath: string,
   ): Promise<boolean> {
+    let targetStats: Stats;
     try {
-      const [partialStats, targetStats] = await Promise.all([
-        lstat(partialPath),
-        lstat(targetPath),
-      ]);
-      if (
-        partialStats.isSymbolicLink() ||
-        targetStats.isSymbolicLink() ||
-        !partialStats.isFile() ||
-        !targetStats.isFile() ||
-        !sameFile(partialStats, targetStats)
-      ) {
-        return false;
-      }
+      targetStats = await lstat(targetPath);
+    } catch (error) {
+      return isNodeError(error, "ENOENT");
+    }
+    if (targetStats.isSymbolicLink() || !targetStats.isFile()) {
+      return false;
+    }
+
+    let partialStats: Stats;
+    try {
+      partialStats = await lstat(partialPath);
+    } catch {
+      return false;
+    }
+    if (
+      partialStats.isSymbolicLink() ||
+      !partialStats.isFile() ||
+      !sameFile(partialStats, targetStats)
+    ) {
+      return false;
+    }
+
+    try {
       await this.commitOperations.unlink(targetPath);
       return true;
     } catch (error) {
