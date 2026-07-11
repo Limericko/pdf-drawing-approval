@@ -136,6 +136,9 @@ describe("StorageReconciler", () => {
   });
 
   it("rolls back all transactional publications when a later publish fails", async () => {
+    const before = await web.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM platform.test_cleanup_intents"
+    );
     await insertObject("staging", new Date("2026-07-01T00:00:00.000Z"));
     await insertObject("staging", new Date("2026-07-02T00:00:00.000Z"));
     let publications = 0;
@@ -157,6 +160,6 @@ describe("StorageReconciler", () => {
 
     await expect(reconciler.runOnce()).rejects.toThrow("PUBLISH_FAILED");
     const count = await web.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.test_cleanup_intents");
-    expect(count.rows[0]?.count).toBe("1"); // one intent belongs to the prior committed deletion test
+    expect(count.rows[0]?.count).toBe(before.rows[0]?.count);
   });
 });

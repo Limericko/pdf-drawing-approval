@@ -6,10 +6,17 @@ import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { runMigrations } from "../database/migrationRunner.ts";
 import { withTransaction } from "../database/transaction.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testing/postgresHarness.ts";
+import type { CleanupIntent, CleanupIntentPublisher } from "./cleanupIntentPublisher.ts";
 import type { StorageAdapter, StorageDriver } from "./storageAdapter.ts";
 import { StorageError } from "./storageErrors.ts";
 import { PostgresStorageObjectRepository } from "./postgres/PostgresStorageObjectRepository.ts";
 import { deleteStorageObjectBytes, StorageObjectService } from "./storageObjectService.ts";
+import { StorageReconciler } from "./storageReconciler.ts";
+
+const WRITE_FAILURE_ID = "019f524e-d487-71a9-9853-199234c29b91";
+const HEAD_MISMATCH_ID = "019f524e-d487-71a9-9853-199234c29b92";
+const FINAL_UPDATE_FAILURE_ID = "019f524e-d487-71a9-9853-199234c29b93";
+const INTERRUPTED_UPLOAD_ID = "019f524e-d487-71a9-9853-199234c29b94";
 
 let database: PlatformTestDatabase;
 let migration: Pool;
@@ -39,7 +46,7 @@ class MemoryStorage implements StorageAdapter {
   deleteFailure?: Error;
   headSizeDelta = 0;
   constructor(readonly driver: StorageDriver = "filesystem") {}
-  async write(key: string, body: Readable) {
+  async write(key: string, body: Readable, _contentType: string) {
     this.calls.push("write");
     if (this.writeFailure) throw this.writeFailure;
     const chunks: Buffer[] = [];
@@ -66,12 +73,21 @@ class MemoryStorage implements StorageAdapter {
   async checkHealth() {}
 }
 
-function service(storage: StorageAdapter, runner = transactionRunner) {
+function service(storage: StorageAdapter, runner = transactionRunner, createId?: () => string) {
   return new StorageObjectService({
     storage,
     transactionRunner: runner,
-    createRepository: (executor) => new PostgresStorageObjectRepository(executor)
+    createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+    createId
   });
+}
+
+async function findStoredObject(id: string) {
+  const result = await web.query<{ status: string; driver: string; object_key: string }>(
+    "SELECT status, driver, object_key FROM platform.storage_objects WHERE id = $1",
+    [id]
+  );
+  return result.rows[0];
 }
 
 describe("StorageObjectService", () => {
@@ -90,22 +106,29 @@ describe("StorageObjectService", () => {
   it("keeps staging diagnostic state when object write fails", async () => {
     const storage = new MemoryStorage();
     storage.writeFailure = new StorageError("STORAGE_IO_ERROR", "write failed");
-    const objectService = service(storage);
+    const objectService = service(storage, transactionRunner, () => WRITE_FAILURE_ID);
 
     await expect(objectService.create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
       .rejects.toMatchObject({ code: "STORAGE_IO_ERROR" });
 
-    const rows = await web.query<{ status: string }>("SELECT status FROM platform.storage_objects ORDER BY created_at DESC LIMIT 1");
-    expect(rows.rows[0]?.status).toBe("staging");
+    const objectKey = `objects/original/${WRITE_FAILURE_ID}`;
+    await expect(findStoredObject(WRITE_FAILURE_ID)).resolves.toEqual({
+      status: "staging", driver: "filesystem", object_key: objectKey
+    });
+    expect(storage.objects.has(objectKey)).toBe(false);
   });
 
   it("rejects a head mismatch without reporting ready", async () => {
     const storage = new MemoryStorage();
     storage.headSizeDelta = 1;
-    await expect(service(storage).create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
+    await expect(service(storage, transactionRunner, () => HEAD_MISMATCH_ID)
+      .create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
       .rejects.toMatchObject({ code: "STORAGE_OBJECT_HEAD_MISMATCH" });
-    const rows = await web.query<{ status: string }>("SELECT status FROM platform.storage_objects ORDER BY created_at DESC LIMIT 1");
-    expect(rows.rows[0]?.status).toBe("staging");
+    const objectKey = `objects/original/${HEAD_MISMATCH_ID}`;
+    await expect(findStoredObject(HEAD_MISMATCH_ID)).resolves.toEqual({
+      status: "staging", driver: "filesystem", object_key: objectKey
+    });
+    expect(storage.objects.get(objectKey)?.toString()).toBe("pdf");
   });
 
   it("preserves the remote object and staging row when final database update fails", async () => {
@@ -117,22 +140,58 @@ describe("StorageObjectService", () => {
       return transactionRunner(callback);
     };
 
-    await expect(service(storage, failingFinalRunner).create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
+    await expect(service(storage, failingFinalRunner, () => FINAL_UPDATE_FAILURE_ID)
+      .create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
       .rejects.toThrow("FINAL_UPDATE_UNAVAILABLE");
-    expect(storage.objects.size).toBe(1);
-    const rows = await web.query<{ status: string }>("SELECT status FROM platform.storage_objects ORDER BY created_at DESC LIMIT 1");
-    expect(rows.rows[0]?.status).toBe("staging");
+    const objectKey = `objects/original/${FINAL_UPDATE_FAILURE_ID}`;
+    await expect(findStoredObject(FINAL_UPDATE_FAILURE_ID)).resolves.toEqual({
+      status: "staging", driver: "filesystem", object_key: objectKey
+    });
+    expect(storage.objects.get(objectKey)?.toString()).toBe("pdf");
   });
 
-  it("refuses reads for staging records, including an interrupted process window", async () => {
+  it("reconciles an interrupted staging-write-head window without deleting bytes", async () => {
     const storage = new MemoryStorage();
-    const id = uuidv7();
+    const id = INTERRUPTED_UPLOAD_ID;
+    const objectKey = `objects/original/${id}`;
     await transactionRunner(async (tx) => new PostgresStorageObjectRepository(tx).createStaging({
-      id, driver: storage.driver, objectKey: `objects/original/${id}`, createdAt: new Date()
+      id, driver: storage.driver, objectKey, createdAt: new Date("2026-01-01T00:00:00.000Z")
     }));
+    const written = await storage.write(objectKey, Readable.from("interrupted-pdf"), "application/pdf");
+    const head = await storage.head(objectKey);
+
+    expect(head).toEqual({ sizeBytes: written.sizeBytes });
+    await expect(findStoredObject(id)).resolves.toEqual({
+      status: "staging", driver: "filesystem", object_key: objectKey
+    });
+    expect(storage.objects.get(objectKey)?.toString()).toBe("interrupted-pdf");
 
     await expect(service(storage).openRead(id)).rejects.toMatchObject({ code: "STORAGE_OBJECT_NOT_READY" });
-    expect(storage.calls).toEqual([]);
+    expect(storage.calls).toEqual(["write", "head"]);
+
+    const intents: CleanupIntent[] = [];
+    const publisher: CleanupIntentPublisher = {
+      async publish(_executor, intent) { intents.push(intent); }
+    };
+    const reconciler = new StorageReconciler({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher,
+      clock: () => new Date("2026-07-12T00:00:00.000Z"),
+      stagingMaxAgeMs: 60_000,
+      batchSize: 100
+    });
+    await reconciler.runOnce();
+
+    expect(intents).toContainEqual(expect.objectContaining({
+      storageObjectId: id,
+      expectedStatus: "staging",
+      idempotencyKey: `storage-object-cleanup:${id}:staging`
+    }));
+    expect(storage.objects.get(objectKey)?.toString()).toBe("interrupted-pdf");
+    await expect(findStoredObject(id)).resolves.toEqual({
+      status: "staging", driver: "filesystem", object_key: objectKey
+    });
   });
 
   it("does not fall back when metadata driver differs from the configured adapter", async () => {
