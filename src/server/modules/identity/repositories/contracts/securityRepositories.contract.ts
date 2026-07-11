@@ -20,6 +20,10 @@ export type SecurityRepositoryContractContext = {
   readonly concurrentA: QueryExecutor;
   readonly concurrentB: QueryExecutor;
   readonly migration: QueryExecutor;
+  runTransaction<T>(
+    connection: "primary" | "concurrentA" | "concurrentB",
+    callback: (executor: QueryExecutor) => Promise<T>
+  ): Promise<T>;
   createUser(): Promise<{ readonly id: string }>;
   createInvitation(): Promise<{ readonly id: string }>;
 };
@@ -145,6 +149,125 @@ export function securityRepositoriesContract(options: ContractOptions) {
       );
       await expect(repositories().mfa.recordEnrollmentAttempt(expired.id)).resolves.toBeUndefined();
       await expect(repositories().mfa.completeEnrollment(expired.id)).resolves.toBeUndefined();
+    });
+
+    it("replaces active and expired open enrollments by invitation inside a service transaction", async () => {
+      const prepare = (invitationId: string, tokenHash: Buffer) => context().runTransaction("primary", async (executor) => {
+        const mfa = options.createRepositories(executor).mfa;
+        expect(await mfa.lockActiveInvitationForEnrollment(invitationId)).toBe(true);
+        const invalidatedCount = await mfa.invalidateOpenEnrollmentsForInvitation(invitationId);
+        const enrollment = await mfa.createEnrollment({
+          invitationId,
+          tokenHash,
+          encryptedTotpSecret: randomBytes(48),
+          keyVersion: "v1",
+          lifetimeSeconds: 600,
+          maxAttempts: 3
+        });
+        return { enrollment, invalidatedCount };
+      });
+
+      const activeInvitation = await context().createInvitation();
+      const active = await repositories().mfa.createEnrollment({
+        invitationId: activeInvitation.id,
+        tokenHash: randomBytes(32),
+        encryptedTotpSecret: randomBytes(48),
+        keyVersion: "v1",
+        lifetimeSeconds: 600,
+        maxAttempts: 3
+      });
+      const activeReplacement = await prepare(activeInvitation.id, randomBytes(32));
+      expect(activeReplacement.invalidatedCount).toBe(1);
+      await expect(repositories().mfa.findActiveEnrollmentByTokenHash(active.tokenHash)).resolves.toBeUndefined();
+      await expect(repositories().mfa.findActiveEnrollmentByTokenHash(activeReplacement.enrollment.tokenHash))
+        .resolves.toMatchObject({ id: activeReplacement.enrollment.id });
+      await repositories().mfa.completeEnrollment(activeReplacement.enrollment.id);
+      const afterCompleted = await prepare(activeInvitation.id, randomBytes(32));
+      expect(afterCompleted.invalidatedCount).toBe(0);
+      const completedRow = await context().migration.query<{ invalidated_at: Date | null; completed_at: Date | null }>(
+        "SELECT invalidated_at, completed_at FROM platform.mfa_enrollments WHERE id = $1",
+        [activeReplacement.enrollment.id]
+      );
+      expect(completedRow.rows[0]).toMatchObject({ invalidated_at: null });
+      expect(completedRow.rows[0]!.completed_at).toBeInstanceOf(Date);
+
+      const expiredInvitation = await context().createInvitation();
+      const expired = await repositories().mfa.createEnrollment({
+        invitationId: expiredInvitation.id,
+        tokenHash: randomBytes(32),
+        encryptedTotpSecret: randomBytes(48),
+        keyVersion: "v1",
+        lifetimeSeconds: 600,
+        maxAttempts: 3
+      });
+      await context().migration.query(
+        "UPDATE platform.mfa_enrollments SET created_at = clock_timestamp() - interval '20 minutes', expires_at = clock_timestamp() - interval '10 minutes' WHERE id = $1",
+        [expired.id]
+      );
+      const expiredReplacement = await prepare(expiredInvitation.id, randomBytes(32));
+      expect(expiredReplacement.invalidatedCount).toBe(1);
+      await expect(repositories().mfa.findActiveEnrollmentByTokenHash(expiredReplacement.enrollment.tokenHash))
+        .resolves.toMatchObject({ id: expiredReplacement.enrollment.id });
+    });
+
+    it("serializes concurrent enrollment prepare transactions on the invitation row", async () => {
+      const invitation = await context().createInvitation();
+      const tokenA = randomBytes(32);
+      const tokenB = randomBytes(32);
+      let signalFirstLocked!: () => void;
+      let releaseFirst!: () => void;
+      let signalSecondLockRequested!: () => void;
+      const firstLocked = new Promise<void>((resolve) => { signalFirstLocked = resolve; });
+      const firstCanFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const secondLockRequested = new Promise<void>((resolve) => { signalSecondLockRequested = resolve; });
+      const createAfterLock = async (mfa: MfaRepository, tokenHash: Buffer) => {
+        await mfa.invalidateOpenEnrollmentsForInvitation(invitation.id);
+        return mfa.createEnrollment({
+          invitationId: invitation.id,
+          tokenHash,
+          encryptedTotpSecret: randomBytes(48),
+          keyVersion: "v1",
+          lifetimeSeconds: 600,
+          maxAttempts: 3
+        });
+      };
+      const first = context().runTransaction("concurrentA", async (executor) => {
+        const mfa = options.createRepositories(executor).mfa;
+        if (!await mfa.lockActiveInvitationForEnrollment(invitation.id)) throw new Error("INVITATION_NOT_ACTIVE");
+        signalFirstLocked();
+        await firstCanFinish;
+        return createAfterLock(mfa, tokenA);
+      });
+      await firstLocked;
+      const second = context().runTransaction("concurrentB", async (executor) => {
+        const observedExecutor: QueryExecutor = {
+          query(text, values) {
+            if (text.includes("FOR UPDATE")) signalSecondLockRequested();
+            return executor.query(text, values);
+          }
+        };
+        const mfa = options.createRepositories(observedExecutor).mfa;
+        if (!await mfa.lockActiveInvitationForEnrollment(invitation.id)) throw new Error("INVITATION_NOT_ACTIVE");
+        return createAfterLock(mfa, tokenB);
+      });
+      await secondLockRequested;
+      releaseFirst();
+      const created = await Promise.all([first, second]);
+
+      const rows = await context().migration.query<{
+        id: string; invalidated_at: Date | null; completed_at: Date | null;
+      }>(
+        `SELECT id, invalidated_at, completed_at FROM platform.mfa_enrollments
+         WHERE invitation_id = $1 ORDER BY created_at, id`,
+        [invitation.id]
+      );
+      expect(rows.rows).toHaveLength(2);
+      expect(rows.rows.filter((row) => row.invalidated_at === null && row.completed_at === null)).toHaveLength(1);
+      expect(rows.rows.filter((row) => row.invalidated_at instanceof Date)).toHaveLength(1);
+      const lookups = await Promise.all(created.map((enrollment) =>
+        repositories().mfa.findActiveEnrollmentByTokenHash(enrollment.tokenHash)));
+      expect(lookups.filter(Boolean)).toHaveLength(1);
+      expect(lookups.filter((value) => value === undefined)).toHaveLength(1);
     });
 
     it("persists TOTP credentials and consumes one recovery code exactly once across independent connections", async () => {

@@ -27,6 +27,7 @@ type CredentialRow = QueryResultRow & {
 type RecoveryRow = QueryResultRow & {
   id: string; user_id: string; code_hash: Buffer; key_version: string; created_at: Date; used_at: Date | null;
 };
+type InvitationLockRow = QueryResultRow & { id: string };
 
 const CHALLENGE_COLUMNS = "id, user_id, token_hash, created_at, expires_at, attempt_count, max_attempts, completed_at";
 const ENROLLMENT_COLUMNS = "id, invitation_id, token_hash, encrypted_totp_secret, key_version, created_at, expires_at, attempt_count, max_attempts, invalidated_at, completed_at";
@@ -93,6 +94,27 @@ export class PostgresMfaRepository implements MfaRepository {
       [id]
     );
     return result.rows[0] ? mapChallenge(result.rows[0]) : undefined;
+  }
+
+  async lockActiveInvitationForEnrollment(invitationId: string) {
+    const result = await this.executor.query<InvitationLockRow>(
+      `SELECT id FROM platform.invitations
+       WHERE id = $1 AND accepted_at IS NULL AND revoked_at IS NULL
+         AND expires_at > clock_timestamp()
+       FOR UPDATE`,
+      [invitationId]
+    );
+    return result.rowCount === 1;
+  }
+
+  async invalidateOpenEnrollmentsForInvitation(invitationId: string) {
+    const result = await this.executor.query<InvitationLockRow>(
+      `UPDATE platform.mfa_enrollments SET invalidated_at = clock_timestamp()
+       WHERE invitation_id = $1 AND invalidated_at IS NULL AND completed_at IS NULL
+       RETURNING id`,
+      [invitationId]
+    );
+    return result.rowCount ?? 0;
   }
 
   async createEnrollment(input: CreateMfaEnrollmentInput) {

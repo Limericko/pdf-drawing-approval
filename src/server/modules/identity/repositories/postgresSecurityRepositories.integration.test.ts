@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import { afterAll, beforeAll } from "vitest";
 import { runMigrations } from "../../../platform/database/migrationRunner.ts";
+import { withTransaction } from "../../../platform/database/transaction.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../../../platform/testing/postgresHarness.ts";
 import { securityRepositoriesContract, type SecurityRepositoryContractContext, type SecurityRepositoryFactory } from "./contracts/securityRepositories.contract.ts";
 import { PostgresAuditRepository } from "./postgres/PostgresAuditRepository.ts";
@@ -18,6 +19,18 @@ let primary: Pool;
 let concurrentA: Pool;
 let concurrentB: Pool;
 let sequence = 0;
+const TEST_TRANSACTION_TIMEOUTS = Object.freeze({
+  queryTimeoutMs: 5_000,
+  lockTimeoutMs: 5_000,
+  transactionTimeoutMs: 10_000
+});
+
+function transactionPool(pool: Pool) {
+  return {
+    connect: () => pool.connect(),
+    transactionTimeouts: TEST_TRANSACTION_TIMEOUTS
+  };
+}
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
@@ -47,6 +60,9 @@ securityRepositoriesContract({
       concurrentA,
       concurrentB,
       migration,
+      runTransaction(connection, callback) {
+        return withTransaction(transactionPool({ primary, concurrentA, concurrentB }[connection]), callback);
+      },
       async createUser() {
         sequence += 1;
         return new PostgresUserRepository(primary).create({

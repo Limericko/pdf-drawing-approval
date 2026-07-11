@@ -63,6 +63,13 @@ export interface MfaRepository {
   findActiveChallengeByTokenHash(tokenHash: Buffer): Promise<MfaChallenge | undefined>;
   recordChallengeAttempt(id: string): Promise<MfaChallenge | undefined>;
   completeChallenge(id: string): Promise<MfaChallenge | undefined>;
+  /**
+   * First step of enrollment preparation. Call on a transaction-bound repository, then call
+   * invalidateOpenEnrollmentsForInvitation() and createEnrollment() in that same service transaction.
+   */
+  lockActiveInvitationForEnrollment(invitationId: string): Promise<boolean>;
+  /** Must be composed after lockActiveInvitationForEnrollment() in the same service transaction. */
+  invalidateOpenEnrollmentsForInvitation(invitationId: string): Promise<number>;
   createEnrollment(input: CreateMfaEnrollmentInput): Promise<MfaEnrollment>;
   findActiveEnrollmentByTokenHash(tokenHash: Buffer): Promise<MfaEnrollment | undefined>;
   recordEnrollmentAttempt(id: string): Promise<MfaEnrollment | undefined>;
