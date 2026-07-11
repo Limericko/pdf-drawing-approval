@@ -56,7 +56,9 @@ CREATE TABLE platform.mfa_challenges (
   CONSTRAINT mfa_challenges_attempts_check CHECK (
     attempt_count >= 0 AND max_attempts > 0 AND attempt_count <= max_attempts
   ),
-  CONSTRAINT mfa_challenges_completed_at_check CHECK (completed_at IS NULL OR completed_at >= created_at)
+  CONSTRAINT mfa_challenges_completed_at_check CHECK (
+    completed_at IS NULL OR (completed_at >= created_at AND completed_at <= expires_at)
+  )
 );
 
 CREATE INDEX mfa_challenges_user_id_idx ON platform.mfa_challenges (user_id);
@@ -89,7 +91,9 @@ CREATE TABLE platform.mfa_enrollments (
   CONSTRAINT mfa_enrollments_invalidated_at_check CHECK (
     invalidated_at IS NULL OR invalidated_at >= created_at
   ),
-  CONSTRAINT mfa_enrollments_completed_at_check CHECK (completed_at IS NULL OR completed_at >= created_at),
+  CONSTRAINT mfa_enrollments_completed_at_check CHECK (
+    completed_at IS NULL OR (completed_at >= created_at AND completed_at <= expires_at)
+  ),
   CONSTRAINT mfa_enrollments_terminal_state_check CHECK (invalidated_at IS NULL OR completed_at IS NULL)
 );
 

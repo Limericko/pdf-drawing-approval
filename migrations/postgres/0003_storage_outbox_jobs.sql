@@ -31,7 +31,25 @@ CREATE TABLE platform.storage_objects (
   CONSTRAINT storage_objects_delete_requested_at_check CHECK (
     delete_requested_at IS NULL OR delete_requested_at >= created_at
   ),
-  CONSTRAINT storage_objects_deleted_at_check CHECK (deleted_at IS NULL OR deleted_at >= created_at)
+  CONSTRAINT storage_objects_deleted_at_check CHECK (deleted_at IS NULL OR deleted_at >= created_at),
+  CONSTRAINT storage_objects_ready_state_check CHECK (
+    status <> 'ready' OR ready_at IS NOT NULL
+  ),
+  CONSTRAINT storage_objects_delete_pending_state_check CHECK (
+    status <> 'delete_pending' OR delete_requested_at IS NOT NULL
+  ),
+  CONSTRAINT storage_objects_deleted_state_check CHECK (
+    status <> 'deleted' OR (delete_requested_at IS NOT NULL AND deleted_at IS NOT NULL)
+  ),
+  CONSTRAINT storage_objects_ready_lifecycle_check CHECK (
+    ready_at IS NULL OR status IN ('ready', 'delete_pending', 'deleted')
+  ),
+  CONSTRAINT storage_objects_delete_lifecycle_check CHECK (
+    delete_requested_at IS NULL OR status IN ('delete_pending', 'deleted')
+  ),
+  CONSTRAINT storage_objects_deleted_lifecycle_check CHECK (
+    deleted_at IS NULL OR status = 'deleted'
+  )
 );
 
 CREATE INDEX storage_objects_staging_idx ON platform.storage_objects (created_at, id)
@@ -130,5 +148,22 @@ FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE ON TABLE platform.storage_objects TO platform_web;
 GRANT SELECT, INSERT ON TABLE platform.outbox_events, platform.jobs TO platform_web;
 
-GRANT SELECT, UPDATE ON TABLE platform.storage_objects, platform.outbox_events TO platform_worker;
-GRANT SELECT, INSERT, UPDATE ON TABLE platform.jobs, platform.worker_heartbeats TO platform_worker;
+GRANT SELECT ON TABLE platform.storage_objects, platform.outbox_events TO platform_worker;
+GRANT UPDATE (status, last_error, updated_at, delete_requested_at, deleted_at)
+  ON TABLE platform.storage_objects TO platform_worker;
+GRANT UPDATE (dispatched_at) ON TABLE platform.outbox_events TO platform_worker;
+GRANT SELECT, INSERT ON TABLE platform.jobs, platform.worker_heartbeats TO platform_worker;
+GRANT UPDATE (
+  status,
+  attempt_count,
+  next_run_at,
+  lease_expires_at,
+  lease_token,
+  worker_id,
+  last_error_code,
+  last_error_message,
+  updated_at,
+  started_at,
+  completed_at
+) ON TABLE platform.jobs TO platform_worker;
+GRANT UPDATE (heartbeat_at, metadata) ON TABLE platform.worker_heartbeats TO platform_worker;

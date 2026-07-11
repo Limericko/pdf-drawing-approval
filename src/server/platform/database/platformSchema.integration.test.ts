@@ -93,8 +93,9 @@ async function seedPermissionFixtures(migration: Pool) {
   );
   await migration.query(
     `INSERT INTO platform.storage_objects
-      (id, status, driver, object_key, size_bytes, sha256, media_type)
-     VALUES ($1, 'ready', 'filesystem', 'seed/object.pdf', 4, decode(repeat('22', 32), 'hex'), 'application/pdf')`,
+      (id, status, driver, object_key, size_bytes, sha256, media_type, ready_at)
+     VALUES ($1, 'ready', 'filesystem', 'seed/object.pdf', 4, decode(repeat('22', 32), 'hex'),
+       'application/pdf', clock_timestamp())`,
     [ids.storage]
   );
   await migration.query(
@@ -225,6 +226,31 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(definitions).toContain("lease_token");
       expect(definitions).toContain("attempt_count");
       expect(definitions).toContain("substr((id)::text, 15, 1) = '7'");
+
+      const requiredChecks = new Map(
+        checks.rows.map(({ table_name, definition }) => [`${table_name}:${definition}`, definition])
+      );
+      for (const table of ["platform.mfa_challenges", "platform.mfa_enrollments"]) {
+        expect(
+          [...requiredChecks.entries()].some(
+            ([key, definition]) => key.startsWith(`${table}:`) && definition.includes("completed_at <= expires_at")
+          ),
+          `${table} completion expiry check`
+        ).toBe(true);
+      }
+
+      const idsWithoutV7Checks = await migration.query<{ table_name: string }>(
+        `SELECT c.table_name
+         FROM information_schema.columns c
+         WHERE c.table_schema = 'platform' AND c.column_name = 'id' AND c.data_type = 'uuid'
+           AND NOT EXISTS (
+             SELECT 1 FROM pg_constraint constraint_record
+             WHERE constraint_record.conrelid = format('platform.%I', c.table_name)::regclass
+               AND constraint_record.contype = 'c'
+               AND pg_get_constraintdef(constraint_record.oid) LIKE '%substr((id)::text, 15, 1) = ''7''%'
+           )`
+      );
+      expect(idsWithoutV7Checks.rows).toEqual([]);
     });
   });
 
@@ -288,6 +314,23 @@ describe("Phase 1 PostgreSQL platform schema", () => {
     await withMigratedDatabase(async (database, migration) => {
       await seedPermissionFixtures(migration);
 
+      await expect(
+        migration.query(
+          `INSERT INTO platform.storage_objects
+            (id, status, driver, object_key, size_bytes, sha256, media_type)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000011', 'ready', 'filesystem', 'invalid/ready.pdf',
+             4, decode(repeat('44', 32), 'hex'), 'application/pdf')`
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        migration.query(
+          `UPDATE platform.invitations
+           SET accepted_at = expires_at + interval '1 second', accepted_by_user_id = $2
+           WHERE id = $1`,
+          [ids.invitation, ids.user]
+        )
+      ).rejects.toMatchObject({ code: "23514" });
+
       await expect(migration.query("DELETE FROM platform.users WHERE id = $1", [ids.auditSubject])).rejects.toMatchObject({
         code: "23503"
       });
@@ -326,6 +369,12 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         [
           `INSERT INTO platform.outbox_events (id, event_type, payload_version, payload)
            VALUES ('01890f1e-9b4a-7cc2-8f00-00000000000a', 'web.test', 1, '{}'::jsonb)`
+        ],
+        [
+          `INSERT INTO platform.jobs
+            (id, job_type, payload_version, payload, idempotency_key, status, attempt_count, max_attempts, next_run_at)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000012', 'web.test', 1, '{}'::jsonb, 'web-job',
+             'pending', 0, 5, clock_timestamp())`
         ]
       ]);
       await expectDenied(web, "DELETE FROM platform.audit_events");
@@ -372,6 +421,9 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         await expectDenied(worker, statement);
       }
       await expectDenied(worker, "DELETE FROM platform.audit_events");
+      await expectDenied(worker, "UPDATE platform.outbox_events SET payload = '{\"tampered\":true}'::jsonb");
+      await expectDenied(worker, "UPDATE platform.jobs SET payload = '{\"tampered\":true}'::jsonb");
+      await expectDenied(worker, "UPDATE platform.storage_objects SET object_key = 'tampered/object.pdf'");
       await expectDenied(worker, "CREATE TABLE platform.worker_ddl_forbidden (id integer)");
 
       const bootstrap = database.createPool("bootstrap");

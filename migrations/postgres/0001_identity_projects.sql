@@ -97,7 +97,9 @@ CREATE TABLE platform.invitations (
     REFERENCES platform.users(id) ON DELETE RESTRICT,
   CONSTRAINT invitations_expires_at_check CHECK (expires_at > created_at),
   CONSTRAINT invitations_revoked_at_check CHECK (revoked_at IS NULL OR revoked_at >= created_at),
-  CONSTRAINT invitations_accepted_at_check CHECK (accepted_at IS NULL OR accepted_at >= created_at),
+  CONSTRAINT invitations_accepted_at_check CHECK (
+    accepted_at IS NULL OR (accepted_at >= created_at AND accepted_at <= expires_at)
+  ),
   CONSTRAINT invitations_acceptance_consistency_check CHECK (
     (accepted_at IS NULL AND accepted_by_user_id IS NULL)
     OR (accepted_at IS NOT NULL AND accepted_by_user_id IS NOT NULL)
