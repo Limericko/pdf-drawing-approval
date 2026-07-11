@@ -321,6 +321,28 @@ describe("Phase 1 PostgreSQL platform schema", () => {
     });
   });
 
+  it("allows a TOTP confirmation that occurred before the credential was persisted", async () => {
+    await withMigratedDatabase(async (_database, migration) => {
+      const userId = "01890f1e-9b4a-7cc2-8f00-000000000040";
+      await migration.query(
+        `INSERT INTO platform.users
+          (id, email_normalized, display_name, password_hash, platform_role, status, mfa_status)
+         VALUES ($1, 'totp-timing@example.test', 'TOTP Timing', '$argon2id$totp-timing', 'member', 'active', 'enabled')`,
+        [userId]
+      );
+
+      await expect(
+        migration.query(
+          `INSERT INTO platform.totp_credentials
+            (id, user_id, encrypted_secret, key_version, confirmed_at, created_at, updated_at)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000041', $1, decode('0102', 'hex'), 1,
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z')`,
+          [userId]
+        )
+      ).resolves.toMatchObject({ rowCount: 1 });
+    });
+  });
+
   it("enforces job status invariants without blocking retry, lease recovery, success, or dead transitions", async () => {
     await withMigratedDatabase(async (_database, migration) => {
       const insertJob = (id: string, status: string, attemptCount: number, maxAttempts: number) =>

@@ -14,7 +14,6 @@ CREATE TABLE platform.totp_credentials (
     REFERENCES platform.users(id) ON DELETE RESTRICT,
   CONSTRAINT totp_credentials_secret_check CHECK (octet_length(encrypted_secret) > 0),
   CONSTRAINT totp_credentials_key_version_check CHECK (key_version > 0),
-  CONSTRAINT totp_credentials_confirmed_at_check CHECK (confirmed_at >= created_at),
   CONSTRAINT totp_credentials_updated_at_check CHECK (updated_at >= created_at)
 );
 
