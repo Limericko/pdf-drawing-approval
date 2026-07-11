@@ -52,6 +52,9 @@ describe("public endpoint hostname validation", () => {
     "[::1].",
     "[::1]..",
     "[::ffff:7f00:1]",
+    "[64:ff9b::7f00:1]",
+    "[64:ff9b::a00:1]",
+    "[64:ff9b::c0a8:101]",
     "[64:ff9b:1::1]",
     "[100::1]",
     "[100:0:0:1::1]",
@@ -76,6 +79,7 @@ describe("public endpoint hostname validation", () => {
   it.each([
     "s3.ap-east-1.amazonaws.com",
     "api.openai.com",
+    "127.0.0.1.nip.io",
     "bücher.de",
     "192.0.0.9",
     "192.0.0.10",

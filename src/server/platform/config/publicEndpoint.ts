@@ -5,6 +5,12 @@ type SpecialPurposeRangeDefinition = readonly [cidr: string, globallyReachable: 
 type CompiledIpv4Range = { network: number; prefixLength: number; globallyReachable: boolean };
 type CompiledIpv6Range = { network: bigint; prefixLength: number; globallyReachable: boolean };
 
+const ipv6WellKnownNat64Definition = [
+  "64:ff9b::/96",
+  true,
+  "IPv4-IPv6 Translation"
+] as const satisfies SpecialPurposeRangeDefinition;
+
 // Snapshot of the IANA IPv4 Special-Purpose Address Registry, checked 2026-07-11.
 // Longest-prefix matching preserves the registry's globally reachable exceptions.
 // N/A entries are treated as non-public because production endpoints must be
@@ -47,7 +53,7 @@ const ipv6SpecialPurposeDefinitions = [
   ["::/128", false, "Unspecified"],
   ["::1/128", false, "Loopback"],
   ["::ffff:0:0/96", false, "IPv4-mapped"],
-  ["64:ff9b::/96", true, "IPv4-IPv6 Translation"],
+  ipv6WellKnownNat64Definition,
   ["64:ff9b:1::/48", false, "Local-use IPv4-IPv6 Translation"],
   ["100::/64", false, "Discard-Only"],
   ["100:0:0:1::/64", false, "Dummy IPv6 Prefix"],
@@ -95,6 +101,7 @@ const ipv4SpecialPurposeRanges = ipv4SpecialPurposeDefinitions
 const ipv6SpecialPurposeRanges = ipv6SpecialPurposeDefinitions
   .map(compileIpv6Range)
   .sort(longestPrefixFirst);
+const ipv6WellKnownNat64Range = compileIpv6Range(ipv6WellKnownNat64Definition);
 const ipv6GlobalUnicastDefault = compileIpv6Range(["2000::/3", true, "Global Unicast default"]);
 
 export function isPublicEndpointHostname(rawHostname: string) {
@@ -127,13 +134,19 @@ function isInvalidDomainLabel(label: string) {
 }
 
 function isGloballyReachableIpv4(hostname: string) {
-  const address = parseIpv4(hostname);
+  return isGloballyReachableIpv4Address(parseIpv4(hostname));
+}
+
+function isGloballyReachableIpv4Address(address: number) {
   const classification = ipv4SpecialPurposeRanges.find((range) => matchesIpv4Range(address, range));
   return classification?.globallyReachable ?? true;
 }
 
 function isGloballyReachableIpv6(hostname: string) {
   const address = ipv6WordsToBigInt(parseIpv6Words(hostname));
+  if (matchesIpv6Range(address, ipv6WellKnownNat64Range)) {
+    return isGloballyReachableIpv4Address(Number(address & 0xffffffffn));
+  }
   const classification = ipv6SpecialPurposeRanges.find((range) => matchesIpv6Range(address, range));
   return classification?.globallyReachable ?? matchesIpv6Range(address, ipv6GlobalUnicastDefault);
 }

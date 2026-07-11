@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
-import { isPublicEndpointHostname } from "./publicEndpoint.ts";
+import { isTrustedProductionS3EndpointHostname } from "./trustedProductionS3Endpoint.ts";
 import { PlatformConfigError } from "./types.ts";
 import type {
   BootstrapPlatformConfig,
@@ -338,7 +338,7 @@ function assertProductionDatabase(database: PlatformDatabaseConfig, field: strin
 function assertProductionStorage(storage: PlatformStorageConfig) {
   if (storage.driver !== "s3") return;
   const endpoint = new URL(storage.endpoint);
-  if (endpoint.protocol !== "https:" || !isPublicEndpointHostname(endpoint.hostname)) {
+  if (endpoint.protocol !== "https:" || !isTrustedProductionS3EndpointHostname(endpoint.hostname)) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
   if (

@@ -549,6 +549,11 @@ describe("production security gates", () => {
     "https://10.1.2.3",
     "https://172.16.1.1",
     "https://192.168.1.1",
+    "https://127.0.0.1.nip.io",
+    "https://oss-cn-hongkong-internal.aliyuncs.com",
+    "https://not-s3.aliyuncs.com",
+    "https://ec2.amazonaws.com",
+    "https://bucket.vpce-0123456789abcdef.s3.ap-east-1.vpce.amazonaws.com",
     "https://[::1]",
     "https://[::ffff:127.0.0.1]",
     "https://[fc00::1]",
@@ -574,6 +579,10 @@ describe("production security gates", () => {
 
   it.each([
     "https://s3.ap-east-1.amazonaws.com",
+    "https://s3-ap-east-1.amazonaws.com",
+    "https://oss-cn-hongkong.aliyuncs.com",
+    "https://bucket.oss-cn-hongkong.aliyuncs.com",
+    "https://oss-accelerate.aliyuncs.com",
     "https://8.8.8.8",
     "https://[2606:4700:4700::1111]"
   ])("accepts the public HTTPS production S3 endpoint %s", (endpoint) => {
