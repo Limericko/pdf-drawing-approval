@@ -98,7 +98,7 @@ const ipv6SpecialPurposeRanges = ipv6SpecialPurposeDefinitions
 const ipv6GlobalUnicastDefault = compileIpv6Range(["2000::/3", true, "Global Unicast default"]);
 
 export function isPublicEndpointHostname(rawHostname: string) {
-  const hostname = unwrapIpv6Brackets(rawHostname);
+  const hostname = unwrapIpv6Brackets(removeDnsRootDot(rawHostname));
   const ipVersion = isIP(hostname);
   if (ipVersion === 4) return isGloballyReachableIpv4(hostname);
   if (ipVersion === 6) return isGloballyReachableIpv6(hostname);
@@ -106,8 +106,7 @@ export function isPublicEndpointHostname(rawHostname: string) {
 }
 
 function isPublicDomainName(hostname: string) {
-  const withoutRootDot = hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
-  const asciiHostname = domainToASCII(withoutRootDot).toLowerCase();
+  const asciiHostname = domainToASCII(hostname).toLowerCase();
   if (!asciiHostname || asciiHostname.length > 253) return false;
   const labels = asciiHostname.split(".");
   if (labels.length < 2 || labels.some(isInvalidDomainLabel)) return false;
@@ -184,6 +183,10 @@ function parseHexWord(value: string) {
 
 function unwrapIpv6Brackets(hostname: string) {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
+function removeDnsRootDot(hostname: string) {
+  return hostname.endsWith(".") ? hostname.slice(0, -1) : hostname;
 }
 
 function longestPrefixFirst<T extends { prefixLength: number }>(left: T, right: T) {
