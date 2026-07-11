@@ -1,7 +1,8 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { v7 as uuidv7 } from "uuid";
@@ -89,6 +90,92 @@ describe("S3Storage MinIO boundaries", () => {
 });
 
 describe("S3Storage two-stage streaming cleanup", () => {
+  it("returns a committed result and reports a sanitized spool cleanup failure", async () => {
+    const spoolParent = await mkdtemp(join(tmpdir(), "pdf-approval-s3-spool-test-"));
+    const payload = Buffer.from("sensitive committed drawing");
+    const diagnostics: unknown[] = [];
+    const storage = new S3Storage(
+      { ...config, spoolParent },
+      {
+        async send(command) {
+          if (!(command instanceof PutObjectCommand)) {
+            throw new Error("Unexpected S3 command");
+          }
+          await consume(command.input.Body as Readable);
+          await writeFile(join(dirname(readStreamPath(command)), "cleanup-blocker"), "block");
+          return {};
+        },
+      },
+      {
+        reportCleanupFailure(diagnostic) {
+          diagnostics.push(diagnostic);
+        },
+      },
+    );
+    try {
+      await expect(
+        storage.write(objectKey(), Readable.from([payload]), "application/pdf"),
+      ).resolves.toEqual({
+        sizeBytes: payload.byteLength,
+        sha256: createHash("sha256").update(payload).digest(),
+      });
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "SPOOL_CLEANUP_FAILED",
+          committed: true,
+          dependencyCode: "ENOTEMPTY",
+        }),
+      ]);
+      expect(JSON.stringify(diagnostics)).not.toContain(spoolParent);
+      expect(JSON.stringify(diagnostics)).not.toContain(payload.toString());
+    } finally {
+      storage.destroy();
+      await rm(spoolParent, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves the primary PUT failure when spool cleanup also fails", async () => {
+    const spoolParent = await mkdtemp(join(tmpdir(), "pdf-approval-s3-spool-test-"));
+    const diagnostics: unknown[] = [];
+    const primaryFailure = Object.assign(new Error("synthetic PUT failure"), { code: "ETIMEDOUT" });
+    const storage = new S3Storage(
+      { ...config, spoolParent },
+      {
+        async send(command) {
+          if (!(command instanceof PutObjectCommand)) {
+            throw new Error("Unexpected S3 command");
+          }
+          await consume(command.input.Body as Readable);
+          await writeFile(join(dirname(readStreamPath(command)), "cleanup-blocker"), "block");
+          throw primaryFailure;
+        },
+      },
+      {
+        reportCleanupFailure(diagnostic) {
+          diagnostics.push(diagnostic);
+        },
+      },
+    );
+    try {
+      await expect(
+        storage.write(objectKey(), Readable.from(["candidate"]), "application/pdf"),
+      ).rejects.toMatchObject({
+        code: "STORAGE_IO_ERROR",
+        cause: expect.objectContaining({ code: "ETIMEDOUT" }),
+      });
+      expect(diagnostics).toEqual([
+        expect.objectContaining({
+          code: "SPOOL_CLEANUP_FAILED",
+          committed: false,
+          dependencyCode: "ENOTEMPTY",
+        }),
+      ]);
+    } finally {
+      storage.destroy();
+      await rm(spoolParent, { force: true, recursive: true });
+    }
+  });
+
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 5 * 1024 ** 3])(
     "rejects the invalid single-PUT byte limit %s",
     (maxObjectBytes) => {
@@ -204,6 +291,47 @@ describe("S3Storage two-stage streaming cleanup", () => {
         code: "STORAGE_IO_ERROR",
       });
       expect(source.destroyed).toBe(true);
+      expect(source.listenerCount("error")).toBe(0);
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it("keeps the source error listener until asynchronous destroy completes", async () => {
+    const source = new AsyncDestroyFailureReadable();
+    const storage = new S3Storage(config, {
+      async send() {
+        return { Body: source };
+      },
+    });
+    try {
+      const output = await storage.openRead(objectKey());
+      const outputClosed = eventPromise(output, "close");
+      const sourceClosed = eventPromise(source, "close");
+      output.destroy();
+      await outputClosed;
+
+      const retainedListenerCount = source.listenerCount("error");
+      source.once("error", () => undefined);
+      await sourceClosed;
+
+      expect(retainedListenerCount).toBeGreaterThan(0);
+      expect(source.listenerCount("error")).toBe(0);
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it("removes the mapped error listener after normal object EOF", async () => {
+    const source = Readable.from(["complete body"]);
+    const storage = new S3Storage(config, {
+      async send() {
+        return { Body: source };
+      },
+    });
+    try {
+      await consume(await storage.openRead(objectKey()));
+      expect(source.listenerCount("error")).toBe(0);
     } finally {
       storage.destroy();
     }
@@ -331,5 +459,25 @@ function failingReadable(): Readable {
 async function consume(body: Readable): Promise<void> {
   for await (const _chunk of body) {
     // Consume until completion or the mapped read error.
+  }
+}
+
+function readStreamPath(command: PutObjectCommand): string {
+  const path = (command.input.Body as Readable & { path?: unknown }).path;
+  if (typeof path !== "string") {
+    throw new Error("Expected file-backed PutObject body");
+  }
+  return path;
+}
+
+function eventPromise(emitter: Readable, event: "close"): Promise<void> {
+  return new Promise((resolveEvent) => emitter.once(event, resolveEvent));
+}
+
+class AsyncDestroyFailureReadable extends Readable {
+  override _read(): void {}
+
+  override _destroy(_error: Error | null, callback: (error?: Error | null) => void): void {
+    setImmediate(() => callback(Object.assign(new Error("async destroy failure"), { code: "EIO" })));
   }
 }

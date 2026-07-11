@@ -43,6 +43,22 @@ interface S3ClientLike {
   destroy?(): void;
 }
 
+interface S3CleanupFailureDiagnostic {
+  readonly code: "SPOOL_CLEANUP_FAILED";
+  readonly committed: boolean;
+  readonly dependencyCode?: string;
+}
+
+interface S3StorageDiagnostics {
+  reportCleanupFailure(diagnostic: S3CleanupFailureDiagnostic): void;
+}
+
+const DEFAULT_S3_STORAGE_DIAGNOSTICS: S3StorageDiagnostics = {
+  reportCleanupFailure(diagnostic) {
+    console.error("S3 storage spool cleanup failed", diagnostic);
+  },
+};
+
 export type S3StorageOptions = S3StorageConfig & {
   readonly maxObjectBytes?: number;
   readonly spoolParent?: string;
@@ -55,8 +71,13 @@ export class S3Storage implements StorageAdapter {
   private readonly client: S3ClientLike;
   private readonly maxObjectBytes: number;
   private readonly spoolParent: string;
+  private readonly diagnostics: S3StorageDiagnostics;
 
-  constructor(options: S3StorageOptions, client?: S3ClientLike) {
+  constructor(
+    options: S3StorageOptions,
+    client?: S3ClientLike,
+    diagnostics: S3StorageDiagnostics = DEFAULT_S3_STORAGE_DIAGNOSTICS,
+  ) {
     if (
       options.maxObjectBytes !== undefined &&
       (!Number.isSafeInteger(options.maxObjectBytes) ||
@@ -73,6 +94,7 @@ export class S3Storage implements StorageAdapter {
     this.maxObjectBytes = options.maxObjectBytes ?? MAX_SINGLE_PUT_OBJECT_BYTES;
     this.spoolParent = resolve(options.spoolParent ?? tmpdir());
     this.client = client ?? createS3Client(options);
+    this.diagnostics = diagnostics;
   }
 
   async write(key: string, body: Readable, contentType: string): Promise<StorageWriteResult> {
@@ -86,29 +108,61 @@ export class S3Storage implements StorageAdapter {
     const spoolPath = join(spoolDirectory, "object");
     let spoolHandle: FileHandle | undefined;
     const meter = new HashingSizeTransform(this.maxObjectBytes);
+    let result: StorageWriteResult | undefined;
+    let primaryError: StorageError | undefined;
+    let committed = false;
     try {
       spoolHandle = await open(spoolPath, "wx", 0o600);
       await pipeline(body, meter, spoolHandle.createWriteStream());
       await spoolHandle.close();
       spoolHandle = undefined;
 
-      const result = meter.result();
+      result = meter.result();
       // MinIO rejects unknown-length transfer-encoding with HTTP 411. Spooling keeps memory
       // bounded while allowing one atomic If-None-Match PUT with an exact Content-Length.
       await this.putSpooledObject(key, spoolPath, result.sizeBytes, contentType);
-      return result;
+      committed = true;
     } catch (error) {
       body.destroy();
-      throw mapWriteError(error);
-    } finally {
-      if (spoolHandle !== undefined) {
-        try {
-          await spoolHandle.close();
-        } catch {
-          // The cleanup below remains mandatory and reports any persistent cleanup failure.
-        }
+      primaryError = mapWriteError(error);
+    }
+
+    let cleanupError: StorageError | undefined;
+    if (spoolHandle !== undefined) {
+      try {
+        await spoolHandle.close();
+      } catch (error) {
+        cleanupError = mapStorageOperationError(error);
       }
+    }
+    try {
       await cleanupSpool(spoolPath, spoolDirectory);
+    } catch (error) {
+      cleanupError ??= mapStorageOperationError(error);
+    }
+
+    if (cleanupError !== undefined) {
+      this.reportCleanupFailure(cleanupError, committed);
+    }
+    if (primaryError !== undefined) {
+      throw primaryError;
+    }
+    if (result === undefined) {
+      throw new StorageError("STORAGE_IO_ERROR", "Storage operation failed");
+    }
+    return result;
+  }
+
+  private reportCleanupFailure(error: StorageError, committed: boolean): void {
+    const diagnostic: S3CleanupFailureDiagnostic = {
+      code: "SPOOL_CLEANUP_FAILED",
+      committed,
+      dependencyCode: storageDependencyCode(error),
+    };
+    try {
+      this.diagnostics.reportCleanupFailure(diagnostic);
+    } catch {
+      DEFAULT_S3_STORAGE_DIAGNOSTICS.reportCleanupFailure(diagnostic);
     }
   }
 
@@ -306,10 +360,10 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<Uint8Array> {
 function mapReadableErrors(source: Readable): Readable {
   const output = new PassThrough();
   const onError = (error: unknown) => output.destroy(mapStorageOperationError(error));
-  source.once("error", onError);
+  source.on("error", onError);
+  source.once("close", () => source.off("error", onError));
   source.pipe(output);
   output.once("close", () => {
-    source.off("error", onError);
     if (!source.destroyed) {
       source.destroy();
     }
@@ -388,6 +442,15 @@ function mapStorageOperationError(error: unknown): StorageError {
     return error;
   }
   return new StorageError("STORAGE_IO_ERROR", "Storage operation failed", { cause: error });
+}
+
+function storageDependencyCode(error: StorageError): string | undefined {
+  const cause = error.cause;
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
+    return undefined;
+  }
+  const code = (cause as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function objectNotFound(): StorageError {
