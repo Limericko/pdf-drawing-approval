@@ -88,8 +88,11 @@ export class PostgresMfaRepository implements MfaRepository {
 
   async completeChallenge(id: string) {
     const result = await this.executor.query<ChallengeRow>(
-      `UPDATE platform.mfa_challenges SET completed_at = clock_timestamp()
-       WHERE id = $1 AND completed_at IS NULL AND expires_at > clock_timestamp() AND attempt_count < max_attempts
+      `WITH times AS (SELECT clock_timestamp() AS now)
+       UPDATE platform.mfa_challenges challenge SET completed_at = times.now
+       FROM times
+       WHERE challenge.id = $1 AND challenge.completed_at IS NULL
+         AND challenge.expires_at > times.now AND challenge.attempt_count < challenge.max_attempts
        RETURNING ${CHALLENGE_COLUMNS}`,
       [id]
     );
@@ -163,9 +166,11 @@ export class PostgresMfaRepository implements MfaRepository {
 
   async completeEnrollment(id: string) {
     const result = await this.executor.query<EnrollmentRow>(
-      `UPDATE platform.mfa_enrollments SET completed_at = clock_timestamp()
-       WHERE id = $1 AND invalidated_at IS NULL AND completed_at IS NULL
-         AND expires_at > clock_timestamp() AND attempt_count < max_attempts
+      `WITH times AS (SELECT clock_timestamp() AS now)
+       UPDATE platform.mfa_enrollments enrollment SET completed_at = times.now
+       FROM times
+       WHERE enrollment.id = $1 AND enrollment.invalidated_at IS NULL AND enrollment.completed_at IS NULL
+         AND enrollment.expires_at > times.now AND enrollment.attempt_count < enrollment.max_attempts
        RETURNING ${ENROLLMENT_COLUMNS}`,
       [id]
     );

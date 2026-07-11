@@ -63,6 +63,9 @@ securityRepositoriesContract({
       runTransaction(connection, callback) {
         return withTransaction(transactionPool({ primary, concurrentA, concurrentB }[connection]), callback);
       },
+      async consumeInvitation(executor, invitationId, acceptedByUserId) {
+        return Boolean(await new PostgresInvitationRepository(executor).consume(invitationId, acceptedByUserId));
+      },
       async createUser() {
         sequence += 1;
         return new PostgresUserRepository(primary).create({

@@ -71,6 +71,7 @@ export class PostgresAuditRepository implements AuditRepository {
   }
 
   async list(input: ListAuditEventsInput = {}) {
+    const limit = auditLimit(input.limit);
     const conditions: string[] = [];
     const values: unknown[] = [];
     const add = (sql: string, value: unknown) => {
@@ -81,8 +82,9 @@ export class PostgresAuditRepository implements AuditRepository {
     if (input.requestId !== undefined) add("request_id =", input.requestId);
     if (input.targetType !== undefined) add("target_type =", input.targetType);
     if (input.targetId !== undefined) add("target_id =", input.targetId);
-    if (input.beforeOccurredAt !== undefined) add("occurred_at <", input.beforeOccurredAt);
-    const limit = Math.max(1, Math.min(100, input.limit ?? 50));
+    if (input.beforeOccurredAt !== undefined) {
+      add("occurred_at <", new Date(input.beforeOccurredAt.getTime()));
+    }
     values.push(limit);
     const result = await this.executor.query<AuditRow>(
       `SELECT ${AUDIT_COLUMNS} FROM platform.audit_events
@@ -92,4 +94,10 @@ export class PostgresAuditRepository implements AuditRepository {
     );
     return result.rows.map(mapAudit);
   }
+}
+
+function auditLimit(value: number | undefined) {
+  if (value === undefined) return 50;
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("INVALID_AUDIT_LIMIT");
+  return Math.min(100, value);
 }

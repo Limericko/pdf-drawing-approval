@@ -29,6 +29,13 @@ export class PostgresRateLimitRepository implements RateLimitRepository {
   constructor(private readonly executor: QueryExecutor) {}
 
   async increment(input: IncrementRateLimitInput) {
+    if (![input.windowSeconds, input.limit, input.blockSeconds].every(isPositiveSafeInteger)) {
+      throw new Error("INVALID_RATE_LIMIT_POLICY");
+    }
+    if (!["account", "ip-prefix"].includes(input.bucketType) ||
+        !Buffer.isBuffer(input.bucketKey) || input.bucketKey.length === 0) {
+      throw new Error("INVALID_RATE_LIMIT_BUCKET");
+    }
     const result = await this.executor.query<RateLimitRow>(
       `WITH times AS (SELECT clock_timestamp() AS now)
        INSERT INTO platform.security_rate_limit_buckets AS bucket
@@ -65,4 +72,8 @@ export class PostgresRateLimitRepository implements RateLimitRepository {
     );
     return mapBucket(result.rows[0]!);
   }
+}
+
+function isPositiveSafeInteger(value: number) {
+  return Number.isSafeInteger(value) && value > 0;
 }

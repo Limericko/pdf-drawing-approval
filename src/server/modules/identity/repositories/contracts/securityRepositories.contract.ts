@@ -24,6 +24,7 @@ export type SecurityRepositoryContractContext = {
     connection: "primary" | "concurrentA" | "concurrentB",
     callback: (executor: QueryExecutor) => Promise<T>
   ): Promise<T>;
+  consumeInvitation(executor: QueryExecutor, invitationId: string, acceptedByUserId: string): Promise<boolean>;
   createUser(): Promise<{ readonly id: string }>;
   createInvitation(): Promise<{ readonly id: string }>;
 };
@@ -86,6 +87,43 @@ export function securityRepositoriesContract(options: ContractOptions) {
         [expired.id]
       );
       await expect(repositories().mfa.completeChallenge(expired.id)).resolves.toBeUndefined();
+    });
+
+    it("uses one captured database instant for each challenge and enrollment completion", async () => {
+      const user = await context().createUser();
+      const challenge = await repositories().mfa.createChallenge({
+        userId: user.id,
+        tokenHash: randomBytes(32),
+        lifetimeSeconds: 300,
+        maxAttempts: 3
+      });
+      const invitation = await context().createInvitation();
+      const enrollment = await repositories().mfa.createEnrollment({
+        invitationId: invitation.id,
+        tokenHash: randomBytes(32),
+        encryptedTotpSecret: randomBytes(48),
+        keyVersion: "v1",
+        lifetimeSeconds: 600,
+        maxAttempts: 3
+      });
+      const completionSql: string[] = [];
+      const observedExecutor: QueryExecutor = {
+        query(text, values) {
+          completionSql.push(text);
+          return context().primary.query(text, values);
+        }
+      };
+      const mfa = options.createRepositories(observedExecutor).mfa;
+      await mfa.completeChallenge(challenge.id);
+      await mfa.completeEnrollment(enrollment.id);
+
+      expect(completionSql).toHaveLength(2);
+      for (const sql of completionSql) {
+        expect(sql).toContain("WITH times AS (SELECT clock_timestamp() AS now)");
+        expect(sql).toContain("SET completed_at = times.now");
+        expect(sql).toContain("expires_at > times.now");
+        expect(sql.match(/clock_timestamp\(\)/g)).toHaveLength(1);
+      }
     });
 
     it("fails closed for terminal MFA enrollments and stores the encrypted secret without doing cryptography", async () => {
@@ -270,6 +308,69 @@ export function securityRepositoriesContract(options: ContractOptions) {
       expect(lookups.filter((value) => value === undefined)).toHaveLength(1);
     });
 
+    it("serializes enrollment completion and invitation consumption before a concurrent prepare", async () => {
+      const invitation = await context().createInvitation();
+      const acceptedBy = await context().createUser();
+      const enrollment = await repositories().mfa.createEnrollment({
+        invitationId: invitation.id,
+        tokenHash: randomBytes(32),
+        encryptedTotpSecret: randomBytes(48),
+        keyVersion: "v1",
+        lifetimeSeconds: 600,
+        maxAttempts: 3
+      });
+      let signalCompletionLocked!: () => void;
+      let releaseCompletion!: () => void;
+      let signalPrepareLockRequested!: () => void;
+      const completionLocked = new Promise<void>((resolve) => { signalCompletionLocked = resolve; });
+      const completionCanFinish = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+      const prepareLockRequested = new Promise<void>((resolve) => { signalPrepareLockRequested = resolve; });
+
+      const completion = context().runTransaction("concurrentA", async (executor) => {
+        const mfa = options.createRepositories(executor).mfa;
+        if (!await mfa.lockActiveInvitationForEnrollment(invitation.id)) throw new Error("INVITATION_NOT_ACTIVE");
+        signalCompletionLocked();
+        await completionCanFinish;
+        const completed = await mfa.completeEnrollment(enrollment.id);
+        const consumed = await context().consumeInvitation(executor, invitation.id, acceptedBy.id);
+        return { completed, consumed };
+      });
+      await completionLocked;
+      const prepare = context().runTransaction("concurrentB", async (executor) => {
+        const observedExecutor: QueryExecutor = {
+          query(text, values) {
+            if (text.includes("FOR UPDATE")) signalPrepareLockRequested();
+            return executor.query(text, values);
+          }
+        };
+        const mfa = options.createRepositories(observedExecutor).mfa;
+        const locked = await mfa.lockActiveInvitationForEnrollment(invitation.id);
+        if (!locked) return undefined;
+        await mfa.invalidateOpenEnrollmentsForInvitation(invitation.id);
+        return mfa.createEnrollment({
+          invitationId: invitation.id,
+          tokenHash: randomBytes(32),
+          encryptedTotpSecret: randomBytes(48),
+          keyVersion: "v1",
+          lifetimeSeconds: 600,
+          maxAttempts: 3
+        });
+      });
+      await prepareLockRequested;
+      releaseCompletion();
+      const [completionResult, prepareResult] = await Promise.all([completion, prepare]);
+
+      expect(completionResult.completed).toMatchObject({ id: enrollment.id });
+      expect(completionResult.consumed).toBe(true);
+      expect(prepareResult).toBeUndefined();
+      const rows = await context().migration.query<{ id: string; completed_at: Date | null }>(
+        "SELECT id, completed_at FROM platform.mfa_enrollments WHERE invitation_id = $1",
+        [invitation.id]
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.completed_at).toBeInstanceOf(Date);
+    });
+
     it("persists TOTP credentials and consumes one recovery code exactly once across independent connections", async () => {
       const user = await context().createUser();
       const encryptedSecret = randomBytes(52);
@@ -433,6 +534,27 @@ export function securityRepositoriesContract(options: ContractOptions) {
       await expect(limitedIncrement()).resolves.toMatchObject({ attemptCount: 1, blocked: false, blockedUntil: null });
     });
 
+    it("rejects fail-open rate-limit policies and invalid bucket identities before querying PostgreSQL", async () => {
+      const valid = {
+        bucketType: "account" as const,
+        bucketKey: randomBytes(16),
+        windowSeconds: 60,
+        limit: 5,
+        blockSeconds: 120
+      };
+      const invalidNumbers = [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5];
+      for (const field of ["windowSeconds", "limit", "blockSeconds"] as const) {
+        for (const value of invalidNumbers) {
+          await expect(repositories().rateLimits.increment({ ...valid, [field]: value }))
+            .rejects.toThrow("INVALID_RATE_LIMIT_POLICY");
+        }
+      }
+      await expect(repositories().rateLimits.increment({ ...valid, bucketType: "email" as never }))
+        .rejects.toThrow("INVALID_RATE_LIMIT_BUCKET");
+      await expect(repositories().rateLimits.increment({ ...valid, bucketKey: Buffer.alloc(0) }))
+        .rejects.toThrow("INVALID_RATE_LIMIT_BUCKET");
+    });
+
     it("revokes all sessions for one user in one idempotent operation", async () => {
       const user = await context().createUser();
       const otherUser = await context().createUser();
@@ -526,6 +648,47 @@ export function securityRepositoriesContract(options: ContractOptions) {
       ).rejects.toThrow("INVALID_AUDIT_METADATA_VALUE");
       expect("update" in repositories().audit).toBe(false);
       expect("delete" in repositories().audit).toBe(false);
+    });
+
+    it("rejects invalid audit limits before querying PostgreSQL", async () => {
+      for (const limit of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+        await expect(repositories().audit.list({ limit })).rejects.toThrow("INVALID_AUDIT_LIMIT");
+      }
+    });
+
+    it("copies the audit cursor Date before an asynchronous executor can observe caller mutations", async () => {
+      const user = await context().createUser();
+      const event = await repositories().audit.append({
+        actorUserId: user.id,
+        actorType: "user",
+        action: "audit.cursor.tested",
+        targetType: "user",
+        targetId: user.id,
+        requestId: `audit-cursor-${user.id}`,
+        result: "success",
+        metadata: { reason: "cursor-copy" }
+      });
+      const beforeOccurredAt = new Date(Date.now() + 60_000);
+      const expectedCursorTime = beforeOccurredAt.getTime();
+      let capturedValues: readonly unknown[] | undefined;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const delayedExecutor: QueryExecutor = {
+        async query(text, values) {
+          capturedValues = values;
+          await gate;
+          return context().primary.query(text, values);
+        }
+      };
+      const listing = options.createRepositories(delayedExecutor).audit.list({ beforeOccurredAt, limit: 10 });
+      beforeOccurredAt.setTime(0);
+      release();
+      const events = await listing;
+
+      expect(events.some((candidate) => candidate.id === event.id)).toBe(true);
+      const capturedDate = capturedValues?.find((value) => value instanceof Date);
+      expect(capturedDate).toBeInstanceOf(Date);
+      expect((capturedDate as Date).getTime()).toBe(expectedCursorTime);
     });
 
     it("keeps audit events append-only for the real platform_web role", async () => {

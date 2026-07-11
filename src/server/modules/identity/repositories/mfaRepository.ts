@@ -64,8 +64,9 @@ export interface MfaRepository {
   recordChallengeAttempt(id: string): Promise<MfaChallenge | undefined>;
   completeChallenge(id: string): Promise<MfaChallenge | undefined>;
   /**
-   * First step of enrollment preparation. Call on a transaction-bound repository, then call
-   * invalidateOpenEnrollmentsForInvitation() and createEnrollment() in that same service transaction.
+   * Shared first step for enrollment preparation and completion. Any service transaction that mutates
+   * an enrollment and consumes its invitation must acquire this lock first. The global lock order is
+   * invitation, then enrollment; keep invalidate/create or complete/consume in this same transaction.
    */
   lockActiveInvitationForEnrollment(invitationId: string): Promise<boolean>;
   /** Must be composed after lockActiveInvitationForEnrollment() in the same service transaction. */
@@ -74,6 +75,7 @@ export interface MfaRepository {
   findActiveEnrollmentByTokenHash(tokenHash: Buffer): Promise<MfaEnrollment | undefined>;
   recordEnrollmentAttempt(id: string): Promise<MfaEnrollment | undefined>;
   invalidateEnrollment(id: string): Promise<MfaEnrollment | undefined>;
+  /** When consuming the invitation too, lock the invitation first and use the same service transaction. */
   completeEnrollment(id: string): Promise<MfaEnrollment | undefined>;
   saveTotpCredential(input: { readonly userId: string; readonly encryptedSecret: Buffer; readonly keyVersion: string }): Promise<TotpCredential>;
   findTotpCredentialByUserId(userId: string): Promise<TotpCredential | undefined>;
