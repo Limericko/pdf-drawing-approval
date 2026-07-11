@@ -27,6 +27,20 @@ storageAdapterContract("S3/MinIO", "s3", () => {
 });
 
 describe("S3Storage MinIO boundaries", () => {
+  it("does not disguise a real missing MinIO bucket as a missing object", async () => {
+    const storage = new S3Storage({
+      ...config,
+      bucket: `pdf-approval-missing-${uuidv7()}`,
+    });
+    try {
+      await expect(storage.head(objectKey())).rejects.toMatchObject({
+        code: "STORAGE_IO_ERROR",
+      });
+    } finally {
+      storage.destroy();
+    }
+  });
+
   it("keeps newly written objects inaccessible to anonymous callers", async () => {
     const key = createStorageKey("objects/original", uuidv7());
     try {

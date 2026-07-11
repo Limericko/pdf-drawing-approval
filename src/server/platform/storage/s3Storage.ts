@@ -335,10 +335,34 @@ function isConditionalWriteConflict(error: unknown): boolean {
 
 function isMissingObjectError(error: unknown): boolean {
   const name = errorField(error, "name");
-  if (name === "NoSuchBucket") {
+  if (
+    name === "NoSuchBucket" ||
+    errorResponseHeader(error, "x-minio-error-code") === "NoSuchBucket"
+  ) {
     return false;
   }
   return errorHttpStatus(error) === 404 || name === "NoSuchKey" || name === "NotFound";
+}
+
+function errorResponseHeader(error: unknown, expectedName: string): string | undefined {
+  const response = responseField(error, "$response");
+  const headers = responseField(response, "headers");
+  if (typeof headers !== "object" || headers === null) {
+    return undefined;
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== expectedName) {
+      continue;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
+      return value[0];
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 function errorHttpStatus(error: unknown): number | undefined {
