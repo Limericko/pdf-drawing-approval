@@ -9,13 +9,15 @@ import { createPlatformPool, type PlatformPool } from "../../../platform/databas
 import { createErrorMiddleware } from "../../../platform/http/errorMiddleware.ts";
 import { requestContext } from "../../../platform/http/requestContext.ts";
 import { createSessionService } from "../../../platform/security/sessionService.ts";
-import { hashOpaqueToken } from "../../../platform/security/tokenHash.ts";
+import { deriveInvitationToken, hashOpaqueToken } from "../../../platform/security/tokenHash.ts";
+import { totpAt } from "../../../platform/security/totp.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../../../platform/testing/postgresHarness.ts";
 import { createAuthorizationService } from "../authorizationService.ts";
+import { createInvitationService } from "../invitationService.ts";
 import { PostgresProjectRepository } from "../repositories/postgres/PostgresProjectRepository.ts";
 import { PostgresSessionRepository } from "../repositories/postgres/PostgresSessionRepository.ts";
 import { PostgresUserRepository } from "../repositories/postgres/PostgresUserRepository.ts";
-import { createIdentityRoutes } from "./identityRoutes.ts";
+import { createIdentityRoutes, noStoreIdentityResponses } from "./identityRoutes.ts";
 
 const passwordHashOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 } as const;
 const csrfKeyring = { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 7)]]) };
@@ -60,6 +62,18 @@ describe("v2 identity routes", () => {
     await unsafe(request(harness.app).post("/api/v2/auth/login"))
       .send({ email: "user@example.test", password: "secret", extra: true })
       .expect(400).expect(problem("REQUEST_BODY_INVALID", 400));
+    expect(harness.authentication.login).not.toHaveBeenCalled();
+  });
+
+  it("correlates malformed JSON through request context, no-store and the terminal problem middleware", async () => {
+    const harness = await createHarness();
+    const response = await request(harness.app).post("/api/v2/auth/login")
+      .set("Origin", "https://approval.example.test").set("Content-Type", "application/json")
+      .set("X-Request-ID", "malformed-json-http-request").send('{"email":"user@example.test"')
+      .expect(400).expect("Cache-Control", "no-store")
+      .expect("X-Request-ID", "malformed-json-http-request");
+    expect(response.body).toMatchObject({ code: "REQUEST_BODY_INVALID", status: 400,
+      requestId: "malformed-json-http-request" });
     expect(harness.authentication.login).not.toHaveBeenCalled();
   });
 
@@ -178,6 +192,43 @@ describe("v2 identity routes", () => {
     expect(invitationCompleteResponseSchema.safeParse(completed.body).success).toBe(true);
   });
 
+  it("persists the HTTP request ID in the real invitation success audit", async () => {
+    const admin = await createUser("audit-admin@example.test", "admin");
+    const project = await new PostgresProjectRepository(migration).create({ name: "Audit Project", status: "active",
+      createdByUserId: admin.id });
+    await createSession(admin.id, "audit-admin-session");
+    const invitationHmac = { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 11)]]) };
+    const totpSecret = Buffer.alloc(20, 14);
+    const invitationService = createInvitationService({ pool: web, passwordHashOptions, keyrings: {
+      invitationHmac,
+      totpEncryption: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 12)]]) },
+      recoveryHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 13)]]) }
+    }, generateTotpSecret: () => Buffer.from(totpSecret) });
+    const harness = await createHarness({ invitationsService: invitationService });
+    const session = await request(harness.app).get("/api/v2/session")
+      .set("Cookie", "platform_session=audit-admin-session").expect(200);
+    const requestId = "invitation-route-audit-request";
+
+    const response = await unsafe(request(harness.app).post("/api/v2/invitations"))
+      .set("Cookie", "platform_session=audit-admin-session").set("X-CSRF-Token", session.body.csrfToken)
+      .set("X-Request-ID", requestId).send({ email: "audited@example.test", platformRole: "member",
+        projectId: project.project.id, projectRole: "viewer" }).expect(201).expect("X-Request-ID", requestId);
+    await expect(migration.query("SELECT request_id FROM platform.audit_events WHERE action='invitation.create' AND target_id=$1",
+      [response.body.invitationId])).resolves.toMatchObject({ rows: [{ request_id: requestId }] });
+
+    const invitationToken = deriveInvitationToken(response.body.invitationId, "v1", invitationHmac);
+    const prepared = await unsafe(request(harness.app).post("/api/v2/invitations/prepare"))
+      .set("X-Request-ID", "invitation-prepare-request").send({ invitationToken }).expect(200);
+    const completeRequestId = "invitation-complete-route-audit";
+    const completed = await unsafe(request(harness.app).post("/api/v2/invitations/complete"))
+      .set("X-Request-ID", completeRequestId).send({ enrollmentToken: prepared.body.enrollmentToken,
+        password: "correct horse battery staple", totp: totpAt(totpSecret, Date.now()) })
+      .expect(200).expect("X-Request-ID", completeRequestId);
+    expect(completed.body.recoveryCodes).toHaveLength(10);
+    await expect(migration.query("SELECT request_id FROM platform.audit_events WHERE action='invitation.accept' AND target_id=$1",
+      [response.body.invitationId])).resolves.toMatchObject({ rows: [{ request_id: completeRequestId }] });
+  });
+
   it("returns stable sanitized problems for bad cookies, PostgreSQL failures and unknown async rejections", async () => {
     const logger = { error: vi.fn() };
     const badCookie = await createHarness({ logger });
@@ -219,7 +270,8 @@ describe("v2 identity routes", () => {
 });
 
 async function createHarness(options: { environment?: "test" | "production"; cookieSecure?: boolean;
-  trustProxy?: false | number; loginFailure?: Error; logger?: { error(event: Record<string, unknown>): void } } = {}) {
+  trustProxy?: false | number; loginFailure?: Error; logger?: { error(event: Record<string, unknown>): void };
+  invitationsService?: ReturnType<typeof createInvitationService> } = {}) {
   const logger = options.logger ?? { error: vi.fn() };
   const authentication = {
     login: options.loginFailure ? vi.fn().mockRejectedValue(options.loginFailure) :
@@ -240,13 +292,12 @@ async function createHarness(options: { environment?: "test" | "production"; coo
   const authorization = createAuthorizationService({ pool: web });
   const app = express();
   app.set("trust proxy", options.trustProxy ?? false);
-  app.use(express.json({ limit: "64kb" }));
   app.use(requestContext());
-  app.use("/api/v2", createIdentityRoutes({
+  app.use("/api/v2", noStoreIdentityResponses, express.json({ limit: "64kb" }), createIdentityRoutes({
     config: { publicBaseUrl, environment: options.environment ?? "test",
       cookieName: "platform_session", cookieSecure: options.cookieSecure ?? false },
     csrfKeyring,
-    services: { authentication, sessions, invitations, authorization },
+    services: { authentication, sessions, invitations: options.invitationsService ?? invitations, authorization },
     logger
   }));
   app.use(createErrorMiddleware({ logger }));

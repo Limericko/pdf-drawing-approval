@@ -15,6 +15,7 @@ const mailpit = createMailpitHarness({ baseUrl: "http://127.0.0.1:58025" });
 const inviterId = "01890f1e-9b4a-7cc2-8f00-000000000071";
 const projectId = "01890f1e-9b4a-7cc2-8f00-000000000072";
 const invitationHmac = { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 1)]]) };
+const stableRequestId = "invitation-email-integration-request";
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
@@ -39,11 +40,7 @@ afterEach(async () => { await mailpit.clear(); });
 
 describe("invitation email integration", () => {
   it("sends a fragment invitation through Mailpit with a stable Message-ID and supports at-least-once replay", async () => {
-    const service = createInvitationService({ pool: web, keyrings: {
-      invitationHmac,
-      totpEncryption: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 2)]]) },
-      recoveryHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 3)]]) }
-    }, passwordHashOptions: { memoryCost: 8192, timeCost: 1, parallelism: 1, outputLen: 32 } });
+    const service = makeService();
     const created = await service.createInvitation({ email: "invitee@example.test", platformRole: "member",
       projectId, projectRole: "designer", invitedByUserId: inviterId });
     const transport = createPlatformMailTransport({ config: { host: "127.0.0.1", port: 51025,
@@ -112,11 +109,7 @@ describe("invitation email integration", () => {
   });
 
   it("permanently rejects invalid records and classifies SMTP failures as transient", async () => {
-    const service = createInvitationService({ pool: web, keyrings: {
-      invitationHmac,
-      totpEncryption: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 2)]]) },
-      recoveryHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 3)]]) }
-    }, passwordHashOptions: { memoryCost: 8192, timeCost: 1, parallelism: 1, outputLen: 32 } });
+    const service = makeService();
     const invalid = await service.createInvitation({ email: "invalid@example.test", platformRole: "member",
       projectId, projectRole: "viewer", invitedByUserId: inviterId });
     await migration.query("UPDATE platform.invitations SET token_hash=$2 WHERE id=$1", [invalid.invitationId, Buffer.alloc(32, 9)]);
@@ -160,11 +153,18 @@ describe("invitation email integration", () => {
 });
 
 function makeService() {
-  return createInvitationService({ pool: web, keyrings: {
+  const service = createInvitationService({ pool: web, keyrings: {
     invitationHmac,
     totpEncryption: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 2)]]) },
     recoveryHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 3)]]) }
   }, passwordHashOptions: { memoryCost: 8192, timeCost: 1, parallelism: 1, outputLen: 32 } });
+  type CreateInput = Parameters<typeof service.createInvitation>[0];
+  return Object.freeze({
+    ...service,
+    createInvitation(input: Omit<CreateInput, "requestId"> & { readonly requestId?: string }) {
+      return service.createInvitation({ ...input, requestId: input.requestId ?? stableRequestId });
+    }
+  });
 }
 
 async function waitForMessage(messageId: string, recipient: string) {

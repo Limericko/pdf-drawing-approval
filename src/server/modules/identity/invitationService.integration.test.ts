@@ -21,6 +21,7 @@ let deadlockB: PlatformPool;
 let admin: Pool;
 const inviterId = "01890f1e-9b4a-7cc2-8f00-000000000061";
 const projectId = "01890f1e-9b4a-7cc2-8f00-000000000062";
+const stableRequestId = "invitation-service-integration-request";
 const unauthorizedInviters = [
   { id: "01890f1e-9b4a-7cc2-8f00-000000000064", email: "admin-viewer@example.test", platformRole: "admin", userStatus: "active", projectRole: "viewer", memberStatus: "active" },
   { id: "01890f1e-9b4a-7cc2-8f00-000000000065", email: "member-manager@example.test", platformRole: "member", userStatus: "active", projectRole: "manager", memberStatus: "active" },
@@ -81,9 +82,10 @@ beforeEach(async () => {
 describe("InvitationService", () => {
   it("creates a 24-hour invitation, audit and strict outbox event in one transaction", async () => {
     const service = makeService();
+    const requestId = "invitation-create-http-request";
 
     const created = await service.createInvitation({ email: "Invitee@Example.Test", platformRole: "member",
-      projectId, projectRole: "designer", invitedByUserId: inviterId });
+      projectId, projectRole: "designer", invitedByUserId: inviterId, requestId });
     expect(created).toEqual({ invitationId: expect.stringMatching(/^.{36}$/) });
     const token = await deriveStoredInvitationToken(created.invitationId);
     expect(token).toMatch(new RegExp(`^${created.invitationId}\\.`));
@@ -93,8 +95,8 @@ describe("InvitationService", () => {
     expect(row.rows[0]!.token_hash.toString("utf8")).not.toContain(token);
     const outbox = await migration.query<{ payload: unknown }>("SELECT payload FROM platform.outbox_events");
     expect(outbox.rows).toEqual([{ payload: { invitationId: created.invitationId } }]);
-    await expect(migration.query("SELECT action FROM platform.audit_events WHERE action='invitation.create'"))
-      .resolves.toMatchObject({ rowCount: 1 });
+    await expect(migration.query("SELECT action,request_id FROM platform.audit_events WHERE action='invitation.create'"))
+      .resolves.toMatchObject({ rows: [{ action: "invitation.create", request_id: requestId }] });
   });
 
   it("requires an active platform admin with an active manager membership for every target role", async () => {
@@ -304,9 +306,10 @@ describe("InvitationService", () => {
     await expect(migration.query("SELECT count(*)::int AS count FROM platform.mfa_enrollments"))
       .resolves.toMatchObject({ rows: [{ count: 1 }] });
 
+    const requestId = "invitation-complete-http-request";
     const completed = await service.complete({ enrollmentToken: prepared.enrollmentToken,
       sourceIpPrefix: "203.0.113.0/24", password: "correct horse battery staple",
-      totp: totpAt(totpSecret, Date.now()) });
+      totp: totpAt(totpSecret, Date.now()), requestId });
     expect(completed.recoveryCodes).toHaveLength(10);
     await expect(migration.query(`SELECT
       (SELECT count(*) FROM platform.users)::int AS users,
@@ -315,6 +318,8 @@ describe("InvitationService", () => {
       (SELECT count(*) FROM platform.project_members)::int AS members,
       (SELECT count(*) FROM platform.invitations WHERE accepted_at IS NOT NULL)::int AS accepted`))
       .resolves.toMatchObject({ rows: [{ users: 2, credentials: 1, recovery: 10, members: 2, accepted: 1 }] });
+    await expect(migration.query("SELECT request_id FROM platform.audit_events WHERE action='invitation.accept'"))
+      .resolves.toMatchObject({ rows: [{ request_id: requestId }] });
     await expect(service.complete({ enrollmentToken: prepared.enrollmentToken,
       sourceIpPrefix: "203.0.113.0/24", password: "correct horse battery staple",
       totp: totpAt(totpSecret, Date.now()) })).rejects.toMatchObject({ code: "INVITATION_INVALID" });
@@ -603,12 +608,29 @@ describe("InvitationService", () => {
 });
 
 function makeService(overrides: Record<string, unknown> = {}) {
-  return createInvitationService({ pool: web, keyrings,
+  const service = createInvitationService({ pool: web, keyrings,
     passwordHashOptions: { memoryCost: 8192, timeCost: 1, parallelism: 1, outputLen: 32 },
     generateTotpSecret: () => Buffer.from(totpSecret),
     generateRecoveryCodes: () => Array.from({ length: 10 }, (_, i) =>
       i.toString(16).padStart(32, "0").match(/.{4}/g)!.join("-")),
     ...overrides });
+  type CreateInput = Parameters<typeof service.createInvitation>[0];
+  type CompleteInput = Parameters<typeof service.complete>[0];
+  return Object.freeze({
+    ...service,
+    createInvitation(input: Omit<CreateInput, "requestId"> & { readonly requestId?: string }) {
+      return service.createInvitation({ ...input, requestId: input.requestId ?? stableRequestId });
+    },
+    complete(input: Omit<CompleteInput, "requestId"> & { readonly requestId?: string }) {
+      return service.complete(withRequestId(input, input.requestId ?? stableRequestId));
+    }
+  });
+}
+
+function withRequestId<T extends object>(input: T, requestId: string): T & { readonly requestId: string } {
+  return Object.defineProperty(Object.create(input), "requestId", {
+    value: requestId, enumerable: true, configurable: false, writable: false
+  }) as T & { readonly requestId: string };
 }
 
 async function blockOperationAccount(operation: "invitation.prepare" | "invitation.complete", tokenHash: Buffer) {

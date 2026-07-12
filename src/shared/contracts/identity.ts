@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 const uuidV7Schema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+const utf8Encoder = new TextEncoder();
 const boundedSecret = (minimumBytes: number, maximumBytes: number) => z.string().refine((value) => {
-  const bytes = Buffer.byteLength(value, "utf8");
+  const bytes = utf8Encoder.encode(value).byteLength;
   return bytes >= minimumBytes && bytes <= maximumBytes && !value.includes("\0");
 });
 

@@ -14,6 +14,7 @@ import {
 import { generateTotpSecret, verifyTotp } from "../../platform/security/totp.ts";
 import { createRateLimitService } from "../../platform/security/rateLimitService.ts";
 import type { VersionedKeyring } from "../../platform/config/types.ts";
+import { requestIdSchema } from "../../../shared/contracts/problem.ts";
 import type { PlatformRole, ProjectMemberRole } from "./models.ts";
 import { normalizeEmail } from "./email.ts";
 import { PostgresAuditRepository } from "./repositories/postgres/PostgresAuditRepository.ts";
@@ -64,7 +65,7 @@ export function createInvitationService(options: Options) {
   return Object.freeze({
     async createInvitation(input: {
       readonly email: string; readonly platformRole: PlatformRole; readonly projectId: string;
-      readonly projectRole: ProjectMemberRole; readonly invitedByUserId: string;
+      readonly projectRole: ProjectMemberRole; readonly invitedByUserId: string; readonly requestId: string;
     }) {
       const owned = ownCreate(input);
       const invitationId = uuidv7();
@@ -87,7 +88,7 @@ export function createInvitationService(options: Options) {
         });
         await new PostgresAuditRepository(tx).append({
           actorUserId: owned.invitedByUserId, actorType: "user", action: "invitation.create",
-          targetType: "invitation", targetId: invitationId, requestId: `invitation-create:${invitationId}`,
+          targetType: "invitation", targetId: invitationId, requestId: owned.requestId,
           result: "success", metadata: { projectId: owned.projectId }
         });
         await outbox.publish(tx, { eventType: "invitation.created", payloadVersion: 1, payload: { invitationId } });
@@ -131,7 +132,9 @@ export function createInvitationService(options: Options) {
       }
     },
 
-    async complete(input: { readonly enrollmentToken: string; readonly sourceIpPrefix: string; readonly password: string; readonly totp: string }) {
+    async complete(input: { readonly enrollmentToken: string; readonly sourceIpPrefix: string;
+      readonly password: string; readonly totp: string; readonly requestId: string }) {
+      const requestId = ownRequestId(input?.requestId);
       await enforceIpRateLimit(rateLimits, "invitation.complete", input?.sourceIpPrefix);
       const enrollmentToken = input?.enrollmentToken ?? "";
       const enrollmentHash = hashOpaqueToken(enrollmentToken);
@@ -174,7 +177,7 @@ export function createInvitationService(options: Options) {
           if (!await new PostgresInvitationRepository(tx).consume(invitation.id, user.id)) throw invalid();
           await new PostgresAuditRepository(tx).append({ actorUserId: user.id, actorType: "user",
             action: "invitation.accept", targetType: "invitation", targetId: invitation.id,
-            requestId: `invitation-accept:${invitation.id}`, result: "success", metadata: { projectId: invitation.projectId, mfaMethod: "totp" } });
+            requestId, result: "success", metadata: { projectId: invitation.projectId, mfaMethod: "totp" } });
         });
         return Object.freeze({ recoveryCodes: [...recoveryCodes] });
       } finally {
@@ -208,11 +211,19 @@ async function enforceAccountRateLimit(rateLimits: RateLimits, operation: Invita
   }
 }
 
-function ownCreate(input: { email: string; platformRole: PlatformRole; projectId: string; projectRole: ProjectMemberRole; invitedByUserId: string }) {
+function ownCreate(input: { email: string; platformRole: PlatformRole; projectId: string;
+  projectRole: ProjectMemberRole; invitedByUserId: string; requestId: string }) {
   const email = normalizeEmail(input?.email ?? "");
   if (!emailSchema.safeParse(email).success || !UUID.test(input?.projectId) || !UUID.test(input?.invitedByUserId) ||
       !["admin", "member"].includes(input?.platformRole) || !projectRoles.has(input?.projectRole)) throw invalid();
+  ownRequestId(input.requestId);
   return { ...input, email };
+}
+
+function ownRequestId(value: unknown) {
+  const parsed = requestIdSchema.safeParse(value);
+  if (!parsed.success) throw invalid();
+  return parsed.data;
 }
 
 function ownPassword(value: unknown) {

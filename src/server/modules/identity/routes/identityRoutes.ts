@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import type { PlatformEnvironment, VersionedKeyring } from "../../../platform/config/types.ts";
 import { createCsrfProtection } from "../../../platform/security/csrf.ts";
 import { resolveSessionCookieConfig } from "../../../platform/security/sessionMiddleware.ts";
@@ -24,10 +24,7 @@ export function createIdentityRoutes(options: {
   const router = Router();
   const cookie = resolveSessionCookieConfig(options.config);
   const csrf = createCsrfProtection({ keyring: options.csrfKeyring });
-  router.use((_request, response, next) => {
-    response.setHeader("Cache-Control", "no-store");
-    next();
-  });
+  router.use(noStoreIdentityResponses);
   router.use("/auth", createAuthRoutes({ authentication: options.services.authentication,
     publicBaseUrl: options.config.publicBaseUrl, cookie }));
   router.use("/session", createSessionRoutes({ sessions: options.services.sessions,
@@ -38,3 +35,8 @@ export function createIdentityRoutes(options: {
     sessions: options.services.sessions, publicBaseUrl: options.config.publicBaseUrl, cookie, csrf }));
   return router;
 }
+
+export const noStoreIdentityResponses: RequestHandler = (_request, response, next) => {
+  response.setHeader("Cache-Control", "no-store");
+  next();
+};

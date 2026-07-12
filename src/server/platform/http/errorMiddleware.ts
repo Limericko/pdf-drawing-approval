@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler } from "express";
 import { classifyDatabaseError } from "../database/databaseErrors.ts";
 import { HttpProblem, sendProblem } from "./problemResponse.ts";
+import { createRequestId, safeRequestId } from "./requestContext.ts";
 
 type SecurityLogger = {
   error(event: { readonly requestId: string; readonly userId?: string; readonly code: string }): void;
@@ -36,7 +37,10 @@ export function createErrorMiddleware(options: { readonly logger: SecurityLogger
       next(error);
       return;
     }
-    const requestId = safeRequestId(response.locals.requestId);
+    const requestId = safeRequestId(response.locals.requestId) ?? createRequestId();
+    response.locals.requestId = requestId;
+    response.setHeader("X-Request-ID", requestId);
+    response.setHeader("Cache-Control", "no-store");
     const code = errorCode(error);
     const domain = code ? DOMAIN_PROBLEMS[code] : undefined;
     const database = classifyDatabaseError(error);
@@ -82,8 +86,4 @@ function errorCode(error: unknown) {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
-}
-
-function safeRequestId(value: unknown) {
-  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value) ? value : "unavailable";
 }

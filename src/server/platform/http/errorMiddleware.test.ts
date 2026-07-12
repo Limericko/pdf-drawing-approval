@@ -63,9 +63,22 @@ describe("errorMiddleware", () => {
       status: 400, code: "REQUEST_BODY_INVALID", requestId: "malformed-json-request" });
     expect(JSON.stringify(response.json.mock.calls[0]?.[0])).not.toContain("secret");
   });
+
+  it("creates and returns a safe request ID when request context is unavailable", () => {
+    const middleware = createErrorMiddleware({ logger: { error: vi.fn() } });
+    const response = fakeResponse(undefined);
+
+    middleware(new Error("unknown"), {} as never, response as never, vi.fn());
+
+    const body = response.json.mock.calls[0]?.[0] as { requestId: string };
+    expect(body.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(body.requestId).not.toBe("unavailable");
+    expect(response.setHeader).toHaveBeenCalledWith("X-Request-ID", body.requestId);
+    expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
+  });
 });
 
-function fakeResponse(requestId: string) {
-  return { locals: { requestId }, headersSent: false, status: vi.fn().mockReturnThis(),
-    type: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
+function fakeResponse(requestId: string | undefined) {
+  return { locals: requestId ? { requestId } : {}, headersSent: false, setHeader: vi.fn(),
+    status: vi.fn().mockReturnThis(), type: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
 }
