@@ -92,7 +92,8 @@ describe("leased worker", () => {
   it("stops before dispatcher, reconciler and claim when aborted", async () => {
     const controller = new AbortController();
     controller.abort();
-    const repository = { claim: vi.fn() } as never;
+    const claim = vi.fn();
+    const repository = { claim } as never;
     const dispatcher = { dispatchBatch: vi.fn() };
     const reconciler = { runOnce: vi.fn() };
     const result = await runWorkerIteration({ ...deps("abort", new Date(), repository, new JobRegistry([], [])), dispatcher, reconciler, signal: controller.signal });
@@ -100,6 +101,25 @@ describe("leased worker", () => {
     expect(dispatcher.dispatchBatch).not.toHaveBeenCalled();
     expect(reconciler.runOnce).not.toHaveBeenCalled();
     expect((repository as { claim: ReturnType<typeof vi.fn> }).claim).not.toHaveBeenCalled();
+  });
+
+  it("passes its AbortSignal into reconciliation and does not claim after reconciliation aborts", async () => {
+    const controller = new AbortController();
+    const claim = vi.fn();
+    const repository = { claim } as never;
+    const reconciler = {
+      runOnce: vi.fn(async (signal: AbortSignal) => {
+        expect(signal).toBe(controller.signal);
+        controller.abort();
+        return { published: 0 };
+      })
+    };
+    const result = await runWorkerIteration({
+      ...deps("reconcile-abort", new Date(), repository, new JobRegistry([], [])),
+      state: { nextReconcileAt: new Date(0) }, reconciler, signal: controller.signal
+    });
+    expect(result).toEqual({ status: "stopped" });
+    expect(claim).not.toHaveBeenCalled();
   });
 
   it("requeues a claim that returns after abort without starting its handler", async () => {

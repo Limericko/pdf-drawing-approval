@@ -144,12 +144,14 @@ export class FilesystemStorage implements StorageAdapter {
     }
   }
 
-  async head(key: string): Promise<StorageHeadResult | null> {
+  async head(key: string, options?: { readonly signal?: AbortSignal }): Promise<StorageHeadResult | null> {
+    options?.signal?.throwIfAborted();
     const resolvedPath = this.resolveStoragePath(key);
     try {
       if (!(await this.assertSafeParents(resolvedPath.segments, false))) {
         return null;
       }
+      options?.signal?.throwIfAborted();
 
       const beforeOpen = await this.inspectFinal(resolvedPath.targetPath);
       if (beforeOpen === null) {
@@ -159,6 +161,7 @@ export class FilesystemStorage implements StorageAdapter {
       const handle = await open(resolvedPath.targetPath, "r");
       try {
         const openedStats = await handle.stat();
+        options?.signal?.throwIfAborted();
         const afterOpen = await this.inspectFinal(resolvedPath.targetPath);
         await this.assertSafeParents(resolvedPath.segments, false);
         if (
@@ -181,12 +184,14 @@ export class FilesystemStorage implements StorageAdapter {
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, options?: { readonly signal?: AbortSignal }): Promise<void> {
+    options?.signal?.throwIfAborted();
     const resolvedPath = this.resolveStoragePath(key);
     try {
       if (!(await this.assertSafeParents(resolvedPath.segments, false))) {
         return;
       }
+      options?.signal?.throwIfAborted();
       if ((await this.inspectFinal(resolvedPath.targetPath)) === null) {
         return;
       }
@@ -197,7 +202,9 @@ export class FilesystemStorage implements StorageAdapter {
       if ((await this.inspectFinal(resolvedPath.targetPath)) === null) {
         return;
       }
+      options?.signal?.throwIfAborted();
       await fsUnlink(resolvedPath.targetPath);
+      options?.signal?.throwIfAborted();
     } catch (error) {
       if (isNodeError(error, "ENOENT")) {
         return;

@@ -217,28 +217,34 @@ describe("StorageReconciler", () => {
       requestedAt: new Date(createdAt.getTime() + 1_000),
       cleanupGeneration: 0
     });
+    const seeded = await repository.claimCleanupReap({
+      workerId: "seed-reaper", now: new Date(createdAt.getTime() + 1_000), leaseDurationMs: 10_000, id
+    });
     await repository.scheduleCleanupReap({
       id,
       driver: "s3",
       objectKey,
-      expectedGeneration: 0,
+      workerId: "seed-reaper",
+      leaseToken: seeded!.cleanupLeaseToken!,
+      expectedGeneration: seeded!.cleanupGeneration,
       scheduledAt: new Date(createdAt.getTime() + 1_000),
       nextCleanupAt: dueAt,
       lastError: null
     });
-    let concurrentReaps = 0;
-    let releaseConcurrentReaps!: () => void;
-    const concurrentReapsEntered = new Promise<void>((resolve) => { releaseConcurrentReaps = resolve; });
-    const reapTombstone = vi.fn(async (object: Awaited<ReturnType<typeof repository.findById>>) => {
-      if (!object) throw new Error("MISSING_TOMBSTONE");
-      concurrentReaps += 1;
-      if (concurrentReaps === 2) releaseConcurrentReaps();
-      await concurrentReapsEntered;
-      const scheduledAt = object.cleanupNotBefore!;
+    let currentReapAt = dueAt;
+    let reaperNumber = 0;
+    const reapTombstone = vi.fn(async (_signal: AbortSignal) => {
+      reaperNumber += 1;
+      const workerId = `reconciler-${reaperNumber}`;
+      const object = await repository.claimCleanupReap({ workerId, now: currentReapAt, leaseDurationMs: 10_000, id });
+      if (!object) return;
+      const scheduledAt = currentReapAt;
       await repository.scheduleCleanupReap({
         id: object.id,
         driver: object.driver,
         objectKey: object.objectKey,
+        workerId,
+        leaseToken: object.cleanupLeaseToken!,
         expectedGeneration: object.cleanupGeneration,
         scheduledAt,
         nextCleanupAt: new Date(scheduledAt.getTime() + 60_000),
@@ -250,13 +256,14 @@ describe("StorageReconciler", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher: new DatabasePublisher(),
       reapTombstone,
-      clock: () => now,
+      clock: () => { currentReapAt = now; return now; },
       batchSize: 10
     });
 
     await expect(createReconciler(new Date(dueAt.getTime() - 1)).runOnce()).resolves.toEqual({ published: 0 });
     await Promise.all([createReconciler(dueAt).runOnce(), createReconciler(dueAt).runOnce()]);
     const restartedAt = new Date(dueAt.getTime() + 60_000);
+    currentReapAt = restartedAt;
     await createReconciler(restartedAt).runOnce();
 
     const intents = await web.query<{ count: string }>(
@@ -264,7 +271,7 @@ describe("StorageReconciler", () => {
       [id]
     );
     expect(intents.rows).toEqual([{ count: "0" }]);
-    expect(reapTombstone).toHaveBeenCalledTimes(3);
+    expect(reapTombstone).toHaveBeenCalledTimes(4);
     await expect(repository.findById(id)).resolves.toMatchObject({
       status: "delete_pending",
       cleanupTombstone: true,

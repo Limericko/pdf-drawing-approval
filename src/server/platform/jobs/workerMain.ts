@@ -62,16 +62,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       adapter: storage,
       clock,
-      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
-      tombstoneReapIntervalMs: config.worker.storageCleanupReapIntervalMs
-    });
-    const tombstoneReaper = createStorageTombstoneReaper({
-      transactionRunner,
-      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
-      adapter: storage,
-      clock,
-      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
-      reapIntervalMs: config.worker.storageCleanupReapIntervalMs
+      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3)))
     });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts)],
@@ -81,6 +72,16 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
     const processIdentity = `${safeHost(hostname())}-${process.pid}-${uuidv7()}`;
     const workers = Array.from({ length: config.worker.concurrency }, (_, index) => {
       const workerId = `${processIdentity}-${index + 1}`;
+      const tombstoneReaper = createStorageTombstoneReaper({
+        workerId,
+        leaseMs: config.worker.leaseMs,
+        transactionRunner,
+        createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+        adapter: storage,
+        clock,
+        verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
+        reapIntervalMs: config.worker.storageCleanupReapIntervalMs
+      });
       const dispatcher = new OutboxDispatcher({
         transactionRunner,
         createOutboxRepository: (executor) => new PostgresOutboxRepository(executor),
@@ -93,7 +94,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
         transactionRunner,
         createRepository: (executor) => new PostgresStorageObjectRepository(executor),
         publisher: outboxPublisher,
-        reapTombstone: (object) => tombstoneReaper.reap(object),
+        reapTombstone: (signal) => tombstoneReaper.reap({ signal }),
         clock,
         batchSize: RECONCILE_BATCH_SIZE
       });

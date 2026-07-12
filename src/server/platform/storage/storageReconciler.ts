@@ -6,7 +6,7 @@ type StorageReconcilerOptions = {
   readonly transactionRunner: StorageTransactionRunner;
   readonly createRepository: StorageObjectRepositoryFactory;
   readonly publisher: CleanupIntentPublisher;
-  readonly reapTombstone?: (object: StorageObject) => Promise<unknown>;
+  readonly reapTombstone?: (signal: AbortSignal) => Promise<unknown>;
   readonly clock?: () => Date;
   readonly batchSize: number;
 };
@@ -16,7 +16,7 @@ export class StorageReconciler {
   private readonly transactionRunner: StorageTransactionRunner;
   private readonly createRepository: StorageObjectRepositoryFactory;
   private readonly publisher: CleanupIntentPublisher;
-  private readonly reapTombstone: ((object: StorageObject) => Promise<unknown>) | undefined;
+  private readonly reapTombstone: ((signal: AbortSignal) => Promise<unknown>) | undefined;
   private readonly batchSize: number;
   private nextSinglePriority: "staging" | "delete_pending" = "staging";
 
@@ -35,7 +35,8 @@ export class StorageReconciler {
     this.batchSize = options.batchSize;
   }
 
-  async runOnce() {
+  async runOnce(signal: AbortSignal = new AbortController().signal) {
+    if (!signal || typeof signal.aborted !== "boolean") throw new Error("INVALID_STORAGE_RECONCILER_SIGNAL");
     const now = this.clock();
     if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("INVALID_STORAGE_RECONCILER_CLOCK");
     const singlePriority = this.nextSinglePriority;
@@ -46,23 +47,19 @@ export class StorageReconciler {
         ? await selectSingle(repository, now, singlePriority)
         : await selectFairBatch(repository, now, this.batchSize);
       const stale = selected.filter((object) => object.status === "staging");
-      const pending = selected.filter((object) => object.status === "delete_pending" && !object.cleanupTombstone);
-      const tombstones = selected.filter((object) => object.status === "delete_pending" && object.cleanupTombstone);
+      const pending = selected.filter((object) => object.status === "delete_pending");
       for (const object of stale) {
         await this.publisher.publish(executor, createCleanupIntent(object, "staging"));
       }
       for (const object of pending) {
         await this.publisher.publish(executor, createCleanupIntent(object, "delete_pending"));
       }
-      return { published: stale.length + pending.length, tombstones };
+      return { published: stale.length + pending.length };
     });
     if (this.batchSize === 1) {
       this.nextSinglePriority = singlePriority === "staging" ? "delete_pending" : "staging";
     }
-    if (result.tombstones.length > 0 && !this.reapTombstone) {
-      throw new Error("STORAGE_TOMBSTONE_REAPER_REQUIRED");
-    }
-    for (const object of result.tombstones) await this.reapTombstone!(object);
+    if (!signal.aborted && this.reapTombstone) await this.reapTombstone(signal);
     return { published: result.published };
   }
 }

@@ -491,6 +491,89 @@ describe("S3Storage two-stage streaming cleanup", () => {
       await rm(spoolParent, { force: true, recursive: true });
     }
   });
+
+  it.each([
+    ["HTTP 400", { $metadata: { httpStatusCode: 400 } }],
+    ["HTTP 403", { $metadata: { httpStatusCode: 403 } }],
+    ["HTTP 404", { $metadata: { httpStatusCode: 404 } }],
+    ["DNS ENOTFOUND", { code: "ENOTFOUND", syscall: "getaddrinfo" }],
+    ["DNS EAI_AGAIN", { code: "EAI_AGAIN", syscall: "getaddrinfo" }],
+    ["connection refused", { code: "ECONNREFUSED", syscall: "connect" }],
+    ["TLS connection failure", { code: "ERR_TLS_CERT_ALTNAME_INVALID", syscall: "connect" }],
+    ["unknown failure", { name: "UnknownDependencyFailure" }],
+  ])("does not mark a pre-commit %s as commit-ambiguous", async (_name, failure) => {
+    const storage = new S3Storage(config, failingPutClient(failure));
+    try {
+      await expect(storage.write(objectKey(), Readable.from("pdf"), "application/pdf"))
+        .rejects.toMatchObject({ code: "STORAGE_IO_ERROR", commitAmbiguous: false });
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it.each([
+    ["abort", { name: "AbortError" }],
+    ["request timeout", { code: "ETIMEDOUT", syscall: "write" }],
+    ["connection reset", { code: "ECONNRESET", syscall: "read" }],
+    ["broken pipe", { code: "EPIPE", syscall: "write" }],
+    ["HTTP 500", { $metadata: { httpStatusCode: 500 } }],
+    ["HTTP 503", { $metadata: { httpStatusCode: 503 } }],
+    ["no response timeout", { name: "TimeoutError" }],
+  ])("marks a post-request %s as commit-ambiguous", async (_name, failure) => {
+    const storage = new S3Storage(config, failingPutClient(failure));
+    try {
+      await expect(storage.write(objectKey(), Readable.from("pdf"), "application/pdf"))
+        .rejects.toMatchObject({ code: "STORAGE_IO_ERROR", commitAmbiguous: true });
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it.each([409, 412])("maps HTTP %i conditional PUT conflicts to OBJECT_EXISTS", async (status) => {
+    const storage = new S3Storage(config, failingPutClient({ $metadata: { httpStatusCode: status } }));
+    try {
+      await expect(storage.write(objectKey(), Readable.from("pdf"), "application/pdf"))
+        .rejects.toMatchObject({ code: "OBJECT_EXISTS", commitAmbiguous: false });
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it("keeps an explicit HTTP 403 non-ambiguous when the local signal is also aborted", async () => {
+    const controller = new AbortController();
+    const storage = new S3Storage(config, {
+      async send(command) {
+        if (!(command instanceof PutObjectCommand)) throw new Error("Unexpected S3 command");
+        for await (const _chunk of command.input.Body as Readable) {}
+        controller.abort();
+        throw Object.assign(new Error("synthetic access denial"), { $metadata: { httpStatusCode: 403 } });
+      },
+    });
+    try {
+      await expect(storage.write(objectKey(), Readable.from("pdf"), "application/pdf", { signal: controller.signal }))
+        .rejects.toMatchObject({ code: "STORAGE_IO_ERROR", commitAmbiguous: false });
+    } finally {
+      storage.destroy();
+    }
+  });
+
+  it("marks a successful PUT followed by local abort as commit-ambiguous", async () => {
+    const controller = new AbortController();
+    const storage = new S3Storage(config, {
+      async send(command) {
+        if (!(command instanceof PutObjectCommand)) throw new Error("Unexpected S3 command");
+        for await (const _chunk of command.input.Body as Readable) {}
+        controller.abort();
+        return {};
+      },
+    });
+    try {
+      await expect(storage.write(objectKey(), Readable.from("pdf"), "application/pdf", { signal: controller.signal }))
+        .rejects.toMatchObject({ code: "STORAGE_IO_ERROR", commitAmbiguous: true });
+    } finally {
+      storage.destroy();
+    }
+  });
 });
 
 afterAll(() => {
@@ -529,6 +612,16 @@ class TrackingStorageAdapter implements StorageAdapter {
     this.keys.clear();
     await Promise.all(keys.map((key) => this.storage.delete(key)));
   }
+}
+
+function failingPutClient(failure: object) {
+  return {
+    async send(command: PutObjectCommand) {
+      if (!(command instanceof PutObjectCommand)) throw new Error("Unexpected S3 command");
+      for await (const _chunk of command.input.Body as Readable) {}
+      throw Object.assign(new Error("synthetic PutObject failure"), failure);
+    },
+  };
 }
 
 function readS3Config(): S3StorageConfig {

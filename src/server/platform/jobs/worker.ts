@@ -6,7 +6,7 @@ import { JobHandlerError, type JobRegistry } from "./jobRegistry.ts";
 export type WorkerState = { nextReconcileAt: Date };
 
 type Dispatcher = { dispatchBatch(limit: number): Promise<number> };
-type Reconciler = { runOnce(): Promise<{ published: number }> };
+type Reconciler = { runOnce(signal: AbortSignal): Promise<{ published: number }> };
 type Heartbeat = { record(input: { workerId: string; startedAt: Date; heartbeatAt: Date; metadata: Record<string, unknown> }): Promise<unknown> };
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 
@@ -52,7 +52,7 @@ export async function runWorkerIteration(options: WorkerIterationOptions): Promi
 
   const reconcileNow = owned.clock();
   if (reconcileNow.getTime() >= owned.state.nextReconcileAt.getTime()) {
-    await owned.reconciler.runOnce();
+    await owned.reconciler.runOnce(owned.signal);
     owned.state.nextReconcileAt = addMilliseconds(reconcileNow, owned.reconcileIntervalMs);
   }
   if (owned.signal.aborted) return { status: "stopped" };

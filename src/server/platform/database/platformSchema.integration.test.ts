@@ -12,6 +12,7 @@ const ids = {
   audit: "01890f1e-9b4a-7cc2-8f00-000000000006",
   auditSubject: "01890f1e-9b4a-7cc2-8f00-00000000000f",
   storage: "01890f1e-9b4a-7cc2-8f00-000000000007",
+  cleanupStorage: "01890f1e-9b4a-7cc2-8f00-000000000017",
   outbox: "01890f1e-9b4a-7cc2-8f00-000000000008",
   job: "01890f1e-9b4a-7cc2-8f00-000000000009",
   session: "01890f1e-9b4a-7cc2-8f00-000000000013"
@@ -40,7 +41,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 5, verified: 0, total: 5 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 6, verified: 0, total: 6 });
     await run(database, migration);
   });
 }
@@ -110,6 +111,12 @@ async function seedPermissionFixtures(migration: Pool) {
     [ids.storage]
   );
   await migration.query(
+    `INSERT INTO platform.storage_objects
+      (id, status, driver, object_key, delete_requested_at, cleanup_tombstone, cleanup_not_before)
+     VALUES ($1, 'delete_pending', 's3', 'seed/cleanup-object.pdf', clock_timestamp(), true, clock_timestamp())`,
+    [ids.cleanupStorage]
+  );
+  await migration.query(
     `INSERT INTO platform.outbox_events (id, event_type, payload_version, payload)
      VALUES ($1, 'invitation.created', 1, '{}'::jsonb)`,
     [ids.outbox]
@@ -125,7 +132,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 5, total: 5 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 6, total: 6 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -134,7 +141,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 2, file_name: "0002_security_sessions_audit.sql" },
         { version: 3, file_name: "0003_storage_outbox_jobs.sql" },
         { version: 4, file_name: "0004_worker_outbox_publish.sql" },
-        { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" }
+        { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" },
+        { version: 6, file_name: "0006_storage_cleanup_leases.sql" }
       ]);
     });
   });
@@ -174,7 +182,9 @@ describe("Phase 1 PostgreSQL platform schema", () => {
                ('recovery_codes', 'key_version'), ('mfa_enrollments', 'key_version'),
                ('outbox_events', 'payload'), ('outbox_events', 'idempotency_key'), ('jobs', 'payload'),
                ('users', 'created_at'), ('jobs', 'lease_expires_at'),
-               ('storage_objects', 'upload_expires_at')
+               ('storage_objects', 'upload_expires_at'),
+               ('storage_objects', 'cleanup_lease_owner'),
+               ('storage_objects', 'cleanup_lease_expires_at')
              ))`
       );
       const byColumn: Map<string, (typeof typedColumns.rows)[number]> = new Map(
@@ -201,6 +211,9 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(byColumn.get("users.created_at")?.data_type).toBe("timestamp with time zone");
       expect(byColumn.get("jobs.lease_expires_at")?.data_type).toBe("timestamp with time zone");
       expect(byColumn.get("storage_objects.upload_expires_at")?.data_type).toBe("timestamp with time zone");
+      expect(byColumn.get("storage_objects.cleanup_lease_owner")?.data_type).toBe("text");
+      expect(byColumn.get("storage_objects.cleanup_lease_token")?.data_type).toBe("uuid");
+      expect(byColumn.get("storage_objects.cleanup_lease_expires_at")?.data_type).toBe("timestamp with time zone");
       for (const key of [
         "invitations.token_key_version",
         "totp_credentials.key_version",
@@ -264,6 +277,14 @@ describe("Phase 1 PostgreSQL platform schema", () => {
           `${table} completion expiry check`
         ).toBe(true);
       }
+      const cleanupLeaseCheck = checks.rows.find(
+        ({ table_name, definition }) =>
+          table_name === "platform.storage_objects" && definition.includes("cleanup_lease_owner")
+      )?.definition;
+      expect(cleanupLeaseCheck).toContain("cleanup_lease_token");
+      expect(cleanupLeaseCheck).toContain("cleanup_lease_expires_at");
+      expect(cleanupLeaseCheck).toContain("cleanup_tombstone = true");
+      expect(cleanupLeaseCheck).toContain("status = 'delete_pending'::text");
 
       const idsWithoutV7Checks = await migration.query<{ table_name: string }>(
         `SELECT c.table_name
@@ -334,6 +355,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(predicates.get("storage_objects_staging_idx")).toBe("(status = 'staging'::text)");
       expect(predicates.get("storage_objects_staging_upload_expiry_idx")).toBe("(status = 'staging'::text)");
       expect(predicates.get("storage_objects_delete_pending_idx")).toBe("(status = 'delete_pending'::text)");
+      expect(predicates.get("storage_objects_cleanup_claim_idx")).toContain("status = 'delete_pending'::text");
+      expect(predicates.get("storage_objects_cleanup_claim_idx")).toContain("cleanup_tombstone = true");
       expect([...predicates.values()].every((predicate) => !predicate.toLowerCase().includes("now()"))).toBe(true);
     });
   });
@@ -741,7 +764,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         "UPDATE platform.invitations SET project_id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
         "UPDATE platform.storage_objects SET driver = 's3'",
         "UPDATE platform.storage_objects SET object_key = 'forbidden/object.pdf'",
-        "UPDATE platform.storage_objects SET created_at = clock_timestamp()"
+        "UPDATE platform.storage_objects SET created_at = clock_timestamp()",
+        "UPDATE platform.storage_objects SET cleanup_lease_owner = 'web-forbidden'"
       ]) {
         await expectDenied(web, statement);
       }
@@ -766,6 +790,16 @@ describe("Phase 1 PostgreSQL platform schema", () => {
           [ids.job]
         ],
         ["UPDATE platform.storage_objects SET status = 'delete_pending', delete_requested_at = clock_timestamp() WHERE id = $1", [ids.storage]],
+        [
+          `UPDATE platform.storage_objects
+           SET cleanup_generation = cleanup_generation + 1,
+             cleanup_lease_owner = 'worker-test',
+             cleanup_lease_token = '11890f1e-9b4a-4cc2-8f00-000000000017',
+             cleanup_lease_expires_at = clock_timestamp() + interval '1 minute',
+             updated_at = clock_timestamp()
+           WHERE id = $1`,
+          [ids.cleanupStorage]
+        ],
         [
           `INSERT INTO platform.worker_heartbeats (worker_id, started_at, heartbeat_at, metadata)
            VALUES ('worker-test', clock_timestamp(), clock_timestamp(), '{}'::jsonb)`
@@ -797,6 +831,11 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       await expectDenied(worker, "UPDATE platform.outbox_events SET payload = '{\"tampered\":true}'::jsonb");
       await expectDenied(worker, "UPDATE platform.jobs SET payload = '{\"tampered\":true}'::jsonb");
       await expectDenied(worker, "UPDATE platform.storage_objects SET object_key = 'tampered/object.pdf'");
+      await expect(
+        migration.query(
+          "SELECT has_table_privilege('platform_worker', 'platform.storage_objects', 'UPDATE') AS full_update"
+        )
+      ).resolves.toMatchObject({ rows: [{ full_update: false }] });
       await expectDenied(worker, "CREATE TABLE platform.worker_ddl_forbidden (id integer)");
 
       const bootstrap = database.createPool("bootstrap");
@@ -833,6 +872,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         "SELECT * FROM platform.jobs",
         "SELECT * FROM platform.outbox_events",
         "SELECT * FROM platform.storage_objects",
+        "UPDATE platform.storage_objects SET cleanup_lease_owner = 'bootstrap-forbidden'",
         "SELECT * FROM platform.projects",
         "CREATE TABLE platform.bootstrap_ddl_forbidden (id integer)"
       ]) {
@@ -844,7 +884,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["worker", worker]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 5
+          rowCount: 6
         });
         await expectDenied(
           pool,

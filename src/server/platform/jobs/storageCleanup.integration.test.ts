@@ -223,7 +223,17 @@ describe("storage cleanup handler", () => {
       adapter: storage,
       clock: () => new Date(now),
       verificationDelayMs: 1,
-      tombstoneReapIntervalMs: 60_000,
+      sleep: async () => undefined
+    });
+    const reaper = createStorageTombstoneReaper({
+      workerId: "late-commit-reaper",
+      leaseMs: 10_000,
+      transactionRunner: (callback) => withTransaction(worker, callback),
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      adapter: storage,
+      clock: () => new Date(now),
+      verificationDelayMs: 1,
+      reapIntervalMs: 60_000,
       sleep: async () => {
         activeSleeps += 1;
         await Promise.resolve();
@@ -239,6 +249,7 @@ describe("storage cleanup handler", () => {
         driver: "s3",
         objectKey: key
       } } as never);
+      await reaper.reap({ id, signal: new AbortController().signal });
       const firstTombstone = await repository.findById(id);
       expect(firstTombstone).toMatchObject({
         status: "delete_pending",
@@ -254,14 +265,7 @@ describe("storage cleanup handler", () => {
       expect(lateBody.readableEnded).toBe(true);
 
       now = new Date(firstTombstone!.cleanupNotBefore!);
-      await handler({ payload: {
-        idempotencyKey: `storage-object-cleanup:${id}:delete_pending:1`,
-        storageObjectId: id,
-        expectedStatus: "delete_pending",
-        driver: "s3",
-        objectKey: key,
-        cleanupGeneration: 1
-      } } as never);
+      await reaper.reap({ id, signal: new AbortController().signal });
 
       await expect(storage.head(key)).resolves.toBeNull();
       await expect(repository.findById(id)).resolves.toMatchObject({
@@ -306,6 +310,8 @@ describe("storage cleanup handler", () => {
     const repository = new PostgresStorageObjectRepository(worker);
     const publisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => new Date(now) }));
     const createReaper = () => createStorageTombstoneReaper({
+      workerId: "history-reaper",
+      leaseMs: 10_000,
       transactionRunner,
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       adapter: storage,
@@ -318,7 +324,7 @@ describe("storage cleanup handler", () => {
       transactionRunner,
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
-      reapTombstone: (object) => createReaper().reap(object),
+      reapTombstone: (signal) => createReaper().reap({ signal }),
       clock: () => new Date(now),
       batchSize: 10
     });
@@ -350,7 +356,6 @@ describe("storage cleanup handler", () => {
         adapter: storage,
         clock: () => new Date(now),
         verificationDelayMs: 1,
-        tombstoneReapIntervalMs: 60_000,
         sleep: async () => undefined
       });
       await handler(job!);
@@ -370,7 +375,7 @@ describe("storage cleanup handler", () => {
       now = new Date(state!.cleanupNotBefore!);
       await createReconciler().runOnce();
       state = await repository.findById(id);
-      expect(state).toMatchObject({ cleanupGeneration: 2 });
+      expect(state).toMatchObject({ cleanupGeneration: 1 });
 
       await storage.write(key, Readable.from("late remote commit"), "application/pdf");
       await expect(originalHead(key)).resolves.toEqual({ sizeBytes: 18 });
@@ -381,7 +386,7 @@ describe("storage cleanup handler", () => {
       state = await repository.findById(id);
       now = new Date(state!.cleanupNotBefore!);
       await createReconciler().runOnce();
-      await expect(repository.findById(id)).resolves.toMatchObject({ cleanupGeneration: 4 });
+      await expect(repository.findById(id)).resolves.toMatchObject({ cleanupGeneration: 3 });
       await expect(worker.query<{ outbox: string; jobs: string }>(
         `SELECT (SELECT count(*) FROM platform.outbox_events)::text AS outbox,
           (SELECT count(*) FROM platform.jobs)::text AS jobs`
@@ -394,6 +399,98 @@ describe("storage cleanup handler", () => {
       await originalDelete(key);
       storage.destroy();
     }
+  });
+
+  it("lets concurrent reapers perform one delete-delete-head sequence for one tombstone", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("objects/original", id);
+    const createdAt = new Date("2026-07-12T13:00:00.000Z");
+    const now = new Date(createdAt.getTime() + 1_000);
+    const repository = new PostgresStorageObjectRepository(worker);
+    await new PostgresStorageObjectRepository(web).createStaging({
+      id, driver: "s3", objectKey: key, createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    });
+    await repository.prepareCleanup({
+      id, expectedStatus: "staging", driver: "s3", objectKey: key,
+      requestedAt: now, cleanupGeneration: 0
+    });
+
+    let releaseDelete!: () => void;
+    let firstDelete!: () => void;
+    const deleteEntered = new Promise<void>((resolve) => { firstDelete = resolve; });
+    const deleteBarrier = new Promise<void>((resolve) => { releaseDelete = resolve; });
+    const operations: string[] = [];
+    const adapter: StorageAdapter = {
+      driver: "s3",
+      async write() { throw new Error("UNUSED"); },
+      async openRead() { throw new Error("UNUSED"); },
+      async delete() {
+        operations.push("delete");
+        if (operations.length === 1) { firstDelete(); await deleteBarrier; }
+      },
+      async head() { operations.push("head"); return null; },
+      async checkHealth() {}
+    };
+    const createReaper = (workerId: string) => createStorageTombstoneReaper({
+      workerId, leaseMs: 10_000, transactionRunner: (callback) => withTransaction(worker, callback),
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor), adapter,
+      clock: () => new Date(now), verificationDelayMs: 1, reapIntervalMs: 60_000,
+      sleep: async () => undefined
+    });
+    const signal = new AbortController().signal;
+    const first = createReaper("reaper-a").reap({ id, signal });
+    await deleteEntered;
+    const second = createReaper("reaper-b").reap({ id, signal });
+    releaseDelete();
+    const outcomes = await Promise.all([first, second]);
+
+    expect(outcomes.map((outcome) => outcome.status).sort()).toEqual(["idle", "processed"]);
+    expect(operations).toEqual(["delete", "delete", "head"]);
+  });
+
+  it("aborts a claimed reap promptly, releases it, and starts no later I/O", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("objects/original", id);
+    const createdAt = new Date("2026-07-12T13:10:00.000Z");
+    const now = new Date(createdAt.getTime() + 1_000);
+    const repository = new PostgresStorageObjectRepository(worker);
+    await new PostgresStorageObjectRepository(web).createStaging({
+      id, driver: "s3", objectKey: key, createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    });
+    await repository.prepareCleanup({
+      id, expectedStatus: "staging", driver: "s3", objectKey: key,
+      requestedAt: now, cleanupGeneration: 0
+    });
+    const operations: string[] = [];
+    const adapter: StorageAdapter = {
+      driver: "s3",
+      async write() { throw new Error("UNUSED"); },
+      async openRead() { throw new Error("UNUSED"); },
+      async delete() { operations.push("delete"); },
+      async head() { operations.push("head"); return null; },
+      async checkHealth() {}
+    };
+    const reaper = createStorageTombstoneReaper({
+      workerId: "abort-reaper", leaseMs: 10_000,
+      transactionRunner: (callback) => withTransaction(worker, callback),
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor), adapter,
+      clock: () => new Date(now), verificationDelayMs: 20_000, reapIntervalMs: 60_000
+    });
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const running = reaper.reap({ id, signal: controller.signal });
+    while (operations.length === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    setTimeout(() => controller.abort(), 10);
+    await expect(running).resolves.toMatchObject({ status: "stopped" });
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(operations).toEqual(["delete"]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(operations).toEqual(["delete"]);
+    await expect(repository.findById(id)).resolves.toMatchObject({
+      cleanupLeaseOwner: null, cleanupLeaseToken: null, cleanupLeaseExpiresAt: null
+    });
   });
 });
 

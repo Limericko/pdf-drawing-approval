@@ -210,6 +210,7 @@ export class S3Storage implements StorageAdapter {
       await Promise.allSettled([bodyPromise, putPromise]);
       const mapped = mapWriteError(error);
       if (mapped.code === "OBJECT_EXISTS") throw mapped;
+      if (!isCommitAmbiguousPutFailure(error, signal)) throw mapped;
       throw new StorageError("STORAGE_IO_ERROR", "Storage operation failed", {
         cause: error,
         commitAmbiguous: true,
@@ -233,11 +234,12 @@ export class S3Storage implements StorageAdapter {
     }
   }
 
-  async head(key: string): Promise<StorageHeadResult | null> {
+  async head(key: string, options?: { readonly signal?: AbortSignal }): Promise<StorageHeadResult | null> {
     assertStorageKey(key);
     try {
       const response = await this.client.send(
         new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+        { abortSignal: options?.signal },
       );
       const sizeBytes = responseField(response, "ContentLength");
       if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
@@ -252,10 +254,10 @@ export class S3Storage implements StorageAdapter {
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, options?: { readonly signal?: AbortSignal }): Promise<void> {
     assertStorageKey(key);
     try {
-      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+      await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: options?.signal });
     } catch (error) {
       throw mapStorageOperationError(error);
     }
@@ -403,7 +405,26 @@ function mapWriteError(error: unknown): StorageError {
 function isConditionalWriteConflict(error: unknown): boolean {
   const name = errorField(error, "name");
   const status = errorHttpStatus(error);
-  return name === "PreconditionFailed" || status === 412 || name === "ConditionalRequestConflict";
+  return name === "PreconditionFailed" || status === 409 || status === 412 || name === "ConditionalRequestConflict";
+}
+
+function isCommitAmbiguousPutFailure(error: unknown, signal?: AbortSignal): boolean {
+  const status = errorHttpStatus(error);
+  if (status !== undefined) return status >= 500 && status <= 599;
+
+  if (signal?.aborted) return true;
+  const name = errorField(error, "name");
+  if (["AbortError", "TimeoutError", "RequestTimeout", "RequestTimeoutException"].includes(name ?? "")) return true;
+
+  const code = errorField(error, "code")?.toUpperCase();
+  if (["ETIMEDOUT", "ECONNRESET", "EPIPE"].includes(code ?? "")) return true;
+  if ([
+    "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ERR_TLS_CERT_ALTNAME_INVALID",
+    "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "CERT_HAS_EXPIRED", "ERR_SSL_WRONG_VERSION_NUMBER"
+  ].includes(code ?? "")) return false;
+
+  return false;
 }
 
 function isMissingObjectError(error: unknown): boolean {

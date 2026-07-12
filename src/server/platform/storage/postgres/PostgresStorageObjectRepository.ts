@@ -1,12 +1,15 @@
+import { randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
 import type { QueryExecutor } from "../../database/queryExecutor.ts";
 import type { StorageDriver } from "../storageAdapter.ts";
 import { assertStorageKey } from "../storageKey.ts";
 import {
+  type ClaimStorageCleanupReap,
   type CreateStagingStorageObject,
   type CompleteStorageCleanup,
   type PrepareStorageCleanup,
   type ReadyStorageObjectContent,
+  type ReleaseStorageCleanupReap,
   type ScheduleStorageCleanupReap,
   type StorageObject,
   type StorageObjectRepository,
@@ -35,6 +38,9 @@ type StorageObjectRow = QueryResultRow & {
   cleanup_tombstone: boolean;
   cleanup_generation: string | number;
   cleanup_not_before: Date | null;
+  cleanup_lease_owner: string | null;
+  cleanup_lease_token: string | null;
+  cleanup_lease_expires_at: Date | null;
 };
 
 type TransitionRow = StorageObjectRow & {
@@ -43,14 +49,17 @@ type TransitionRow = StorageObjectRow & {
 
 const COLUMNS = `id, status, driver, object_key, size_bytes, sha256, media_type, last_error,
   created_at, updated_at, ready_at, delete_requested_at, deleted_at, upload_expires_at,
-  cleanup_tombstone, cleanup_generation, cleanup_not_before`;
+  cleanup_tombstone, cleanup_generation, cleanup_not_before,
+  cleanup_lease_owner, cleanup_lease_token, cleanup_lease_expires_at`;
 const NULL_TRANSITION_COLUMNS = `NULL::uuid AS id, NULL::text AS status, NULL::text AS driver,
   NULL::text AS object_key, NULL::bigint AS size_bytes, NULL::bytea AS sha256,
   NULL::text AS media_type, NULL::text AS last_error, NULL::timestamptz AS created_at,
   NULL::timestamptz AS updated_at, NULL::timestamptz AS ready_at,
   NULL::timestamptz AS delete_requested_at, NULL::timestamptz AS deleted_at,
   NULL::timestamptz AS upload_expires_at, NULL::boolean AS cleanup_tombstone,
-  NULL::bigint AS cleanup_generation, NULL::timestamptz AS cleanup_not_before`;
+  NULL::bigint AS cleanup_generation, NULL::timestamptz AS cleanup_not_before,
+  NULL::text AS cleanup_lease_owner, NULL::uuid AS cleanup_lease_token,
+  NULL::timestamptz AS cleanup_lease_expires_at`;
 
 export class PostgresStorageObjectRepository implements StorageObjectRepository {
   constructor(private readonly executor: QueryExecutor) {}
@@ -157,14 +166,13 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
   }
 
   async listDeletePending(dueAt: Date, limit: number) {
-    const due = ownDate(dueAt);
+    ownDate(dueAt);
     assertLimit(limit);
     const result = await this.executor.query<StorageObjectRow>(
-      `SELECT ${COLUMNS} FROM platform.storage_objects
-       WHERE status = 'delete_pending'
-         AND (cleanup_tombstone = false OR cleanup_not_before <= $1)
-       ORDER BY cleanup_not_before NULLS FIRST, delete_requested_at, id LIMIT $2`,
-      [due, limit]
+       `SELECT ${COLUMNS} FROM platform.storage_objects
+       WHERE status = 'delete_pending' AND cleanup_tombstone = false
+       ORDER BY delete_requested_at, id LIMIT $1`,
+      [limit]
     );
     return result.rows.map(mapStorageObject);
   }
@@ -216,17 +224,62 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
   }
 
+  async claimCleanupReap(input: ClaimStorageCleanupReap) {
+    const owned = ownClaimCleanupReap(input);
+    const leaseToken = randomUUID();
+    const leaseExpiresAt = addMilliseconds(owned.now, owned.leaseDurationMs);
+    const result = await this.executor.query<StorageObjectRow>(
+      `WITH candidate AS MATERIALIZED (
+         SELECT id AS candidate_id FROM platform.storage_objects
+         WHERE status = 'delete_pending' AND cleanup_tombstone = true
+           AND cleanup_not_before <= $2
+           AND (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at <= $2)
+           AND ($5::uuid IS NULL OR id = $5)
+         ORDER BY cleanup_not_before, delete_requested_at, id
+         FOR UPDATE SKIP LOCKED
+         LIMIT 1
+       )
+       UPDATE platform.storage_objects object
+       SET cleanup_generation = object.cleanup_generation + 1,
+         cleanup_lease_owner = $1, cleanup_lease_token = $3,
+         cleanup_lease_expires_at = $4, updated_at = $2
+       FROM candidate
+       WHERE object.id = candidate.candidate_id
+       RETURNING ${COLUMNS}`,
+      [owned.workerId, owned.now, leaseToken, leaseExpiresAt, owned.id ?? null]
+    );
+    return result.rows[0] ? mapStorageObject(result.rows[0]) : null;
+  }
+
   async scheduleCleanupReap(input: ScheduleStorageCleanupReap) {
     const owned = ownScheduleCleanupReap(input);
     const result = await this.executor.query<StorageObjectRow>(
       `UPDATE platform.storage_objects
-       SET cleanup_generation = cleanup_generation + 1,
-         cleanup_not_before = $5, last_error = $6, updated_at = $4
+       SET cleanup_not_before = $7, last_error = $8, updated_at = $6,
+         cleanup_lease_owner = NULL, cleanup_lease_token = NULL, cleanup_lease_expires_at = NULL
        WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
-         AND cleanup_tombstone = true AND cleanup_generation = $7
-         AND delete_requested_at <= $4 AND $5 > $4
+         AND cleanup_tombstone = true AND cleanup_generation = $5
+         AND cleanup_lease_owner = $4 AND cleanup_lease_token = $9
+         AND cleanup_lease_expires_at > $6
+         AND delete_requested_at <= $6 AND $7 > $6
        RETURNING ${COLUMNS}`,
-      [owned.id, owned.driver, owned.objectKey, owned.scheduledAt, owned.nextCleanupAt, owned.lastError, owned.expectedGeneration]
+      [owned.id, owned.driver, owned.objectKey, owned.workerId, owned.expectedGeneration,
+        owned.scheduledAt, owned.nextCleanupAt, owned.lastError, owned.leaseToken]
+    );
+    return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
+  }
+
+  async releaseCleanupReap(input: ReleaseStorageCleanupReap) {
+    const owned = ownReleaseCleanupReap(input);
+    const result = await this.executor.query<StorageObjectRow>(
+      `UPDATE platform.storage_objects
+       SET cleanup_lease_owner = NULL, cleanup_lease_token = NULL,
+         cleanup_lease_expires_at = NULL, updated_at = $5
+       WHERE id = $1 AND status = 'delete_pending' AND cleanup_tombstone = true
+         AND cleanup_lease_owner = $2 AND cleanup_lease_token = $3
+         AND cleanup_generation = $4 AND updated_at <= $5
+       RETURNING ${COLUMNS}`,
+      [owned.id, owned.workerId, owned.leaseToken, owned.expectedGeneration, owned.releasedAt]
     );
     return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
   }
@@ -271,6 +324,8 @@ function ownScheduleCleanupReap(input: ScheduleStorageCleanupReap) {
   const key = assertStorageKey(input.objectKey);
   const scheduledAt = ownDate(input.scheduledAt);
   const nextCleanupAt = ownDate(input.nextCleanupAt);
+  assertWorkerId(input.workerId);
+  assertLeaseToken(input.leaseToken);
   if (key.id !== input.id || input.driver !== "s3" || nextCleanupAt.getTime() <= scheduledAt.getTime() ||
       (input.lastError !== null && (typeof input.lastError !== "string" || !input.lastError || input.lastError !== input.lastError.trim() ||
         input.lastError.length > 2_000 || /[\u0000-\u001f\u007f]/.test(input.lastError)))) {
@@ -280,10 +335,34 @@ function ownScheduleCleanupReap(input: ScheduleStorageCleanupReap) {
     id: input.id,
     driver: input.driver,
     objectKey: input.objectKey,
+    workerId: input.workerId,
+    leaseToken: input.leaseToken,
     expectedGeneration: ownGeneration(input.expectedGeneration),
     scheduledAt,
     nextCleanupAt,
     lastError: input.lastError
+  };
+}
+
+function ownClaimCleanupReap(input: ClaimStorageCleanupReap) {
+  if (!input || typeof input !== "object") throw invalidContent();
+  assertWorkerId(input.workerId);
+  if (input.id !== undefined) assertId(input.id);
+  if (!Number.isSafeInteger(input.leaseDurationMs) || input.leaseDurationMs < 1 || input.leaseDurationMs > 3_600_000) throw invalidContent();
+  return { workerId: input.workerId, now: ownDate(input.now), leaseDurationMs: input.leaseDurationMs, id: input.id };
+}
+
+function ownReleaseCleanupReap(input: ReleaseStorageCleanupReap) {
+  if (!input || typeof input !== "object") throw invalidContent();
+  assertId(input.id);
+  assertWorkerId(input.workerId);
+  assertLeaseToken(input.leaseToken);
+  return {
+    id: input.id,
+    workerId: input.workerId,
+    leaseToken: input.leaseToken,
+    expectedGeneration: ownGeneration(input.expectedGeneration),
+    releasedAt: ownDate(input.releasedAt)
   };
 }
 
@@ -325,8 +404,25 @@ function mapStorageObject(row: StorageObjectRow): StorageObject {
     uploadExpiresAt: row.upload_expires_at === null ? null : cloneDate(row.upload_expires_at),
     cleanupTombstone: row.cleanup_tombstone,
     cleanupGeneration: mapGeneration(row.cleanup_generation),
-    cleanupNotBefore: row.cleanup_not_before === null ? null : cloneDate(row.cleanup_not_before)
+    cleanupNotBefore: row.cleanup_not_before === null ? null : cloneDate(row.cleanup_not_before),
+    cleanupLeaseOwner: row.cleanup_lease_owner,
+    cleanupLeaseToken: row.cleanup_lease_token,
+    cleanupLeaseExpiresAt: row.cleanup_lease_expires_at === null ? null : cloneDate(row.cleanup_lease_expires_at)
   };
+}
+
+function addMilliseconds(date: Date, milliseconds: number) {
+  const value = date.getTime() + milliseconds;
+  if (!Number.isSafeInteger(value) || Math.abs(value) > 8_640_000_000_000_000) throw invalidContent();
+  return new Date(value);
+}
+
+function assertWorkerId(value: string) {
+  if (typeof value !== "string" || !value || value !== value.trim() || value.length > 255 || /[\u0000-\u001f\u007f]/.test(value)) throw invalidContent();
+}
+
+function assertLeaseToken(value: string) {
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) throw invalidContent();
 }
 
 function mapGeneration(value: string | number) {

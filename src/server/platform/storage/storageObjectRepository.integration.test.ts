@@ -192,7 +192,7 @@ describe("PostgresStorageObjectRepository", () => {
     expect(selected.map((object) => object.id)).not.toContain(oldButActive.id);
   });
 
-  it("advances an S3 tombstone generation once and fences stale cleanup jobs", async () => {
+  it("claims one S3 tombstone across concurrent workers and fences scheduling by token and generation", async () => {
     const webRepository = new PostgresStorageObjectRepository(web);
     const repository = new PostgresStorageObjectRepository(worker);
     const createdAt = new Date("2026-07-12T12:10:00.000Z");
@@ -218,12 +218,38 @@ describe("PostgresStorageObjectRepository", () => {
       cleanupNotBefore: requestedAt
     });
 
+    const [first, second] = await Promise.all([
+      repository.claimCleanupReap({ workerId: "reaper-a", now: requestedAt, leaseDurationMs: 10_000, id: input.id }),
+      repository.claimCleanupReap({ workerId: "reaper-b", now: requestedAt, leaseDurationMs: 10_000, id: input.id })
+    ]);
+    const claimed = first ?? second;
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(claimed).toMatchObject({
+      cleanupGeneration: 1,
+      cleanupLeaseOwner: expect.stringMatching(/^reaper-[ab]$/),
+      cleanupLeaseToken: expect.any(String),
+      cleanupLeaseExpiresAt: new Date(requestedAt.getTime() + 10_000)
+    });
+
     const nextCleanupAt = new Date(requestedAt.getTime() + 60_000);
     await expect(repository.scheduleCleanupReap({
       id: input.id,
       driver: "s3",
       objectKey: input.objectKey,
-      expectedGeneration: 0,
+      workerId: claimed!.cleanupLeaseOwner!,
+      leaseToken: uuidv7(),
+      expectedGeneration: claimed!.cleanupGeneration,
+      scheduledAt: requestedAt,
+      nextCleanupAt,
+      lastError: null
+    })).resolves.toBeUndefined();
+    await expect(repository.scheduleCleanupReap({
+      id: input.id,
+      driver: "s3",
+      objectKey: input.objectKey,
+      workerId: claimed!.cleanupLeaseOwner!,
+      leaseToken: claimed!.cleanupLeaseToken!,
+      expectedGeneration: claimed!.cleanupGeneration,
       scheduledAt: requestedAt,
       nextCleanupAt,
       lastError: null
@@ -231,24 +257,70 @@ describe("PostgresStorageObjectRepository", () => {
       status: "delete_pending",
       cleanupTombstone: true,
       cleanupGeneration: 1,
-      cleanupNotBefore: nextCleanupAt
+      cleanupNotBefore: nextCleanupAt,
+      cleanupLeaseOwner: null,
+      cleanupLeaseToken: null,
+      cleanupLeaseExpiresAt: null
     });
-    await expect(repository.scheduleCleanupReap({
-      id: input.id,
-      driver: "s3",
-      objectKey: input.objectKey,
-      expectedGeneration: 0,
-      scheduledAt: requestedAt,
-      nextCleanupAt: new Date(nextCleanupAt.getTime() + 60_000),
-      lastError: null
-    })).resolves.toBeUndefined();
     const beforeDue = await repository.listDeletePending(new Date(nextCleanupAt.getTime() - 1), 10);
     expect(beforeDue.map((object) => object.id)).not.toContain(input.id);
     const atDue = await repository.listDeletePending(nextCleanupAt, 10);
-    expect(atDue).toContainEqual(expect.objectContaining({
+    expect(atDue.map((object) => object.id)).not.toContain(input.id);
+    await expect(repository.claimCleanupReap({
+      workerId: "reaper-c",
+      now: new Date(nextCleanupAt.getTime() - 1),
+      leaseDurationMs: 10_000,
+      id: input.id
+    })).resolves.toBeNull();
+    await expect(repository.claimCleanupReap({
+      workerId: "reaper-c",
+      now: nextCleanupAt,
+      leaseDurationMs: 10_000,
+      id: input.id
+    })).resolves.toMatchObject({
       id: input.id,
-      cleanupGeneration: 1,
-      cleanupNotBefore: nextCleanupAt
-    }));
+      cleanupGeneration: 2,
+      cleanupLeaseOwner: "reaper-c"
+    });
+  });
+
+  it("lets an expired cleanup lease be reclaimed and rejects every stale owner transition", async () => {
+    const repository = new PostgresStorageObjectRepository(worker);
+    const createdAt = new Date("2026-07-12T12:20:00.000Z");
+    const dueAt = new Date(createdAt.getTime() + 1_000);
+    const input = {
+      ...stagingInput(), driver: "s3" as const, createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    };
+    await new PostgresStorageObjectRepository(web).createStaging(input);
+    await repository.prepareCleanup({
+      id: input.id, expectedStatus: "staging", driver: "s3", objectKey: input.objectKey,
+      requestedAt: dueAt, cleanupGeneration: 0
+    });
+
+    const oldLease = await repository.claimCleanupReap({
+      workerId: "old-reaper", now: dueAt, leaseDurationMs: 1_000, id: input.id
+    });
+    await expect(repository.claimCleanupReap({
+      workerId: "new-reaper", now: new Date(dueAt.getTime() + 999), leaseDurationMs: 1_000, id: input.id
+    })).resolves.toBeNull();
+    const newLease = await repository.claimCleanupReap({
+      workerId: "new-reaper", now: new Date(dueAt.getTime() + 1_000), leaseDurationMs: 1_000, id: input.id
+    });
+    expect(newLease).toMatchObject({ cleanupGeneration: 2, cleanupLeaseOwner: "new-reaper" });
+
+    await expect(repository.releaseCleanupReap({
+      id: input.id, workerId: "old-reaper", leaseToken: oldLease!.cleanupLeaseToken!,
+      expectedGeneration: oldLease!.cleanupGeneration, releasedAt: new Date(dueAt.getTime() + 1_001)
+    })).resolves.toBeUndefined();
+    await expect(repository.scheduleCleanupReap({
+      id: input.id, driver: "s3", objectKey: input.objectKey, workerId: "old-reaper",
+      leaseToken: oldLease!.cleanupLeaseToken!, expectedGeneration: oldLease!.cleanupGeneration,
+      scheduledAt: new Date(dueAt.getTime() + 1_001), nextCleanupAt: new Date(dueAt.getTime() + 60_000), lastError: null
+    })).resolves.toBeUndefined();
+    await expect(repository.releaseCleanupReap({
+      id: input.id, workerId: "new-reaper", leaseToken: newLease!.cleanupLeaseToken!,
+      expectedGeneration: newLease!.cleanupGeneration, releasedAt: new Date(dueAt.getTime() + 1_001)
+    })).resolves.toMatchObject({ cleanupLeaseOwner: null, cleanupLeaseToken: null, cleanupLeaseExpiresAt: null });
   });
 });

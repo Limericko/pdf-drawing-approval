@@ -3,7 +3,6 @@ import type { StorageAdapter, StorageDriver } from "../../storage/storageAdapter
 import { StorageError } from "../../storage/storageErrors.ts";
 import type { StorageObjectRepository } from "../../storage/storageObjectRepository.ts";
 import { assertStorageKey } from "../../storage/storageKey.ts";
-import { createStorageTombstoneReaper } from "../../storage/storageTombstoneReaper.ts";
 import type { Job } from "../jobTypes.ts";
 import { JobHandlerError, type JobHandler } from "../jobRegistry.ts";
 
@@ -17,12 +16,10 @@ type Options = {
   readonly adapter: StorageAdapter;
   readonly clock: () => Date;
   readonly verificationDelayMs?: number;
-  readonly tombstoneReapIntervalMs?: number;
   readonly sleep?: (milliseconds: number) => Promise<void>;
 };
 
 const DEFAULT_STAGING_VERIFICATION_DELAY_MS = 1_000;
-const DEFAULT_TOMBSTONE_REAP_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 
 type CleanupPayload = {
   readonly idempotencyKey: string;
@@ -40,21 +37,11 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
   }
   const { transactionRunner, createRepository, adapter, clock } = options;
   const verificationDelayMs = options.verificationDelayMs ?? DEFAULT_STAGING_VERIFICATION_DELAY_MS;
-  const tombstoneReapIntervalMs = options.tombstoneReapIntervalMs ?? DEFAULT_TOMBSTONE_REAP_INTERVAL_MS;
   if (!Number.isSafeInteger(verificationDelayMs) || verificationDelayMs < 1 || verificationDelayMs >= 30_000 ||
       (options.sleep !== undefined && typeof options.sleep !== "function")) {
     throw new Error("INVALID_STORAGE_CLEANUP_HANDLER_OPTIONS");
   }
   const sleep = options.sleep ?? delay;
-  const tombstoneReaper = createStorageTombstoneReaper({
-    transactionRunner,
-    createRepository,
-    adapter,
-    clock,
-    verificationDelayMs,
-    reapIntervalMs: tombstoneReapIntervalMs,
-    sleep
-  });
   return async (job: Job) => {
     const payload = ownPayload(job?.payload);
     if (payload.driver !== adapter.driver) {
@@ -72,7 +59,6 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
     if (!prepared) return;
 
     if (prepared.cleanupTombstone) {
-      await tombstoneReaper.reap(prepared);
       return;
     }
 
