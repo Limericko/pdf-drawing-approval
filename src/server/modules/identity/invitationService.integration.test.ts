@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { totpAt } from "../../platform/security/totp.ts";
@@ -7,6 +8,8 @@ import { createPlatformPool, type PlatformPool } from "../../platform/database/p
 import { withTransaction } from "../../platform/database/transaction.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../../platform/testing/postgresHarness.ts";
 import { createInvitationService } from "./invitationService.ts";
+import { PostgresInvitationRepository } from "./repositories/postgres/PostgresInvitationRepository.ts";
+import { PostgresMfaRepository } from "./repositories/postgres/PostgresMfaRepository.ts";
 
 let database: PlatformTestDatabase;
 let migration: ReturnType<PlatformTestDatabase["createPool"]>;
@@ -317,20 +320,147 @@ describe("InvitationService", () => {
       totp: totpAt(totpSecret, Date.now()) })).rejects.toMatchObject({ code: "INVITATION_INVALID" });
   });
 
+  it("does not let nine prepare attempts block the first complete for the same invitation and IP", async () => {
+    const created = await createInvite(makeService(), "operation-domain@example.test");
+    let prepared: Awaited<ReturnType<ReturnType<typeof makeService>["prepare"]>> | undefined;
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      const service = attempt % 2 === 0 ? makeService({ pool: concurrentA }) : makeService({ pool: concurrentB });
+      prepared = await service.prepare({ invitationToken: created.token, sourceIpPrefix: "203.0.120.0/24" });
+    }
+    expect(prepared).toBeDefined();
+    await expect(makeService({ pool: concurrentB }).complete({ enrollmentToken: prepared!.enrollmentToken,
+      sourceIpPrefix: "203.0.120.0/24", password: "correct horse battery staple",
+      totp: totpAt(totpSecret, Date.now()) })).resolves.toMatchObject({ recoveryCodes: expect.any(Array) });
+  });
+
+  it("blocks the tenth malformed prepare by shared IP before reading the token or querying invitations", async () => {
+    const lookup = vi.spyOn(PostgresInvitationRepository.prototype, "findActiveById");
+    try {
+      for (let attempt = 0; attempt < 9; attempt += 1) {
+        const service = attempt % 2 === 0 ? makeService({ pool: concurrentA }) : makeService({ pool: concurrentB });
+        await expect(service.prepare({ invitationToken: "malformed", sourceIpPrefix: "203.0.121.0/24" }))
+          .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+      }
+      const blockedInput = { sourceIpPrefix: "203.0.121.0/24",
+        get invitationToken(): string { throw new Error("PREPARE_TOKEN_MUST_NOT_BE_READ"); } };
+      await expect(makeService({ pool: concurrentB }).prepare(blockedInput))
+        .rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
+      expect(lookup).not.toHaveBeenCalled();
+      await expect(rateLimitBucketCounts()).resolves.toEqual([{ bucketType: "ip-prefix", attemptCount: 10 }]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("blocks the tenth unknown complete by shared IP before reading the enrollment token or doing expensive work", async () => {
+    const lookup = vi.spyOn(PostgresMfaRepository.prototype, "findActiveEnrollmentByTokenHash");
+    const passwordHasher = vi.fn(async () => "$argon2id$must-not-run");
+    try {
+      for (let attempt = 0; attempt < 9; attempt += 1) {
+        const service = makeService({ pool: attempt % 2 === 0 ? concurrentA : concurrentB,
+          hashPassword: passwordHasher as never });
+        await expect(service.complete({ enrollmentToken: `unknown-${attempt}`,
+          sourceIpPrefix: "203.0.122.0/24", password: "correct horse battery staple", totp: "000000" }))
+          .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+      }
+      const blockedInput = { sourceIpPrefix: "203.0.122.0/24",
+        get enrollmentToken(): string { throw new Error("COMPLETE_TOKEN_MUST_NOT_BE_READ"); },
+        get password(): string { throw new Error("PASSWORD_MUST_NOT_BE_READ"); },
+        get totp(): string { throw new Error("TOTP_MUST_NOT_BE_READ"); } };
+      await expect(makeService({ pool: concurrentB, hashPassword: passwordHasher as never }).complete(blockedInput))
+        .rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
+      expect(lookup).toHaveBeenCalledTimes(9);
+      expect(passwordHasher).not.toHaveBeenCalled();
+      await expect(rateLimitBucketCounts()).resolves.toEqual([{ bucketType: "ip-prefix", attemptCount: 10 }]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("stores distinct prepare and complete IP and account bucket keys across independent pools", async () => {
+    const created = await createInvite(makeService(), "bucket-domains@example.test");
+    const prepared = await makeService({ pool: concurrentA }).prepare({ invitationToken: created.token,
+      sourceIpPrefix: "203.0.123.0/24" });
+    await makeService({ pool: concurrentB }).complete({ enrollmentToken: prepared.enrollmentToken,
+      sourceIpPrefix: "203.0.123.0/24", password: "correct horse battery staple",
+      totp: totpAt(totpSecret, Date.now()) });
+
+    const buckets = await migration.query<{ bucket_type: string; key_hex: string }>(`SELECT bucket_type,
+      encode(bucket_key,'hex') AS key_hex FROM platform.security_rate_limit_buckets ORDER BY bucket_type,key_hex`);
+    expect(buckets.rows).toHaveLength(4);
+    expect(new Set(buckets.rows.map(({ key_hex }) => key_hex)).size).toBe(4);
+    expect(buckets.rows.filter(({ bucket_type }) => bucket_type === "ip-prefix")).toHaveLength(2);
+    expect(buckets.rows.filter(({ bucket_type }) => bucket_type === "account")).toHaveLength(2);
+  });
+
+  it("shares prepare and complete account limits across independent pools", async () => {
+    const created = await createInvite(makeService(), "shared-account@example.test");
+    const secretGenerator = vi.fn(() => Buffer.from(totpSecret));
+    let prepared: Awaited<ReturnType<ReturnType<typeof makeService>["prepare"]>> | undefined;
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      prepared = await makeService({ pool: attempt % 2 === 0 ? concurrentA : concurrentB,
+        generateTotpSecret: secretGenerator }).prepare({ invitationToken: created.token,
+        sourceIpPrefix: `203.1.${attempt}.0/24` });
+    }
+    await expect(makeService({ pool: concurrentB, generateTotpSecret: secretGenerator }).prepare({
+      invitationToken: created.token, sourceIpPrefix: "203.1.10.0/24"
+    })).rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
+    expect(secretGenerator).toHaveBeenCalledTimes(9);
+
+    const passwordHasher = vi.fn(async () => "$argon2id$test");
+    const totpVerifier = vi.fn(() => false);
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      await expect(makeService({ pool: attempt % 2 === 0 ? concurrentA : concurrentB,
+        hashPassword: passwordHasher as never, verifyTotp: totpVerifier }).complete({
+        enrollmentToken: prepared!.enrollmentToken, sourceIpPrefix: `203.2.${attempt}.0/24`,
+        password: "correct horse battery staple", totp: "000000"
+      })).rejects.toMatchObject({ code: "INVITATION_TOTP_INVALID" });
+      await migration.query("UPDATE platform.mfa_enrollments SET attempt_count=0 WHERE invitation_id=$1", [created.invitationId]);
+    }
+    const blockedComplete = { enrollmentToken: prepared!.enrollmentToken, sourceIpPrefix: "203.2.10.0/24",
+      get password(): string { throw new Error("PASSWORD_MUST_NOT_BE_READ"); }, totp: "000000" };
+    await expect(makeService({ pool: concurrentB, hashPassword: passwordHasher as never,
+      verifyTotp: totpVerifier }).complete(blockedComplete))
+      .rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
+    expect(passwordHasher).toHaveBeenCalledTimes(9);
+    expect(totpVerifier).toHaveBeenCalledTimes(9);
+  });
+
+  it("validates each operation IP before reading tokens or querying repositories", async () => {
+    const invitationLookup = vi.spyOn(PostgresInvitationRepository.prototype, "findActiveById");
+    const enrollmentLookup = vi.spyOn(PostgresMfaRepository.prototype, "findActiveEnrollmentByTokenHash");
+    try {
+      await expect(makeService().prepare({ sourceIpPrefix: "invalid\n",
+        get invitationToken(): string { throw new Error("PREPARE_TOKEN_MUST_NOT_BE_READ"); } }))
+        .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+      await expect(makeService().complete({ sourceIpPrefix: "invalid\0",
+        get enrollmentToken(): string { throw new Error("COMPLETE_TOKEN_MUST_NOT_BE_READ"); },
+        get password(): string { throw new Error("PASSWORD_MUST_NOT_BE_READ"); },
+        get totp(): string { throw new Error("TOTP_MUST_NOT_BE_READ"); } }))
+        .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+      expect(invitationLookup).not.toHaveBeenCalled();
+      expect(enrollmentLookup).not.toHaveBeenCalled();
+      await expect(rateLimitBucketCounts()).resolves.toEqual([]);
+    } finally {
+      invitationLookup.mockRestore();
+      enrollmentLookup.mockRestore();
+    }
+  });
+
   it("checks shared rate limits before generating TOTP material or hashing a password", async () => {
     const secretGenerator = vi.fn(() => Buffer.from(totpSecret));
     const passwordHasher = vi.fn(async () => { throw new Error("ARGON2_MUST_NOT_RUN"); });
     const service = makeService({ generateTotpSecret: secretGenerator, hashPassword: passwordHasher as never });
     const created = await createInvite(service, "blocked@example.test");
     const stored = await migration.query<{ token_hash: Buffer }>("SELECT token_hash FROM platform.invitations WHERE id=$1", [created.invitationId]);
-    await blockAccount(stored.rows[0]!.token_hash);
+    await blockOperationAccount("invitation.prepare", stored.rows[0]!.token_hash);
     await expect(service.prepare({ invitationToken: created.token, sourceIpPrefix: "198.51.100.0/24" }))
       .rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
     expect(secretGenerator).not.toHaveBeenCalled();
 
     await migration.query("TRUNCATE platform.security_rate_limit_buckets");
     const prepared = await makeService().prepare({ invitationToken: created.token, sourceIpPrefix: "198.51.100.0/24" });
-    await blockAccount(stored.rows[0]!.token_hash);
+    await blockOperationAccount("invitation.complete", stored.rows[0]!.token_hash);
     await expect(service.complete({ enrollmentToken: prepared.enrollmentToken, sourceIpPrefix: "198.51.100.0/24",
       password: "correct horse battery staple", totp: "000000" }))
       .rejects.toMatchObject({ code: "INVITATION_RATE_LIMITED" });
@@ -481,12 +611,19 @@ function makeService(overrides: Record<string, unknown> = {}) {
     ...overrides });
 }
 
-async function blockAccount(bucketKey: Buffer) {
+async function blockOperationAccount(operation: "invitation.prepare" | "invitation.complete", tokenHash: Buffer) {
+  const bucketKey = createHash("sha256").update(`${operation}.account\0`).update(tokenHash).digest();
   await migration.query(`INSERT INTO platform.security_rate_limit_buckets
     (bucket_type,bucket_key,window_started_at,attempt_count,blocked_until,updated_at)
     VALUES ('account',$1,clock_timestamp(),10,clock_timestamp()+interval '15 minutes',clock_timestamp())
     ON CONFLICT (bucket_type,bucket_key) DO UPDATE SET attempt_count=10,
       blocked_until=clock_timestamp()+interval '15 minutes',updated_at=clock_timestamp()`, [bucketKey]);
+}
+
+async function rateLimitBucketCounts() {
+  const result = await migration.query<{ bucket_type: string; attempt_count: number }>(`SELECT bucket_type,attempt_count
+    FROM platform.security_rate_limit_buckets ORDER BY bucket_type,bucket_key`);
+  return result.rows.map(({ bucket_type, attempt_count }) => ({ bucketType: bucket_type, attemptCount: attempt_count }));
 }
 
 async function createInvite(service: ReturnType<typeof makeService>, email: string) {

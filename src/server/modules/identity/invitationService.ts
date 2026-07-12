@@ -96,14 +96,15 @@ export function createInvitationService(options: Options) {
     },
 
     async prepare(input: { readonly invitationToken: string; readonly sourceIpPrefix: string }) {
-      const invitationId = invitationIdFromToken(input?.invitationToken);
+      await enforceIpRateLimit(options.pool, "invitation.prepare", input?.sourceIpPrefix);
+      const invitationToken = input?.invitationToken;
+      const invitationId = invitationIdFromToken(invitationToken);
       if (!invitationId) throw invalid();
-      const presentedHash = hashOpaqueToken(input.invitationToken);
-      await enforceRateLimit(options.pool, input.sourceIpPrefix, presentedHash);
       const invitation = await new PostgresInvitationRepository(options.pool).findActiveById(invitationId);
       if (!invitation) throw invalid();
+      await enforceAccountRateLimit(options.pool, "invitation.prepare", invitation.tokenHash);
       try {
-        verifyInvitationToken(input.invitationToken, {
+        verifyInvitationToken(invitationToken, {
           invitationId: invitation.id, keyVersion: invitation.tokenKeyVersion, tokenHash: invitation.tokenHash
         }, options.keyrings.invitationHmac);
       } catch {
@@ -131,13 +132,15 @@ export function createInvitationService(options: Options) {
     },
 
     async complete(input: { readonly enrollmentToken: string; readonly sourceIpPrefix: string; readonly password: string; readonly totp: string }) {
-      const enrollmentHash = hashOpaqueToken(input?.enrollmentToken ?? "");
+      await enforceIpRateLimit(options.pool, "invitation.complete", input?.sourceIpPrefix);
+      const enrollmentToken = input?.enrollmentToken ?? "";
+      const enrollmentHash = hashOpaqueToken(enrollmentToken);
       const initialMfa = new PostgresMfaRepository(options.pool);
       const initialEnrollment = await initialMfa.findActiveEnrollmentByTokenHash(enrollmentHash);
       if (!initialEnrollment) throw invalid();
       const initialInvitation = await new PostgresInvitationRepository(options.pool).findById(initialEnrollment.invitationId);
       if (!initialInvitation) throw invalid();
-      await enforceRateLimit(options.pool, input.sourceIpPrefix, initialInvitation.tokenHash);
+      await enforceAccountRateLimit(options.pool, "invitation.complete", initialInvitation.tokenHash);
       ownPassword(input.password);
       const passwordHash = await passwordHasher(input.password, options.passwordHashOptions);
       let secret = decryptSecret({ encryptedSecret: initialEnrollment.encryptedTotpSecret, keyVersion: initialEnrollment.keyVersion }, options.keyrings.totpEncryption);
@@ -154,7 +157,7 @@ export function createInvitationService(options: Options) {
           const mfa = new PostgresMfaRepository(tx);
           if (!await mfa.lockActiveInvitationForEnrollment(initialInvitation.id)) throw invalid();
           const enrollment = await mfa.lockActiveEnrollmentByTokenHash(enrollmentHash);
-          if (!enrollment || enrollment.id !== initialEnrollment.id || !verifyOpaqueToken(input.enrollmentToken, enrollment.tokenHash)) throw invalid();
+          if (!enrollment || enrollment.id !== initialEnrollment.id || !verifyOpaqueToken(enrollmentToken, enrollment.tokenHash)) throw invalid();
           const invitation = await new PostgresInvitationRepository(tx).findActiveById(initialInvitation.id);
           if (!invitation) throw invalid();
           const nowResult = await tx.query<{ now: Date }>("SELECT clock_timestamp() AS now");
@@ -181,16 +184,30 @@ export function createInvitationService(options: Options) {
   });
 }
 
-async function enforceRateLimit(pool: PlatformPool, sourceIpPrefix: string, accountKey: Buffer) {
+type InvitationOperation = "invitation.prepare" | "invitation.complete";
+
+async function enforceIpRateLimit(pool: PlatformPool, operation: InvitationOperation, sourceIpPrefix: unknown) {
   if (typeof sourceIpPrefix !== "string" || !sourceIpPrefix || sourceIpPrefix.length > 128 || /[\r\n\0]/.test(sourceIpPrefix)) throw invalid();
-  const ipKey = createHash("sha256").update("invitation-ip\0").update(sourceIpPrefix).digest();
-  const blocked = await withTransaction(pool, async (tx) => {
-    const repo = new PostgresRateLimitRepository(tx);
-    const ip = await repo.increment({ bucketType: "ip-prefix", bucketKey: ipKey, ...RATE_LIMIT_POLICY });
-    const account = await repo.increment({ bucketType: "account", bucketKey: Buffer.from(accountKey), ...RATE_LIMIT_POLICY });
-    return ip.blocked || account.blocked;
-  });
-  if (blocked) throw new InvitationServiceError("INVITATION_RATE_LIMITED");
+  await enforceRateLimitBucket(pool, "ip-prefix", deriveRateLimitKey(`${operation}.ip`, sourceIpPrefix));
+}
+
+async function enforceAccountRateLimit(pool: PlatformPool, operation: InvitationOperation, invitationTokenHash: Buffer) {
+  await enforceRateLimitBucket(pool, "account", deriveRateLimitKey(`${operation}.account`, invitationTokenHash));
+}
+
+async function enforceRateLimitBucket(
+  pool: PlatformPool,
+  bucketType: "ip-prefix" | "account",
+  bucketKey: Buffer
+) {
+  const bucket = await withTransaction(pool, (tx) => new PostgresRateLimitRepository(tx).increment({
+    bucketType, bucketKey, ...RATE_LIMIT_POLICY
+  }));
+  if (bucket.blocked) throw new InvitationServiceError("INVITATION_RATE_LIMITED");
+}
+
+function deriveRateLimitKey(domain: string, material: string | Buffer) {
+  return createHash("sha256").update(domain).update("\0").update(material).digest();
 }
 
 function ownCreate(input: { email: string; platformRole: PlatformRole; projectId: string; projectRole: ProjectMemberRole; invitedByUserId: string }) {
