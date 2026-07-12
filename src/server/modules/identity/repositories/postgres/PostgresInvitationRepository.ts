@@ -56,7 +56,7 @@ export class PostgresInvitationRepository implements InvitationRepository {
        FROM times
        RETURNING ${INVITATION_COLUMNS}`,
       [
-        createIdentityId(),
+        input.id ?? createIdentityId(),
         input.tokenHash,
         input.tokenKeyVersion,
         normalizeEmail(input.email),
@@ -67,6 +67,13 @@ export class PostgresInvitationRepository implements InvitationRepository {
       ]
     );
     return mapInvitation(result.rows[0]!);
+  }
+
+  async findById(id: string) {
+    const result = await this.executor.query<InvitationRow>(
+      `SELECT ${INVITATION_COLUMNS} FROM platform.invitations WHERE id = $1`, [id]
+    );
+    return result.rows[0] ? mapInvitation(result.rows[0]) : undefined;
   }
 
   async findActiveById(id: string) {

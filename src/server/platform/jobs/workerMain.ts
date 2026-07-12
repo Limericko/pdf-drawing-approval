@@ -7,12 +7,14 @@ import { loadMigrationFiles } from "../database/migrationFiles.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { assertExpectedSchema } from "../database/schemaVersion.ts";
 import { withTransaction } from "../database/transaction.ts";
+import { createPlatformMailTransport } from "../mail/platformMailTransport.ts";
 import { createStorage } from "../storage/createStorage.ts";
 import type { StorageAdapter } from "../storage/storageAdapter.ts";
 import { CleanupIntentOutboxPublisher, PostgresOutboxPublisher } from "./outboxPublisher.ts";
 import { OutboxDispatcher } from "./dispatcher.ts";
 import { createDeleteStorageObjectHandler } from "./handlers/deleteStorageObject.ts";
-import { JobRegistry, storageCleanupEventRegistration } from "./jobRegistry.ts";
+import { createSendInvitationEmailHandler } from "./handlers/sendInvitationEmail.ts";
+import { invitationEmailEventRegistration, JobRegistry, storageCleanupEventRegistration } from "./jobRegistry.ts";
 import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
 import { PostgresOutboxRepository } from "./postgres/PostgresOutboxRepository.ts";
 import { createRetryPolicy } from "./retryPolicy.ts";
@@ -50,6 +52,7 @@ export function assertWorkerCapacity(config: Pick<WorkerPlatformConfig, "databas
 
 async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: PlatformPool, storage: StorageAdapter) {
   const controller = new AbortController();
+  const mail = createPlatformMailTransport({ config: config.smtp });
   const stop = () => controller.abort();
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
@@ -64,9 +67,15 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
       clock,
       verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3)))
     });
+    const invitationHandler = createSendInvitationEmailHandler({
+      pool, transport: mail, keyring: config.keyrings.invitationHmac, publicBaseUrl: config.publicBaseUrl
+    });
     const registry = new JobRegistry(
-      [storageCleanupEventRegistration(config.worker.maxAttempts)],
-      [{ jobType: "storage_object_cleanup", payloadVersion: 1, handler: cleanupHandler }]
+      [storageCleanupEventRegistration(config.worker.maxAttempts), invitationEmailEventRegistration(config.worker.maxAttempts)],
+      [
+        { jobType: "storage_object_cleanup", payloadVersion: 1, handler: cleanupHandler },
+        { jobType: "invitation.email", payloadVersion: 1, handler: invitationHandler }
+      ]
     );
     const startedAt = clock();
     const processIdentity = `${safeHost(hostname())}-${process.pid}-${uuidv7()}`;
@@ -127,6 +136,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
     if (failures.length > 1) throw new AggregateError(failures, "WORKER_LOOPS_FAILED");
   } finally {
     controller.abort();
+    mail.close();
     process.removeListener("SIGTERM", stop);
     process.removeListener("SIGINT", stop);
   }

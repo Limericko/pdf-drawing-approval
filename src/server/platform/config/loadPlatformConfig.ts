@@ -87,6 +87,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       database,
       storage,
       smtp: loadSmtpConfig(env),
+      publicBaseUrl: parsePublicBaseUrl(env),
       worker,
       keyrings: { invitationHmac: invitationHmac.value }
     };
@@ -334,6 +335,7 @@ function assertProductionWorker(config: WorkerPlatformConfig, invitationHmac: Pa
   if ((config.smtp.port === 465) !== config.smtp.secure) insecure("PDF_APPROVAL_SMTP_SECURE");
   if (!config.smtp.secure && !config.smtp.requireTls) insecure("PDF_APPROVAL_SMTP_REQUIRE_TLS");
   if (isUnsafeText(config.smtp.password)) insecure("PDF_APPROVAL_SMTP_PASSWORD");
+  if (!config.publicBaseUrl.startsWith("https://")) insecure("PDF_APPROVAL_PUBLIC_BASE_URL");
   assertProductionDatabase(config.database, databaseFields.worker);
   assertProductionStorage(config.storage);
   assertProductionKeyrings([invitationHmac]);

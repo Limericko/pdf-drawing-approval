@@ -40,6 +40,7 @@ function workerEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
     NODE_ENV: "development",
     PDF_APPROVAL_PLATFORM_WORKER_DATABASE_URL: workerDatabaseUrl,
+    PDF_APPROVAL_PUBLIC_BASE_URL: "https://approval.example",
     PDF_APPROVAL_STORAGE_DRIVER: "s3",
     PDF_APPROVAL_STORAGE_S3_ENDPOINT: "http://127.0.0.1:59000",
     PDF_APPROVAL_STORAGE_S3_REGION: "us-east-1",
@@ -107,6 +108,7 @@ describe("loadPlatformConfig target composition", () => {
 
     expect(config.target).toBe("worker");
     expect(config.database.connectionString).toBe(workerDatabaseUrl);
+    expect(config.publicBaseUrl).toBe("https://approval.example");
     expect(config.storage).toEqual({
       driver: "s3",
       endpoint: "http://127.0.0.1:59000",

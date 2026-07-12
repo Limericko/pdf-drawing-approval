@@ -92,6 +92,19 @@ export function storageCleanupEventRegistration(maxAttempts: number): EventRegis
   });
 }
 
+export function invitationEmailEventRegistration(maxAttempts: number): EventRegistration {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) throw invalidRegistration();
+  return Object.freeze({
+    eventType: "invitation.created", payloadVersion: 1, handlerVersion: "v1",
+    jobType: "invitation.email", jobPayloadVersion: 1, maxAttempts,
+    mapPayload(event) {
+      const id = event.payload.invitationId;
+      if (Object.keys(event.payload).length !== 1 || typeof id !== "string") throw invalidRegistration();
+      return { invitationId: id };
+    }
+  });
+}
+
 function validateEventRegistration(value: EventRegistration) {
   if (!value || typeof value !== "object") throw invalidRegistration();
   assertName(value.eventType, 128);

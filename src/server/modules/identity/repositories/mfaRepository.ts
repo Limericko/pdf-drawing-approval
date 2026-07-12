@@ -80,6 +80,7 @@ export interface MfaRepository {
   invalidateOpenEnrollmentsForInvitation(invitationId: string): Promise<number>;
   createEnrollment(input: CreateMfaEnrollmentInput): Promise<MfaEnrollment>;
   findActiveEnrollmentByTokenHash(tokenHash: Buffer): Promise<MfaEnrollment | undefined>;
+  lockActiveEnrollmentByTokenHash(tokenHash: Buffer): Promise<MfaEnrollment | undefined>;
   recordEnrollmentAttempt(id: string): Promise<MfaEnrollment | undefined>;
   invalidateEnrollment(id: string): Promise<MfaEnrollment | undefined>;
   /** When consuming the invitation too, lock the invitation first and use the same service transaction. */

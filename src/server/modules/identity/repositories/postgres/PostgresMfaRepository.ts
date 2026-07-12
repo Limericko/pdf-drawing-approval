@@ -144,6 +144,16 @@ export class PostgresMfaRepository implements MfaRepository {
     return result.rows[0] ? mapEnrollment(result.rows[0]) : undefined;
   }
 
+  async lockActiveEnrollmentByTokenHash(tokenHash: Buffer) {
+    const result = await this.executor.query<EnrollmentRow>(
+      `SELECT ${ENROLLMENT_COLUMNS} FROM platform.mfa_enrollments
+       WHERE token_hash = $1 AND invalidated_at IS NULL AND completed_at IS NULL
+         AND expires_at > clock_timestamp() AND attempt_count < max_attempts
+       FOR UPDATE`, [Buffer.from(tokenHash)]
+    );
+    return result.rows[0] ? mapEnrollment(result.rows[0]) : undefined;
+  }
+
   async recordEnrollmentAttempt(id: string) {
     const result = await this.executor.query<EnrollmentRow>(
       `UPDATE platform.mfa_enrollments SET attempt_count = attempt_count + 1

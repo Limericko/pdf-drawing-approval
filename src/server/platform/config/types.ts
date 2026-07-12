@@ -92,6 +92,7 @@ export type WebPlatformConfig = BasePlatformConfig<"web"> & {
 export type WorkerPlatformConfig = BasePlatformConfig<"worker"> & {
   storage: PlatformStorageConfig;
   smtp: PlatformSmtpConfig;
+  publicBaseUrl: string;
   worker: PlatformWorkerConfig;
   keyrings: {
     invitationHmac: VersionedKeyring;

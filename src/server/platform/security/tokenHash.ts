@@ -125,6 +125,10 @@ function parseInvitationToken(token: string): { invitationId: string; tag: Buffe
   return { invitationId, tag };
 }
 
+export function invitationIdFromToken(token: string): string | undefined {
+  return parseInvitationToken(token)?.invitationId;
+}
+
 export function verifyInvitationToken(
   token: string,
   stored: InvitationTokenRecord,
