@@ -29,7 +29,6 @@ export async function startConfiguredServer<TLegacy, TPlatform>(
     return platformModule.startPlatformWebServer();
   }
 
-  // @ts-expect-error Task 19 will add the platform runtime module.
   const platformModule = (await import("./platform/startPlatformWebServer.ts")) as PlatformServerModule<HttpServer>;
   return platformModule.startPlatformWebServer();
 }

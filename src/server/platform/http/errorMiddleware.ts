@@ -7,7 +7,8 @@ type SecurityLogger = {
   error(event: { readonly requestId: string; readonly userId?: string; readonly code: string }): void;
 };
 
-type EmergencySink = (event: { readonly requestId: string; readonly code: "LOGGER_FAILURE" }) => void;
+/** Final fallback contract: implementations are synchronous and must never throw. */
+export type EmergencySink = (event: { readonly requestId: string; readonly code: "LOGGER_FAILURE" }) => void;
 
 type ProblemMapping = { status: number; title: string };
 

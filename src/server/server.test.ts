@@ -30,6 +30,7 @@ describe("server health", () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: true,
+        runtimeMode: "legacy",
         appName: "PDF图纸审批",
         version: expect.stringMatching(/^\d+\.\d+\.\d+$/),
         apiCompatVersion: 1,
