@@ -33,6 +33,9 @@ const asyncCleanupFixture = fileURLToPath(
 const cleanupRaceFixture = fileURLToPath(
   new URL("./__fixtures__/storageCleanupRaceFixture.ts", import.meta.url)
 );
+const handoffFixture = fileURLToPath(
+  new URL("./__fixtures__/storageHandoffFixture.ts", import.meta.url)
+);
 
 let database: PlatformTestDatabase;
 let migration: Pool;
@@ -279,6 +282,40 @@ describe("StorageObjectService", () => {
     expect(observedByCaller).toEqual([bodyFailure]);
     expect(body.listenerCount("error")).toBe(1);
     body.removeListener("error", callerErrorListener);
+  });
+
+  it.each([
+    ["reject", {
+      rejectionIsAdapterError: true,
+      rejectionCode: "OBJECT_EXISTS",
+      rejectionMessage: "adapter rejected the object"
+    }],
+    ["resolve", {
+      rejectionIsAdapterError: false,
+      rejectionCode: "STORAGE_IO_ERROR",
+      rejectionMessage: "Storage input stream failed",
+      causeName: "StorageCauseError",
+      causeCode: "HANDOFF_GAP",
+      causeMessage: "Storage dependency failed"
+    }]
+  ] as const)("bridges a body error while the adapter write will %s", async (mode, rejection) => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", handoffFixture, mode],
+      { cwd: process.cwd(), timeout: 5_000, windowsHide: true }
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
+      result: "rejected",
+      readyCalls: 0,
+      headCalls: 0,
+      uncaughtCodes: [],
+      unhandledCount: 0,
+      errorListeners: 0,
+      destroyed: true,
+      closed: true,
+      ...rejection
+    });
   });
 
   it("preserves primary and synchronous destroy errors in one AggregateError", async () => {

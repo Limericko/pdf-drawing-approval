@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 import { v7 as uuidv7 } from "uuid";
 import type { QueryExecutor } from "../database/queryExecutor.ts";
 import { createCleanupIntent, type CleanupIntentPublisher } from "./cleanupIntentPublisher.ts";
-import type { StorageAdapter, StorageDriver } from "./storageAdapter.ts";
+import type { StorageAdapter, StorageDriver, StorageWriteResult } from "./storageAdapter.ts";
 import { StorageError } from "./storageErrors.ts";
 import { createStorageKey } from "./storageKey.ts";
 import {
@@ -65,9 +65,16 @@ export class StorageObjectService {
       );
       this.assertCurrentDriver(staged.driver);
 
-      bodyMonitor.releaseToStorage();
+      bodyMonitor.assertReadyForStorage();
       writeStarted = true;
-      const written = await this.dependencies.storage.write(staged.objectKey, body, mediaType);
+      let written: StorageWriteResult;
+      try {
+        written = await this.dependencies.storage.write(staged.objectKey, body, mediaType);
+      } catch (error) {
+        await bodyMonitor.finishStorageWrite(true);
+        throw error;
+      }
+      await bodyMonitor.finishStorageWrite(false);
       const head = await this.dependencies.storage.head(staged.objectKey);
       if (head === null || head.sizeBytes !== written.sizeBytes) {
         throw new StorageObjectServiceError("STORAGE_OBJECT_HEAD_MISMATCH", "Stored object size verification failed");
@@ -170,19 +177,30 @@ function normalizeMediaType(mediaType: string) {
 }
 
 class PrewriteBodyMonitor {
-  private readonly cleanupErrors: unknown[] = [];
+  private readonly observedErrors: unknown[] = [];
   private observing = true;
   private readonly onError = (error: unknown) => {
-    this.recordCleanupError(error);
+    this.recordBodyError(error);
   };
 
   constructor(private readonly body: Readable) {
     body.on("error", this.onError);
   }
 
-  releaseToStorage() {
-    if (this.cleanupErrors.length > 0) throw this.cleanupErrors[0];
-    this.stopObserving();
+  assertReadyForStorage() {
+    if (this.observedErrors.length > 0) throw this.observedErrors[0];
+  }
+
+  async finishStorageWrite(adapterFailed: boolean) {
+    try {
+      await this.observeDestroyTerminal();
+    } finally {
+      this.stopObserving();
+    }
+    if (adapterFailed || this.observedErrors.length === 0) return;
+    throw new StorageError("STORAGE_IO_ERROR", "Storage input stream failed", {
+      cause: this.observedErrors[0]
+    });
   }
 
   async destroyAndReport(primaryError: unknown) {
@@ -191,20 +209,15 @@ class PrewriteBodyMonitor {
         try {
           this.body.destroy();
         } catch (cleanupError) {
-          this.recordCleanupError(cleanupError);
+          this.recordBodyError(cleanupError);
         }
       }
-      while (this.body.destroyed && !this.body.closed) {
-        await nextImmediate();
-      }
-      // A synchronous _destroy callback marks the stream closed before Node's
-      // queued error notification. Keep ownership through that notification.
-      await nextImmediate();
+      await this.observeDestroyTerminal();
     } finally {
       this.stopObserving();
     }
 
-    const cleanupErrors = this.cleanupErrors.filter((error) => !Object.is(error, primaryError));
+    const cleanupErrors = this.observedErrors.filter((error) => !Object.is(error, primaryError));
     if (cleanupErrors.length === 0) return;
     throw new AggregateError(
       [primaryError, ...cleanupErrors],
@@ -213,10 +226,20 @@ class PrewriteBodyMonitor {
     );
   }
 
-  private recordCleanupError(error: unknown) {
+  private async observeDestroyTerminal() {
+    while (this.body.destroyed && !this.body.closed) {
+      await nextImmediate();
+    }
+    // A synchronous _destroy callback marks the stream closed before Node's
+    // queued error notification. Keep ownership through that notification and
+    // bridge events already queued when an adapter settles.
+    await nextImmediate();
+  }
+
+  private recordBodyError(error: unknown) {
     const ownedError = error instanceof Error ? error : new Error("STORAGE_BODY_CLEANUP_FAILED");
-    if (!this.cleanupErrors.some((candidate) => Object.is(candidate, ownedError))) {
-      this.cleanupErrors.push(ownedError);
+    if (!this.observedErrors.some((candidate) => Object.is(candidate, ownedError))) {
+      this.observedErrors.push(ownedError);
     }
   }
 
