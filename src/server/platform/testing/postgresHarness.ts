@@ -94,6 +94,11 @@ export async function createPlatformTestDatabase(
     }
     if (!databaseDropped && cleanupAdmin) {
       try {
+        await waitForDatabaseSessionsToClose(cleanupAdmin, databaseName);
+      } catch (error) {
+        errors.push(new Error(`ROLE_BACKEND_DRAIN_FAILED:${databaseName}:${errorMessage(error)}`, { cause: error }));
+      }
+      try {
         await cleanupAdmin.query(`DROP DATABASE ${quoteIdentifier(databaseName)} WITH (FORCE)`);
         databaseDropped = true;
       } catch (error) {
@@ -133,6 +138,34 @@ export async function createPlatformTestDatabase(
       await disposeInFlight;
     }
   };
+}
+
+const SESSION_DRAIN_TIMEOUT_MS = 5_000;
+const SESSION_DRAIN_MAX_POLLS = 1_024;
+
+async function waitForDatabaseSessionsToClose(adminPool: Pool, databaseName: string) {
+  const deadline = Date.now() + SESSION_DRAIN_TIMEOUT_MS;
+  let active: Array<{ pid: number; usename: string }> = [];
+  for (let poll = 0; poll < SESSION_DRAIN_MAX_POLLS; poll += 1) {
+    const result = await adminPool.query<{ pid: number; usename: string }>(
+      `SELECT pid, usename
+       FROM pg_stat_activity
+       WHERE datname = $1 AND pid <> pg_backend_pid()
+       ORDER BY pid`,
+      [databaseName]
+    );
+    active = result.rows;
+    if (active.length === 0) return;
+    if (Date.now() >= deadline) break;
+    await nextImmediate();
+  }
+  throw new Error(
+    `ROLE_BACKENDS_STILL_ACTIVE:${active.map(({ pid, usename }) => `${usename}:${pid}`).join(",")}`
+  );
+}
+
+function nextImmediate() {
+  return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 export async function withPlatformTestDatabase<T>(
