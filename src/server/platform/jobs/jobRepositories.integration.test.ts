@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Pool, QueryResultRow } from "pg";
+import { Pool, type QueryResultRow } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runMigrations } from "../database/migrationRunner.ts";
@@ -15,11 +15,13 @@ import { CleanupIntentOutboxPublisher, PostgresOutboxPublisher } from "./outboxP
 
 let database: PlatformTestDatabase;
 let migration: Pool;
+let admin: Pool;
 let web: PlatformPool;
 let worker: PlatformPool;
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
+  admin = new Pool({ connectionString: database.urls.admin, max: 1 });
   migration = database.createPool("migration");
   await runMigrations(migration);
   await migration.query("CREATE TABLE platform.test_business_state (id uuid PRIMARY KEY, value text NOT NULL)");
@@ -31,6 +33,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await web?.end();
   await worker?.end();
+  await admin?.end();
   await database?.dispose();
 });
 
@@ -246,40 +249,42 @@ describe("PostgresJobRepository", () => {
 
   it("observes a concurrently committed winner after ON CONFLICT DO NOTHING", async () => {
     const input = jobInput({ idempotencyKey: `concurrent-create:${uuidv7()}` });
-    let releaseWinner!: () => void;
-    let winnerInserted!: () => void;
-    let loserQueryStarted!: () => void;
-    const holdWinner = new Promise<void>((resolve) => { releaseWinner = resolve; });
-    const winnerReady = new Promise<void>((resolve) => { winnerInserted = resolve; });
-    const loserReady = new Promise<void>((resolve) => { loserQueryStarted = resolve; });
+    const winner = await worker.connect();
+    const loser = await worker.connect();
+    let winnerOpen = false;
+    let loserOpen = false;
+    let loserCreate: ReturnType<PostgresJobRepository["create"]> | undefined;
+    try {
+      await winner.query("BEGIN");
+      winnerOpen = true;
+      await loser.query("BEGIN");
+      loserOpen = true;
+      const loserPid = await loser.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
 
-    const winner = workerTransaction(async (transaction) => {
-      const result = await new PostgresJobRepository(transaction).create(input);
-      winnerInserted();
-      await holdWinner;
-      return result;
-    });
-    await winnerReady;
-    const loser = workerTransaction(async (transaction) => {
-      let firstQuery = true;
-      const wrapped: QueryExecutor = {
-        query<R extends QueryResultRow = QueryResultRow>(text: string, values?: readonly unknown[]) {
-          if (firstQuery) {
-            firstQuery = false;
-            loserQueryStarted();
-          }
-          return transaction.query<R>(text, values);
-        }
-      };
-      return new PostgresJobRepository(wrapped).create({ ...input, id: uuidv7() });
-    });
-    await loserReady;
-    releaseWinner();
+      const created = await new PostgresJobRepository(winner).create(input);
+      loserCreate = new PostgresJobRepository(loser).create({ ...input, id: uuidv7() });
+      await waitForTransactionIdLock(loserPid.rows[0]!.pid);
+      await winner.query("COMMIT");
+      winnerOpen = false;
 
-    await expect(Promise.all([winner, loser])).resolves.toEqual([
-      expect.objectContaining({ created: true, job: expect.objectContaining({ id: input.id }) }),
-      expect.objectContaining({ created: false, job: expect.objectContaining({ id: input.id }) })
-    ]);
+      const existing = await loserCreate;
+      await loser.query("COMMIT");
+      loserOpen = false;
+      expect(created).toMatchObject({ created: true, job: { id: input.id } });
+      expect(existing).toMatchObject({ created: false, job: { id: input.id } });
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      if (winnerOpen) {
+        try { await winner.query("ROLLBACK"); } catch (error) { cleanupErrors.push(error); }
+      }
+      if (loserCreate) await Promise.allSettled([loserCreate]);
+      if (loserOpen) {
+        try { await loser.query("ROLLBACK"); } catch (error) { cleanupErrors.push(error); }
+      }
+      try { winner.release(); } catch (error) { cleanupErrors.push(error); }
+      try { loser.release(); } catch (error) { cleanupErrors.push(error); }
+      if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, "CONCURRENT_CREATE_CLEANUP_FAILED");
+    }
   });
 
   it("rejects an idempotency-key collision with different job content", async () => {
@@ -358,6 +363,43 @@ describe("PostgresJobRepository", () => {
     expect(renewed.leaseExpiresAt).toEqual(new Date(dueAt.getTime() + 2_000));
     const succeeded = await repository.succeed({ id: input.id, workerId: "worker-success", leaseToken: claimed!.leaseToken!, completedAt: new Date(dueAt.getTime() + 10) });
     expect(succeeded).toMatchObject({ status: "succeeded", workerId: null, leaseToken: null, leaseExpiresAt: null, completedAt: expect.any(Date) });
+  });
+
+  it("rejects success exactly at lease expiry and leaves the job reclaimable", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T02:10:00.000Z");
+    const input = jobInput({ maxAttempts: 3, nextRunAt: dueAt });
+    await repository.create(input);
+    const claimed = await repository.claim({ workerId: "expired-success-worker", now: dueAt, leaseDurationMs: 1_000 });
+    const expiresAt = new Date(dueAt.getTime() + 1_000);
+
+    await expect(repository.succeed({
+      id: input.id, workerId: "expired-success-worker", leaseToken: claimed!.leaseToken!, completedAt: expiresAt
+    })).rejects.toMatchObject({ code: "STALE_LEASE" });
+    await expect(repository.findById(input.id)).resolves.toMatchObject({
+      status: "running", workerId: "expired-success-worker", leaseToken: claimed!.leaseToken
+    });
+    await expect(repository.claim({ workerId: "success-reclaimer", now: expiresAt, leaseDurationMs: 1_000 }))
+      .resolves.toMatchObject({ id: input.id, status: "running", workerId: "success-reclaimer", attemptCount: 2 });
+  });
+
+  it("rejects failure after lease expiry and leaves the job reclaimable", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T02:20:00.000Z");
+    const input = jobInput({ maxAttempts: 3, nextRunAt: dueAt });
+    await repository.create(input);
+    const claimed = await repository.claim({ workerId: "expired-failure-worker", now: dueAt, leaseDurationMs: 1_000 });
+    const afterExpiry = new Date(dueAt.getTime() + 1_001);
+
+    await expect(repository.fail({
+      id: input.id, workerId: "expired-failure-worker", leaseToken: claimed!.leaseToken!, failedAt: afterExpiry,
+      kind: "permanent", errorCode: "TOO_LATE", errorMessage: "late failure"
+    })).rejects.toMatchObject({ code: "STALE_LEASE" });
+    await expect(repository.findById(input.id)).resolves.toMatchObject({
+      status: "running", workerId: "expired-failure-worker", leaseToken: claimed!.leaseToken
+    });
+    await expect(repository.claim({ workerId: "failure-reclaimer", now: afterExpiry, leaseDurationMs: 1_000 }))
+      .resolves.toMatchObject({ id: input.id, status: "running", workerId: "failure-reclaimer", attemptCount: 2 });
   });
 
   it("does not let a worker renew an already expired lease", async () => {
@@ -475,6 +517,21 @@ describe("PostgresJobRepository", () => {
 
 function poolConfig(connectionString: string) {
   return { connectionString, poolMax: 4, connectTimeoutMs: 2_000, queryTimeoutMs: 2_000, lockTimeoutMs: 1_000, transactionTimeoutMs: 5_000 };
+}
+
+async function waitForTransactionIdLock(pid: number) {
+  const deadline = Date.now() + 2_000;
+  const observed = new Set<string>();
+  while (Date.now() < deadline) {
+    const activity = await admin.query<{ wait_event_type: string | null; wait_event: string | null }>(
+      "SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE pid = $1",
+      [pid]
+    );
+    observed.add(`${activity.rows[0]?.wait_event_type ?? "missing"}:${activity.rows[0]?.wait_event ?? "missing"}`);
+    if (activity.rows[0]?.wait_event_type === "Lock" && activity.rows[0]?.wait_event === "transactionid") return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`LOSER_DID_NOT_WAIT_FOR_TRANSACTION_ID_LOCK:${[...observed].join(",")}`);
 }
 
 async function publishEvent(eventType: string, payload: JsonObject) {

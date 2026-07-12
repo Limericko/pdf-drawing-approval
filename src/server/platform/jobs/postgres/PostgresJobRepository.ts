@@ -42,7 +42,6 @@ type JobRow = QueryResultRow & {
   completed_at: Date | null;
 };
 
-type CreateRow = JobRow & { inserted: boolean };
 type TransitionRow = JobRow & { outcome: "updated" | "missing" | "stale" | "date_order" };
 
 const COLUMNS = `id, job_type, payload_version, payload, idempotency_key, status,
@@ -69,28 +68,26 @@ export class PostgresJobRepository implements JobRepository {
 
   async create(input: CreateJob): Promise<CreateJobResult> {
     const owned = ownCreateJob(input);
-    const result = await this.executor.query<CreateRow>(
-      `WITH inserted AS (
-         INSERT INTO platform.jobs (
-           id, job_type, payload_version, payload, idempotency_key, status,
-           attempt_count, max_attempts, next_run_at, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6, $7, $8, $8)
-         ON CONFLICT (idempotency_key) DO NOTHING
-         RETURNING ${COLUMNS}
-       )
-       SELECT true AS inserted, ${COLUMNS} FROM inserted
-       UNION ALL
-       SELECT false AS inserted, ${COLUMNS} FROM platform.jobs
-       WHERE idempotency_key = $5 AND NOT EXISTS (SELECT 1 FROM inserted)`,
+    const inserted = await this.executor.query<JobRow>(
+      `INSERT INTO platform.jobs (
+         id, job_type, payload_version, payload, idempotency_key, status,
+         attempt_count, max_attempts, next_run_at, created_at, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, 'pending', 0, $6, $7, $8, $8)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING ${COLUMNS}`,
       [owned.id, owned.jobType, owned.payloadVersion, owned.payload, owned.idempotencyKey, owned.maxAttempts, owned.nextRunAt, owned.createdAt]
     );
-    const row = result.rows[0];
+    const created = inserted.rows.length === 1;
+    const existing = created
+      ? inserted
+      : await this.executor.query<JobRow>(`SELECT ${COLUMNS} FROM platform.jobs WHERE idempotency_key = $1`, [owned.idempotencyKey]);
+    const row = existing.rows[0];
     if (!row) throw new JobRepositoryError("INVALID_JOB_ROW", "Job insert returned no outcome");
     const job = mapJob(row);
-    if (!row.inserted && !sameIdempotentJob(job, owned)) {
+    if (!created && !sameIdempotentJob(job, owned)) {
       throw new JobRepositoryError("JOB_IDEMPOTENCY_CONFLICT", "Job idempotency key belongs to different content");
     }
-    return Object.freeze({ created: row.inserted, job });
+    return Object.freeze({ created, job });
   }
 
   async findById(id: string) {
@@ -159,7 +156,8 @@ export class PostgresJobRepository implements JobRepository {
     return this.fencedTransition(
       `SET status = 'succeeded', worker_id = NULL, lease_expires_at = NULL, lease_token = NULL,
          updated_at = $4, completed_at = $4
-       WHERE id = $1 AND worker_id = $2 AND lease_token = $3 AND status = 'running' AND updated_at <= $4`,
+       WHERE id = $1 AND worker_id = $2 AND lease_token = $3 AND status = 'running'
+         AND lease_expires_at > $4 AND updated_at <= $4`,
       [owned.id, owned.workerId, owned.leaseToken, owned.completedAt]
     );
   }
@@ -175,7 +173,8 @@ export class PostgresJobRepository implements JobRepository {
          next_run_at = CASE WHEN $7 OR attempt_count >= max_attempts THEN $4 ELSE $8 END,
          updated_at = $4,
          completed_at = CASE WHEN $7 OR attempt_count >= max_attempts THEN $4 ELSE NULL END
-       WHERE id = $1 AND worker_id = $2 AND lease_token = $3 AND status = 'running' AND updated_at <= $4`,
+       WHERE id = $1 AND worker_id = $2 AND lease_token = $3 AND status = 'running'
+         AND lease_expires_at > $4 AND updated_at <= $4`,
       [owned.id, owned.workerId, owned.leaseToken, owned.failedAt, owned.errorCode, owned.errorMessage, forceDead, nextRunAt]
     );
   }
