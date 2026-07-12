@@ -1,21 +1,14 @@
 import type { QueryResultRow } from "pg";
 import { createIdentityId } from "../../ids.ts";
-import type { Project, ProjectMember, ProjectMemberRole, ProjectMemberStatus, ProjectStatus } from "../../models.ts";
+import type { ProjectMember, ProjectMemberRole, ProjectMemberStatus, ProjectStatus } from "../../models.ts";
 import type { QueryExecutor } from "../../../../platform/database/queryExecutor.ts";
 import type {
   AddProjectMemberInput,
   CreateProjectInput,
   CreateProjectResult,
+  ProjectAccessRecord,
   ProjectRepository
 } from "../projectRepository.ts";
-
-type ProjectRow = QueryResultRow & {
-  id: string;
-  name: string;
-  status: ProjectStatus;
-  created_at: Date;
-  updated_at: Date;
-};
 
 type ProjectMemberRow = QueryResultRow & {
   id: string;
@@ -41,15 +34,19 @@ type CreatedProjectRow = QueryResultRow & {
   membership_updated_at: Date;
 };
 
-function mapProject(row: ProjectRow): Project {
-  return {
-    id: row.id,
-    name: row.name,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
+type ProjectAccessRow = QueryResultRow & {
+  project_id: string;
+  project_name: string;
+  project_status: ProjectStatus;
+  project_created_at: Date;
+  project_updated_at: Date;
+  membership_id: string;
+  membership_user_id: string;
+  membership_role: ProjectMemberRole;
+  membership_status: ProjectMemberStatus;
+  membership_created_at: Date;
+  membership_updated_at: Date;
+};
 
 function mapProjectMember(row: ProjectMemberRow): ProjectMember {
   return {
@@ -62,6 +59,35 @@ function mapProjectMember(row: ProjectMemberRow): ProjectMember {
     updatedAt: row.updated_at
   };
 }
+
+function mapProjectAccess(row: ProjectAccessRow): ProjectAccessRecord {
+  return {
+    project: {
+      id: row.project_id,
+      name: row.project_name,
+      status: row.project_status,
+      createdAt: row.project_created_at,
+      updatedAt: row.project_updated_at
+    },
+    membership: {
+      id: row.membership_id,
+      projectId: row.project_id,
+      userId: row.membership_user_id,
+      role: row.membership_role,
+      status: row.membership_status,
+      createdAt: row.membership_created_at,
+      updatedAt: row.membership_updated_at
+    }
+  };
+}
+
+const PROJECT_ACCESS_SELECT = `SELECT p.id AS project_id,p.name AS project_name,p.status AS project_status,
+  p.created_at AS project_created_at,p.updated_at AS project_updated_at,
+  pm.id AS membership_id,pm.user_id AS membership_user_id,pm.role AS membership_role,
+  pm.status AS membership_status,pm.created_at AS membership_created_at,pm.updated_at AS membership_updated_at
+  FROM platform.projects p
+  INNER JOIN platform.project_members pm ON pm.project_id=p.id AND pm.user_id=$1 AND pm.status='active'
+  INNER JOIN platform.users u ON u.id=pm.user_id AND u.status='active'`;
 
 export class PostgresProjectRepository implements ProjectRepository {
   constructor(private readonly executor: QueryExecutor) {}
@@ -118,16 +144,22 @@ export class PostgresProjectRepository implements ProjectRepository {
     return mapProjectMember(result.rows[0]!);
   }
 
-  async findByIdForMember(projectId: string, requesterUserId: string) {
-    const result = await this.executor.query<ProjectRow>(
-      `SELECT p.id, p.name, p.status, p.created_at, p.updated_at
-       FROM platform.projects p
-       INNER JOIN platform.project_members pm
-         ON pm.project_id = p.id AND pm.user_id = $2 AND pm.status = 'active'
-       WHERE p.id = $1`,
-      [projectId, requesterUserId]
+  async listForMember(requesterUserId: string) {
+    const result = await this.executor.query<ProjectAccessRow>(
+      `${PROJECT_ACCESS_SELECT} ORDER BY p.name ASC, p.id ASC`, [requesterUserId]
     );
-    return result.rows[0] ? mapProject(result.rows[0]) : undefined;
+    return result.rows.map(mapProjectAccess);
+  }
+
+  async findAccessByIdForMember(projectId: string, requesterUserId: string) {
+    const result = await this.executor.query<ProjectAccessRow>(
+      `${PROJECT_ACCESS_SELECT} WHERE p.id=$2`, [requesterUserId, projectId]
+    );
+    return result.rows[0] ? mapProjectAccess(result.rows[0]) : undefined;
+  }
+
+  async findByIdForMember(projectId: string, requesterUserId: string) {
+    return (await this.findAccessByIdForMember(projectId, requesterUserId))?.project;
   }
 
   async lockActiveProjectForInvitation(projectId: string, inviterUserId: string) {

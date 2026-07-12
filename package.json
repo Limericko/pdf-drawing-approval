@@ -50,6 +50,7 @@
     "cookie-parser": "^1.4.7",
     "electron-updater": "^6.8.9",
     "express": "^4.21.2",
+    "ipaddr.js": "^2.4.0",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^1.21.0",
     "nodemailer": "^9.0.1",

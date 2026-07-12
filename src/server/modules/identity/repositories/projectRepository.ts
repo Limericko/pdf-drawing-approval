@@ -18,9 +18,16 @@ export type AddProjectMemberInput = {
   readonly status: ProjectMemberStatus;
 };
 
+export type ProjectAccessRecord = {
+  readonly project: Project;
+  readonly membership: ProjectMember;
+};
+
 export interface ProjectRepository {
   create(input: CreateProjectInput): Promise<CreateProjectResult>;
   addMember(input: AddProjectMemberInput): Promise<ProjectMember>;
+  listForMember(requesterUserId: string): Promise<readonly ProjectAccessRecord[]>;
+  findAccessByIdForMember(projectId: string, requesterUserId: string): Promise<ProjectAccessRecord | undefined>;
   findByIdForMember(projectId: string, requesterUserId: string): Promise<Project | undefined>;
   lockActiveProjectForInvitation(projectId: string, inviterUserId: string): Promise<boolean>;
 }
