@@ -140,7 +140,7 @@ export class PostgresProjectRepository implements ProjectRepository {
          ON membership.project_id = project.id AND membership.user_id = inviter.id
            AND membership.role = 'manager' AND membership.status = 'active'
        WHERE project.id = $1 AND project.status = 'active'
-       FOR UPDATE OF project`,
+       FOR NO KEY UPDATE OF project, inviter, membership`,
       [projectId, inviterUserId]
     );
     return result.rowCount === 1;

@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Pool } from "pg";
 import { totpAt } from "../../platform/security/totp.ts";
 import { deriveInvitationToken } from "../../platform/security/tokenHash.ts";
 import { runMigrations } from "../../platform/database/migrationRunner.ts";
 import { createPlatformPool, type PlatformPool } from "../../platform/database/pool.ts";
+import { withTransaction } from "../../platform/database/transaction.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../../platform/testing/postgresHarness.ts";
 import { createInvitationService } from "./invitationService.ts";
 
@@ -11,6 +13,9 @@ let migration: ReturnType<PlatformTestDatabase["createPool"]>;
 let web: PlatformPool;
 let concurrentA: PlatformPool;
 let concurrentB: PlatformPool;
+let deadlockA: PlatformPool;
+let deadlockB: PlatformPool;
+let admin: Pool;
 const inviterId = "01890f1e-9b4a-7cc2-8f00-000000000061";
 const projectId = "01890f1e-9b4a-7cc2-8f00-000000000062";
 const unauthorizedInviters = [
@@ -25,6 +30,18 @@ const unauthorizedMembershipIds = [
   "01890f1e-9b4a-7cc2-8f00-00000000006a",
   "01890f1e-9b4a-7cc2-8f00-00000000006b"
 ] as const;
+const capabilityMutations = [
+  { label: "admin status", sql: "UPDATE platform.users SET status='disabled',updated_at=clock_timestamp() WHERE id=$1 AND $2::uuid IS NOT NULL",
+    check: "SELECT status='disabled' AS changed FROM platform.users WHERE id=$1 AND $2::uuid IS NOT NULL" },
+  { label: "admin platform role", sql: "UPDATE platform.users SET platform_role='member',updated_at=clock_timestamp() WHERE id=$1 AND $2::uuid IS NOT NULL",
+    check: "SELECT platform_role='member' AS changed FROM platform.users WHERE id=$1 AND $2::uuid IS NOT NULL" },
+  { label: "manager membership status", sql: "UPDATE platform.project_members SET status='disabled',updated_at=clock_timestamp() WHERE project_id=$2 AND user_id=$1",
+    check: "SELECT status='disabled' AS changed FROM platform.project_members WHERE project_id=$2 AND user_id=$1" },
+  { label: "manager membership role", sql: "UPDATE platform.project_members SET role='viewer',updated_at=clock_timestamp() WHERE project_id=$2 AND user_id=$1",
+    check: "SELECT role='viewer' AS changed FROM platform.project_members WHERE project_id=$2 AND user_id=$1" },
+  { label: "project status", sql: "UPDATE platform.projects SET status='archived',updated_at=clock_timestamp() WHERE id=$2 AND $1::uuid IS NOT NULL",
+    check: "SELECT status='archived' AS changed FROM platform.projects WHERE id=$2 AND $1::uuid IS NOT NULL" }
+] as const;
 const totpSecret = Buffer.alloc(20, 7);
 const keyrings = {
   invitationHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 1)]]) },
@@ -34,6 +51,7 @@ const keyrings = {
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
+  admin = new Pool({ connectionString: database.urls.admin, max: 1 });
   migration = database.createPool("migration");
   await runMigrations(migration);
   const config = { connectionString: database.urls.web, poolMax: 4, connectTimeoutMs: 2_000,
@@ -41,8 +59,11 @@ beforeAll(async () => {
   web = createPlatformPool(config, "invitation-service-test");
   concurrentA = createPlatformPool({ ...config, poolMax: 1 }, "invitation-service-concurrent-a");
   concurrentB = createPlatformPool({ ...config, poolMax: 1 }, "invitation-service-concurrent-b");
+  deadlockA = createPlatformPool({ ...config, poolMax: 1, lockTimeoutMs: 1_000 }, "invitation-deadlock-a");
+  deadlockB = createPlatformPool({ ...config, poolMax: 1, lockTimeoutMs: 1_000 }, "invitation-deadlock-b");
 });
-afterAll(async () => { await concurrentB?.end(); await concurrentA?.end(); await web?.end(); await database?.dispose(); });
+afterAll(async () => { await deadlockB?.end(); await deadlockA?.end(); await concurrentB?.end(); await concurrentA?.end();
+  await web?.end(); await admin?.end(); await database?.dispose(); });
 beforeEach(async () => {
   await migration.query("TRUNCATE platform.users, platform.projects CASCADE");
   await migration.query("TRUNCATE platform.security_rate_limit_buckets");
@@ -97,6 +118,51 @@ describe("InvitationService", () => {
       .resolves.toMatchObject({ rows: [{ invitations: 0, outbox: 0, audits: 0 }] });
   });
 
+  it.each(capabilityMutations)("holds the $label capability row lock until an authorized create commits", async (mutation) => {
+    const blocker = await migration.connect();
+    let blockerReleased = false;
+    let creating: ReturnType<ReturnType<typeof makeService>["createInvitation"]> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("LOCK TABLE platform.invitations IN ACCESS EXCLUSIVE MODE");
+      creating = makeService({ pool: concurrentA }).createInvitation({ email: "capability-lock@example.test",
+        platformRole: "member", projectId, projectRole: "viewer", invitedByUserId: inviterId });
+      await waitForApplicationLock("invitation-service-concurrent-a");
+
+      const mutationOutcome = await Promise.allSettled([withTransaction(concurrentB, async (tx) => {
+        await tx.query("SELECT set_config('lock_timeout','100ms',true)");
+        await tx.query(mutation.sql, [inviterId, projectId]);
+      })]).then(([outcome]) => outcome!);
+      await blocker.query("COMMIT");
+      blockerReleased = true;
+      const created = await creating;
+      if (mutationOutcome.status === "rejected") {
+        await withTransaction(concurrentB, (tx) => tx.query(mutation.sql, [inviterId, projectId]));
+      }
+
+      expect(mutationOutcome).toMatchObject({ status: "rejected", reason: { code: "55P03" } });
+      await expect(migration.query<{ changed: boolean }>(mutation.check, [inviterId, projectId]))
+        .resolves.toMatchObject({ rows: [{ changed: true }] });
+      await expect(invitationCreationState(created.invitationId))
+        .resolves.toEqual({ invitations: 1, audits: 1, outbox: 1 });
+    } finally {
+      if (!blockerReleased) await blocker.query("ROLLBACK");
+      blocker.release();
+      if (creating) await Promise.allSettled([creating]);
+    }
+  });
+
+  it.each(capabilityMutations)("rejects create when the $label capability change commits first", async (mutation) => {
+    const before = await platformCreationCounts();
+    await withTransaction(concurrentB, (tx) => tx.query(mutation.sql, [inviterId, projectId]));
+    await expect(makeService({ pool: concurrentA }).createInvitation({ email: "capability-changed@example.test",
+      platformRole: "member", projectId, projectRole: "viewer", invitedByUserId: inviterId }))
+      .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+    await expect(migration.query<{ changed: boolean }>(mutation.check, [inviterId, projectId]))
+      .resolves.toMatchObject({ rows: [{ changed: true }] });
+    await expect(platformCreationCounts()).resolves.toEqual(before);
+  });
+
   it("revokes every prior active project invitation for the normalized email before reinviting", async () => {
     const service = makeService();
     const first = await createInvite(service, "reinvite@example.test");
@@ -134,6 +200,95 @@ describe("InvitationService", () => {
     const superseded = first.invitationId === activeId ? second : first;
     await expect(makeService().prepare({ invitationToken: superseded.token, sourceIpPrefix: "198.21.0.0/24" }))
       .rejects.toMatchObject({ code: "INVITATION_INVALID" });
+  });
+
+  it("avoids deadlock when complete locks the invitation before reinvite reaches it", async () => {
+    const email = "complete-first-race@example.test";
+    const setup = makeService();
+    const original = await createInvite(setup, email);
+    const enrollment = await setup.prepare({ invitationToken: original.token, sourceIpPrefix: "198.22.0.0/24" });
+    await migration.query(`CREATE FUNCTION platform.block_complete_user_insert() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.email_normalized='complete-first-race@example.test' THEN PERFORM pg_advisory_xact_lock(16001); END IF;
+        RETURN NEW;
+      END $$`);
+    await migration.query(`CREATE TRIGGER block_complete_user_insert BEFORE INSERT ON platform.users
+      FOR EACH ROW EXECUTE FUNCTION platform.block_complete_user_insert()`);
+    const blocker = await migration.connect();
+    let advisoryReleased = false;
+    let completing: ReturnType<ReturnType<typeof makeService>["complete"]> | undefined;
+    let reinviting: ReturnType<ReturnType<typeof makeService>["createInvitation"]> | undefined;
+    try {
+      await blocker.query("SELECT pg_advisory_lock(16001)");
+      completing = makeService({ pool: deadlockA }).complete({ enrollmentToken: enrollment.enrollmentToken,
+        sourceIpPrefix: "198.22.1.0/24", password: "correct horse battery staple",
+        totp: totpAt(totpSecret, Date.now()) });
+      await waitForApplicationLock("invitation-deadlock-a");
+      reinviting = makeService({ pool: deadlockB }).createInvitation({ email: email.toUpperCase(), platformRole: "member",
+        projectId, projectRole: "viewer", invitedByUserId: inviterId });
+      await waitForApplicationLock("invitation-deadlock-b");
+      await blocker.query("SELECT pg_advisory_unlock(16001)");
+      advisoryReleased = true;
+
+      const [completeOutcome, reinviteOutcome] = await Promise.allSettled([completing, reinviting]);
+      expect(completeOutcome.status).toBe("fulfilled");
+      expect(reinviteOutcome.status).toBe("fulfilled");
+      if (reinviteOutcome.status !== "fulfilled") throw reinviteOutcome.reason;
+      await expect(invitationRaceState(original.invitationId, reinviteOutcome.value.invitationId, email))
+        .resolves.toEqual({ oldAccepted: 1, oldRevoked: 0, newActive: 1, users: 1,
+          createAudits: 2, acceptAudits: 1, outbox: 2 });
+    } finally {
+      if (!advisoryReleased) await blocker.query("SELECT pg_advisory_unlock(16001)");
+      blocker.release();
+      await Promise.allSettled([...(completing ? [completing] : []), ...(reinviting ? [reinviting] : [])]);
+      await migration.query("DROP TRIGGER block_complete_user_insert ON platform.users");
+      await migration.query("DROP FUNCTION platform.block_complete_user_insert()");
+    }
+  });
+
+  it("avoids deadlock when reinvite revokes the invitation before complete reaches it", async () => {
+    const email = "reinvite-first-race@example.test";
+    const setup = makeService();
+    const original = await createInvite(setup, email);
+    const enrollment = await setup.prepare({ invitationToken: original.token, sourceIpPrefix: "198.23.0.0/24" });
+    await migration.query(`CREATE FUNCTION platform.block_reinvite_insert() RETURNS trigger
+      LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.email_normalized='reinvite-first-race@example.test' THEN PERFORM pg_advisory_xact_lock(16002); END IF;
+        RETURN NEW;
+      END $$`);
+    await migration.query(`CREATE TRIGGER block_reinvite_insert BEFORE INSERT ON platform.invitations
+      FOR EACH ROW EXECUTE FUNCTION platform.block_reinvite_insert()`);
+    const blocker = await migration.connect();
+    let advisoryReleased = false;
+    let reinviting: ReturnType<ReturnType<typeof makeService>["createInvitation"]> | undefined;
+    let completing: ReturnType<ReturnType<typeof makeService>["complete"]> | undefined;
+    try {
+      await blocker.query("SELECT pg_advisory_lock(16002)");
+      reinviting = makeService({ pool: deadlockA }).createInvitation({ email: email.toUpperCase(), platformRole: "member",
+        projectId, projectRole: "viewer", invitedByUserId: inviterId });
+      await waitForApplicationLock("invitation-deadlock-a");
+      completing = makeService({ pool: deadlockB }).complete({ enrollmentToken: enrollment.enrollmentToken,
+        sourceIpPrefix: "198.23.1.0/24", password: "correct horse battery staple",
+        totp: totpAt(totpSecret, Date.now()) });
+      await waitForApplicationLock("invitation-deadlock-b");
+      await blocker.query("SELECT pg_advisory_unlock(16002)");
+      advisoryReleased = true;
+
+      const [reinviteOutcome, completeOutcome] = await Promise.allSettled([reinviting, completing]);
+      expect(reinviteOutcome.status).toBe("fulfilled");
+      expect(completeOutcome).toMatchObject({ status: "rejected",
+        reason: { code: "INVITATION_INVALID" } });
+      if (reinviteOutcome.status !== "fulfilled") throw reinviteOutcome.reason;
+      await expect(invitationRaceState(original.invitationId, reinviteOutcome.value.invitationId, email))
+        .resolves.toEqual({ oldAccepted: 0, oldRevoked: 1, newActive: 1, users: 0,
+          createAudits: 2, acceptAudits: 0, outbox: 2 });
+    } finally {
+      if (!advisoryReleased) await blocker.query("SELECT pg_advisory_unlock(16002)");
+      blocker.release();
+      await Promise.allSettled([...(reinviting ? [reinviting] : []), ...(completing ? [completing] : [])]);
+      await migration.query("DROP TRIGGER block_reinvite_insert ON platform.invitations");
+      await migration.query("DROP FUNCTION platform.block_reinvite_insert()");
+    }
   });
 
   it("prepares without creating a user, then atomically activates MFA membership and ten recovery hashes", async () => {
@@ -367,6 +522,58 @@ async function activationState(invitationId: string, email: string) {
   return { users: row.users, credentials: row.credentials, recovery: row.recovery, members: row.members,
     enrollmentCompleted: row.enrollment_completed, invitationAccepted: row.invitation_accepted,
     successAudits: row.success_audits };
+}
+
+async function invitationCreationState(invitationId: string) {
+  const result = await migration.query<{ invitations: number; audits: number; outbox: number }>(`SELECT
+    (SELECT count(*) FROM platform.invitations WHERE id=$1)::int AS invitations,
+    (SELECT count(*) FROM platform.audit_events
+      WHERE action='invitation.create' AND target_id=$1 AND result='success')::int AS audits,
+    (SELECT count(*) FROM platform.outbox_events WHERE payload=$2::jsonb)::int AS outbox`,
+  [invitationId, JSON.stringify({ invitationId })]);
+  return result.rows[0]!;
+}
+
+async function invitationRaceState(oldInvitationId: string, newInvitationId: string, email: string) {
+  const result = await migration.query<{
+    old_accepted: number; old_revoked: number; new_active: number; users: number;
+    create_audits: number; accept_audits: number; outbox: number;
+  }>(`SELECT
+    (SELECT count(*) FROM platform.invitations WHERE id=$1 AND accepted_at IS NOT NULL)::int AS old_accepted,
+    (SELECT count(*) FROM platform.invitations WHERE id=$1 AND revoked_at IS NOT NULL)::int AS old_revoked,
+    (SELECT count(*) FROM platform.invitations
+      WHERE id=$2 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp())::int AS new_active,
+    (SELECT count(*) FROM platform.users WHERE email_normalized=$3)::int AS users,
+    (SELECT count(*) FROM platform.audit_events
+      WHERE action='invitation.create' AND target_id IN ($1,$2) AND result='success')::int AS create_audits,
+    (SELECT count(*) FROM platform.audit_events
+      WHERE action='invitation.accept' AND target_id=$1 AND result='success')::int AS accept_audits,
+    (SELECT count(*) FROM platform.outbox_events
+      WHERE payload->>'invitationId' IN ($1::text,$2::text))::int AS outbox`,
+  [oldInvitationId, newInvitationId, email]);
+  const row = result.rows[0]!;
+  return { oldAccepted: row.old_accepted, oldRevoked: row.old_revoked, newActive: row.new_active,
+    users: row.users, createAudits: row.create_audits, acceptAudits: row.accept_audits, outbox: row.outbox };
+}
+
+async function platformCreationCounts() {
+  const result = await migration.query<{ invitations: number; audits: number; outbox: number }>(`SELECT
+    (SELECT count(*) FROM platform.invitations)::int AS invitations,
+    (SELECT count(*) FROM platform.audit_events WHERE action='invitation.create')::int AS audits,
+    (SELECT count(*) FROM platform.outbox_events WHERE event_type='invitation.created')::int AS outbox`);
+  return result.rows[0]!;
+}
+
+async function waitForApplicationLock(applicationName: string) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const activity = await admin.query<{ waiting: boolean }>(`SELECT EXISTS (
+      SELECT 1 FROM pg_stat_activity
+      WHERE application_name=$1 AND state='active' AND wait_event_type='Lock'
+    ) AS waiting`, [applicationName]);
+    if (activity.rows[0]?.waiting) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`APPLICATION_DID_NOT_WAIT_FOR_LOCK:${applicationName}`);
 }
 
 async function insertUnauthorizedInviters() {
