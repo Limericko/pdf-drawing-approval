@@ -153,8 +153,10 @@ async function ensureMigrationTable(client: MigrationClient) {
     applied_at timestamptz NOT NULL DEFAULT clock_timestamp()
   )`);
   await client.query("REVOKE ALL ON TABLE platform.schema_migrations FROM PUBLIC");
-  await client.query("GRANT USAGE ON SCHEMA platform TO platform_web, platform_worker");
-  await client.query("GRANT SELECT ON TABLE platform.schema_migrations TO platform_web, platform_worker");
+  await client.query("GRANT USAGE ON SCHEMA platform TO platform_web, platform_worker, platform_bootstrap");
+  await client.query(
+    "GRANT SELECT ON TABLE platform.schema_migrations TO platform_web, platform_worker, platform_bootstrap"
+  );
 }
 
 function verifyCompleteHistory(applied: readonly AppliedMigration[], migrations: readonly MigrationFile[]) {

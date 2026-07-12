@@ -70,6 +70,17 @@ export class PostgresAuditRepository implements AuditRepository {
     return mapAudit(result.rows[0]!);
   }
 
+  async appendOnly(input: AppendAuditEventInput) {
+    const metadata = validateAndCopyMetadata(input.metadata);
+    await this.executor.query(
+      `INSERT INTO platform.audit_events
+         (id, actor_user_id, actor_type, action, target_type, target_id, request_id, result, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [createIdentityId(), input.actorUserId, input.actorType, input.action, input.targetType,
+        input.targetId, input.requestId, input.result, metadata]
+    );
+  }
+
   async list(input: ListAuditEventsInput = {}) {
     const limit = auditLimit(input.limit);
     const conditions: string[] = [];

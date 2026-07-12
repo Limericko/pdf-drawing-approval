@@ -40,10 +40,16 @@ export class PostgresUserRepository implements UserRepository {
   constructor(private readonly executor: QueryExecutor) {}
 
   async create(input: CreateUserInput) {
+    const mfaEnabledAt = input.mfaEnabledAt === undefined ? null : new Date(input.mfaEnabledAt.getTime());
+    if (mfaEnabledAt !== null && !Number.isFinite(mfaEnabledAt.getTime())) throw new Error("INVALID_USER_MFA_ENABLED_AT");
     const result = await this.executor.query<UserRow>(
-      `INSERT INTO platform.users
-        (id, email_normalized, display_name, password_hash, platform_role, status, mfa_status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'disabled')
+      `WITH times AS (SELECT COALESCE($7::timestamptz, clock_timestamp()) AS now)
+       INSERT INTO platform.users
+        (id, email_normalized, display_name, password_hash, platform_role, status,
+         mfa_status, mfa_enabled_at, created_at, updated_at)
+       SELECT $1, $2, $3, $4, $5, $6,
+         CASE WHEN $7::timestamptz IS NULL THEN 'disabled' ELSE 'enabled' END,
+         $7, now, now FROM times
        RETURNING ${USER_COLUMNS}`,
       [
         createIdentityId(),
@@ -51,7 +57,8 @@ export class PostgresUserRepository implements UserRepository {
         input.displayName,
         input.passwordHash,
         input.platformRole,
-        input.status
+        input.status,
+        mfaEnabledAt
       ]
     );
     return mapUser(result.rows[0]!);

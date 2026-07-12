@@ -1,10 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { QueryExecutor } from "../../../../platform/database/queryExecutor.ts";
-import type { PlatformRole, ProjectMemberRole, ProjectStatus, UserStatus } from "../../models.ts";
+import type { ProjectMemberRole, ProjectStatus, UserStatus } from "../../models.ts";
 import type { InvitationRepository } from "../invitationRepository.ts";
 import type { ProjectRepository } from "../projectRepository.ts";
-import type { UserRepository } from "../userRepository.ts";
+import type { CreateUserInput, UserRepository } from "../userRepository.ts";
 
 export type IdentityRepositories = {
   readonly users: UserRepository;
@@ -41,13 +41,7 @@ export function identityRepositoryContract(options: ContractOptions) {
   const repositories = () => options.createRepositories(options.getContext().primary);
 
   async function createUser(
-    overrides: Partial<{
-      email: string;
-      displayName: string;
-      passwordHash: string;
-      platformRole: PlatformRole;
-      status: UserStatus;
-    }> = {}
+    overrides: Partial<CreateUserInput> = {}
   ) {
     return repositories().users.create({
       email: uniqueEmail("user"),
@@ -103,6 +97,16 @@ export function identityRepositoryContract(options: ContractOptions) {
       expect(disabled.updatedAt).toBeInstanceOf(Date);
 
       await expect(createUser({ status: "pending" as UserStatus })).rejects.toMatchObject({ code: "23514" });
+    });
+
+    it("creates a confirmed MFA user in one insert without changing the ordinary disabled default", async () => {
+      const mfaEnabledAt = new Date(Date.now() + 1_000);
+      const enabled = await createUser({ mfaEnabledAt });
+
+      expect(enabled).toMatchObject({ mfaStatus: "enabled", mfaEnabledAt });
+      expect(enabled.createdAt).toEqual(mfaEnabledAt);
+      expect(enabled.updatedAt).toEqual(mfaEnabledAt);
+      await expect(createUser()).resolves.toMatchObject({ mfaStatus: "disabled", mfaEnabledAt: null });
     });
 
     it("atomically creates a project with its creator as an active manager and requires active membership for reads", async () => {

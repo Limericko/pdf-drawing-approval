@@ -374,12 +374,15 @@ export function securityRepositoriesContract(options: ContractOptions) {
     it("persists TOTP credentials and consumes one recovery code exactly once across independent connections", async () => {
       const user = await context().createUser();
       const encryptedSecret = randomBytes(52);
+      const confirmedAt = new Date(Date.now() + 1_000);
       const credential = await repositories().mfa.saveTotpCredential({
         userId: user.id,
         encryptedSecret,
-        keyVersion: "v1"
+        keyVersion: "v1",
+        confirmedAt
       });
       expectCopiedBuffer(credential.encryptedSecret, encryptedSecret);
+      expect(credential.confirmedAt).toEqual(confirmedAt);
       await expect(repositories().mfa.findTotpCredentialByUserId(user.id)).resolves.toEqual(credential);
 
       const codeHash = randomBytes(32);

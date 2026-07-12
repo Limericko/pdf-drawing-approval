@@ -881,7 +881,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
 
       for (const [role, pool] of [
         ["web", web],
-        ["worker", worker]
+        ["worker", worker],
+        ["bootstrap", bootstrap]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
           rowCount: 6
@@ -892,7 +893,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
            VALUES (99, '0099_forbidden.sql', 'forbidden', $1)`,
           ["f".repeat(64)]
         );
-        expect(role).toMatch(/web|worker/);
+        expect(role).toMatch(/web|worker|bootstrap/);
       }
     });
   });

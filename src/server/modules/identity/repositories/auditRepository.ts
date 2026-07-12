@@ -28,5 +28,6 @@ export type ListAuditEventsInput = {
 
 export interface AuditRepository {
   append(input: AppendAuditEventInput): Promise<AuditEvent>;
+  appendOnly(input: AppendAuditEventInput): Promise<void>;
   list(input?: ListAuditEventsInput): Promise<readonly AuditEvent[]>;
 }

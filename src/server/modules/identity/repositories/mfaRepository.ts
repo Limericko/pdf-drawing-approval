@@ -58,6 +58,13 @@ export type CreateMfaEnrollmentInput = {
   readonly maxAttempts: number;
 };
 
+export type SaveTotpCredentialInput = {
+  readonly userId: string;
+  readonly encryptedSecret: Buffer;
+  readonly keyVersion: string;
+  readonly confirmedAt?: Date;
+};
+
 export interface MfaRepository {
   createChallenge(input: CreateMfaChallengeInput): Promise<MfaChallenge>;
   findActiveChallengeByTokenHash(tokenHash: Buffer): Promise<MfaChallenge | undefined>;
@@ -77,8 +84,10 @@ export interface MfaRepository {
   invalidateEnrollment(id: string): Promise<MfaEnrollment | undefined>;
   /** When consuming the invitation too, lock the invitation first and use the same service transaction. */
   completeEnrollment(id: string): Promise<MfaEnrollment | undefined>;
-  saveTotpCredential(input: { readonly userId: string; readonly encryptedSecret: Buffer; readonly keyVersion: string }): Promise<TotpCredential>;
+  saveTotpCredential(input: SaveTotpCredentialInput): Promise<TotpCredential>;
+  insertTotpCredential(input: SaveTotpCredentialInput): Promise<void>;
   findTotpCredentialByUserId(userId: string): Promise<TotpCredential | undefined>;
   addRecoveryCodes(userId: string, codes: readonly { readonly keyVersion: string; readonly hash: Buffer }[]): Promise<readonly RecoveryCodeRecord[]>;
+  insertRecoveryCodes(userId: string, codes: readonly { readonly keyVersion: string; readonly hash: Buffer }[]): Promise<void>;
   consumeRecoveryCode(userId: string, keyVersion: string, hash: Buffer): Promise<RecoveryCodeRecord | undefined>;
 }

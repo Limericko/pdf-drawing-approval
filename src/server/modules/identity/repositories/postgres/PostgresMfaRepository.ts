@@ -8,6 +8,7 @@ import type {
   MfaEnrollment,
   MfaRepository,
   RecoveryCodeRecord,
+  SaveTotpCredentialInput,
   TotpCredential
 } from "../mfaRepository.ts";
 
@@ -177,18 +178,30 @@ export class PostgresMfaRepository implements MfaRepository {
     return result.rows[0] ? mapEnrollment(result.rows[0]) : undefined;
   }
 
-  async saveTotpCredential(input: { readonly userId: string; readonly encryptedSecret: Buffer; readonly keyVersion: string }) {
+  async saveTotpCredential(input: SaveTotpCredentialInput) {
+    const owned = ownTotpCredential(input);
     const result = await this.executor.query<CredentialRow>(
-      `WITH times AS (SELECT clock_timestamp() AS now)
+      `WITH times AS (SELECT COALESCE($5::timestamptz, clock_timestamp()) AS now)
        INSERT INTO platform.totp_credentials
          (id, user_id, encrypted_secret, key_version, confirmed_at, created_at, updated_at)
        SELECT $1, $2, $3, $4, now, now, now FROM times
        ON CONFLICT (user_id) DO UPDATE SET encrypted_secret = EXCLUDED.encrypted_secret,
          key_version = EXCLUDED.key_version, confirmed_at = EXCLUDED.confirmed_at, updated_at = EXCLUDED.updated_at
        RETURNING ${CREDENTIAL_COLUMNS}`,
-      [createIdentityId(), input.userId, Buffer.from(input.encryptedSecret), input.keyVersion]
+      [createIdentityId(), owned.userId, owned.encryptedSecret, owned.keyVersion, owned.confirmedAt]
     );
     return mapCredential(result.rows[0]!);
+  }
+
+  async insertTotpCredential(input: SaveTotpCredentialInput) {
+    const owned = ownTotpCredential(input);
+    await this.executor.query(
+      `WITH times AS (SELECT COALESCE($5::timestamptz, clock_timestamp()) AS now)
+       INSERT INTO platform.totp_credentials
+         (id, user_id, encrypted_secret, key_version, confirmed_at, created_at, updated_at)
+       SELECT $1, $2, $3, $4, now, now, now FROM times`,
+      [createIdentityId(), owned.userId, owned.encryptedSecret, owned.keyVersion, owned.confirmedAt]
+    );
   }
 
   async findTotpCredentialByUserId(userId: string) {
@@ -214,6 +227,21 @@ export class PostgresMfaRepository implements MfaRepository {
     return result.rows.map(mapRecovery);
   }
 
+  async insertRecoveryCodes(userId: string, codes: readonly { readonly keyVersion: string; readonly hash: Buffer }[]) {
+    if (codes.length === 0) return;
+    const values: unknown[] = [];
+    const tuples = codes.map((code, index) => {
+      const offset = index * 4;
+      values.push(createIdentityId(), userId, Buffer.from(code.hash), code.keyVersion);
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`;
+    });
+    await this.executor.query(
+      `INSERT INTO platform.recovery_codes (id, user_id, code_hash, key_version)
+       VALUES ${tuples.join(", ")}`,
+      values
+    );
+  }
+
   async consumeRecoveryCode(userId: string, keyVersion: string, hash: Buffer) {
     const result = await this.executor.query<RecoveryRow>(
       `UPDATE platform.recovery_codes SET used_at = clock_timestamp()
@@ -223,4 +251,15 @@ export class PostgresMfaRepository implements MfaRepository {
     );
     return result.rows[0] ? mapRecovery(result.rows[0]) : undefined;
   }
+}
+
+function ownTotpCredential(input: SaveTotpCredentialInput) {
+  const confirmedAt = input.confirmedAt === undefined ? null : new Date(input.confirmedAt.getTime());
+  if (confirmedAt !== null && !Number.isFinite(confirmedAt.getTime())) throw new Error("INVALID_TOTP_CONFIRMED_AT");
+  return {
+    userId: input.userId,
+    encryptedSecret: Buffer.from(input.encryptedSecret),
+    keyVersion: input.keyVersion,
+    confirmedAt
+  };
 }

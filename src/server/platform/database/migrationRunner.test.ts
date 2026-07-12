@@ -220,6 +220,9 @@ describe("runMigrations", () => {
     expect(client.query).toHaveBeenCalledWith("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_ID]);
     expect(client.query).toHaveBeenCalledWith("CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION current_user");
     expect(client.query).toHaveBeenCalledWith("REVOKE ALL ON SCHEMA platform FROM PUBLIC");
+    expect(client.query).toHaveBeenCalledWith(
+      "GRANT SELECT ON TABLE platform.schema_migrations TO platform_web, platform_worker, platform_bootstrap"
+    );
     for (const [index, migration] of migrations.entries()) {
       expect(client.query).toHaveBeenCalledWith(fixtureSql[index]);
       expect(client.query).toHaveBeenCalledWith(

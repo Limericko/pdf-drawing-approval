@@ -6,6 +6,7 @@ export type CreateUserInput = {
   readonly passwordHash: string;
   readonly platformRole: PlatformRole;
   readonly status: UserStatus;
+  readonly mfaEnabledAt?: Date;
 };
 
 export interface UserRepository {
