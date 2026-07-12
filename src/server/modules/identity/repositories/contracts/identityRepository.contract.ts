@@ -93,6 +93,26 @@ export function identityRepositoryContract(options: ContractOptions) {
         .resolves.toBeUndefined();
     });
 
+    it("updates passwords and disables only active users with database-owned timestamps", async () => {
+      const passwordUser = await createUser();
+      const disabledUser = await createUser({ email: "disabled-update@example.test" });
+
+      const passwordUpdated = await repositories().users.updatePasswordHash(passwordUser.id, "$argon2id$changed");
+      expect(passwordUpdated).toMatchObject({
+        id: passwordUser.id, passwordHash: "$argon2id$changed", status: "active"
+      });
+      expect(passwordUpdated!.updatedAt.getTime()).toBeGreaterThan(passwordUser.updatedAt.getTime());
+      const disabled = await repositories().users.disable(disabledUser.id);
+      expect(disabled).toMatchObject({ id: disabledUser.id, status: "disabled" });
+      expect(disabled!.updatedAt.getTime()).toBeGreaterThan(disabledUser.updatedAt.getTime());
+      await expect(repositories().users.updatePasswordHash(disabledUser.id, "$argon2id$forbidden"))
+        .resolves.toBeUndefined();
+      await expect(repositories().users.disable(disabledUser.id)).resolves.toBeUndefined();
+      await expect(repositories().users.findById(passwordUser.id)).resolves.toMatchObject({
+        updatedAt: expect.any(Date)
+      });
+    });
+
     it("generates RFC-compatible UUIDv7 identifiers in the application for every identity aggregate", async () => {
       const creator = await createUser();
       const { project, creatorMembership } = await createProject(creator.id);

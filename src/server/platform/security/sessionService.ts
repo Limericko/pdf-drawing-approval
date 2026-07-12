@@ -6,6 +6,7 @@ import type { PlatformUser } from "../../modules/identity/models.ts";
 import { PostgresAuditRepository } from "../../modules/identity/repositories/postgres/PostgresAuditRepository.ts";
 import { PostgresSessionRepository } from "../../modules/identity/repositories/postgres/PostgresSessionRepository.ts";
 import { PostgresUserRepository } from "../../modules/identity/repositories/postgres/PostgresUserRepository.ts";
+import { passwordHashMatchesOptions, type Argon2idOptions } from "./passwords.ts";
 import { hashOpaqueToken } from "./tokenHash.ts";
 
 const SESSION_ABSOLUTE_LIFETIME_SECONDS = 12 * 60 * 60;
@@ -26,8 +27,11 @@ export class SessionServiceError extends Error {
   }
 }
 
-export function createSessionService(options: { readonly pool: PlatformPool }) {
-  if (!options?.pool) throw inputInvalid();
+export function createSessionService(options: {
+  readonly pool: PlatformPool;
+  readonly passwordHashOptions: Argon2idOptions;
+}) {
+  if (!options?.pool || !options.passwordHashOptions) throw inputInvalid();
   return Object.freeze({
     createInTransaction(transaction: QueryExecutor, input: {
       readonly userId: string;
@@ -103,18 +107,21 @@ export function createSessionService(options: { readonly pool: PlatformPool }) {
       }
     },
 
-    async revokeAllForSecurityChange(input: {
+    async changePasswordAndRevokeAll(input: {
       readonly userId: string;
+      readonly newPasswordHash: string;
       readonly requestId: string;
-      readonly reason: "password-change" | "user-disabled";
     }) {
       const userId = ownUserId(input?.userId);
       const requestId = ownRequestId(input?.requestId);
-      if (input?.reason !== "password-change" && input?.reason !== "user-disabled") throw inputInvalid();
+      if (typeof input?.newPasswordHash !== "string" ||
+          !passwordHashMatchesOptions(input.newPasswordHash, options.passwordHashOptions)) throw inputInvalid();
       try {
         return await withTransaction(options.pool, async (transaction) => {
-          const user = await new PostgresUserRepository(transaction).lockById(userId);
-          if (!user) throw invalid();
+          const users = new PostgresUserRepository(transaction);
+          const user = await users.lockById(userId);
+          if (!user || user.status !== "active") throw invalid();
+          if (!await users.updatePasswordHash(userId, input.newPasswordHash)) throw invalid();
           const revokedCount = await new PostgresSessionRepository(transaction).revokeAllForUser(userId);
           await new PostgresAuditRepository(transaction).append({
             actorUserId: userId,
@@ -124,7 +131,40 @@ export function createSessionService(options: { readonly pool: PlatformPool }) {
             targetId: userId,
             requestId,
             result: "success",
-            metadata: { reason: input.reason }
+            metadata: { reason: "password-change" }
+          });
+          return Object.freeze({ revokedCount });
+        });
+      } catch (error) {
+        if (error instanceof SessionServiceError) throw error;
+        throw dependencyUnavailable(error);
+      }
+    },
+
+    async disableUserAndRevokeAll(input: {
+      readonly targetUserId: string;
+      readonly actorUserId: string;
+      readonly requestId: string;
+    }) {
+      const targetUserId = ownUserId(input?.targetUserId);
+      const actorUserId = ownUserId(input?.actorUserId);
+      const requestId = ownRequestId(input?.requestId);
+      try {
+        return await withTransaction(options.pool, async (transaction) => {
+          const users = new PostgresUserRepository(transaction);
+          const target = await users.lockById(targetUserId);
+          if (!target || target.status !== "active") throw invalid();
+          if (!await users.disable(targetUserId)) throw invalid();
+          const revokedCount = await new PostgresSessionRepository(transaction).revokeAllForUser(targetUserId);
+          await new PostgresAuditRepository(transaction).append({
+            actorUserId,
+            actorType: "user",
+            action: "session.revoke_all",
+            targetType: "user",
+            targetId: targetUserId,
+            requestId,
+            result: "success",
+            metadata: { reason: "user-disabled" }
           });
           return Object.freeze({ revokedCount });
         });

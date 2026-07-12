@@ -87,4 +87,24 @@ export class PostgresUserRepository implements UserRepository {
     );
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
+
+  async updatePasswordHash(id: string, passwordHash: string) {
+    const result = await this.executor.query<UserRow>(
+      `UPDATE platform.users SET password_hash = $2, updated_at = GREATEST(updated_at, clock_timestamp())
+       WHERE id = $1 AND status = 'active'
+       RETURNING ${USER_COLUMNS}`,
+      [id, passwordHash]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
+
+  async disable(id: string) {
+    const result = await this.executor.query<UserRow>(
+      `UPDATE platform.users SET status = 'disabled', updated_at = GREATEST(updated_at, clock_timestamp())
+       WHERE id = $1 AND status = 'active'
+       RETURNING ${USER_COLUMNS}`,
+      [id]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
 }

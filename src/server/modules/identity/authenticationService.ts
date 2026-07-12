@@ -77,7 +77,7 @@ export function createAuthenticationService(options: Options) {
   const makeToken = options.generateOpaqueToken ?? generateOpaqueToken;
   const logger = options.logger ?? { error() {} };
   const rateLimits = createRateLimitService({ pool: options.pool });
-  const sessions = createSessionService({ pool: options.pool });
+  const sessions = createSessionService({ pool: options.pool, passwordHashOptions: options.passwordHashOptions });
 
   return Object.freeze({
     async login(input: {

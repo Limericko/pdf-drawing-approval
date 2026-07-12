@@ -7,6 +7,10 @@ import { PostgresSessionRepository } from "../../modules/identity/repositories/p
 import { PostgresUserRepository } from "../../modules/identity/repositories/postgres/PostgresUserRepository.ts";
 import { createSessionService } from "./sessionService.ts";
 
+const passwordHashOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 } as const;
+const validNewPasswordHash =
+  "$argon2id$v=19$m=19456,t=2,p=1$rUGf7HCiiHaKSmXoxVCJGA$y/CRugqFEn15nKRtAD1mCOQUYjNQriOuHh1kLhe+heA";
+
 let database: PlatformTestDatabase;
 let migration: ReturnType<PlatformTestDatabase["createPool"]>;
 let web: PlatformPool;
@@ -41,7 +45,7 @@ describe("SessionService", () => {
     const user = await createUser("lifetime@example.test");
     const tokenHash = Buffer.alloc(32, 1);
 
-    const session = await createSessionService({ pool: web }).createInTransaction(migration, {
+    const session = await sessionService().createInTransaction(migration, {
       userId: user.id, tokenHash, clientSummary: "integration-client"
     });
 
@@ -60,8 +64,8 @@ describe("SessionService", () => {
     const before = await sessionTimes(session.id);
 
     const results = await Promise.all([
-      createSessionService({ pool: concurrentA }).authenticate({ sessionToken: rawToken }),
-      createSessionService({ pool: concurrentB }).authenticate({ sessionToken: rawToken })
+      sessionService(concurrentA).authenticate({ sessionToken: rawToken }),
+      sessionService(concurrentB).authenticate({ sessionToken: rawToken })
     ]);
 
     expect(results).toHaveLength(2);
@@ -75,7 +79,7 @@ describe("SessionService", () => {
     expect(after.absoluteExpiresAt).toEqual(before.absoluteExpiresAt);
     expect(after.idleExpiresAt.getTime()).toBeLessThanOrEqual(after.absoluteExpiresAt.getTime());
 
-    await createSessionService({ pool: web }).authenticate({ sessionToken: rawToken });
+    await sessionService().authenticate({ sessionToken: rawToken });
     expect(await sessionTimes(session.id)).toEqual(after);
   });
 
@@ -95,7 +99,7 @@ describe("SessionService", () => {
     for (const item of cases) {
       const session = await createSession(item.userId, item.token);
       await migration.query(`UPDATE platform.sessions SET ${item.update} WHERE id=$1`, [session.id]);
-      await expect(createSessionService({ pool: web }).authenticate({ sessionToken: item.token }))
+      await expect(sessionService().authenticate({ sessionToken: item.token }))
         .rejects.toMatchObject({ code: "SESSION_INVALID" });
     }
   });
@@ -104,7 +108,7 @@ describe("SessionService", () => {
     const user = await createUser("revoke-current@example.test");
     const rawToken = "revoke-current-token";
     const session = await createSession(user.id, rawToken);
-    const service = createSessionService({ pool: web });
+    const service = sessionService();
 
     await installAuditFailure("session.revoke");
     try {
@@ -124,33 +128,101 @@ describe("SessionService", () => {
       .resolves.toMatchObject({ rows: [{ revoked: 1, audits: 1 }] });
   });
 
-  it("provides audited password-change and user-disabled revocation of all user sessions", async () => {
-    const user = await createUser("revoke-all@example.test");
-    const other = await createUser("other-session@example.test");
-    await createSession(user.id, "revoke-all-1");
-    await createSession(user.id, "revoke-all-2");
-    await createSession(other.id, "other-token");
-    const service = createSessionService({ pool: web });
+  it("changes the password, revokes every session and appends one audit in the same commit", async () => {
+    const user = await createUser("password-change@example.test");
+    const other = await createUser("password-change-other@example.test");
+    await createSession(user.id, "password-change-1");
+    await createSession(user.id, "password-change-2");
+    await createSession(other.id, "password-change-other");
 
-    await expect(service.revokeAllForSecurityChange({ userId: user.id, requestId: "password-change",
-      reason: "password-change" })).resolves.toEqual({ revokedCount: 2 });
-    await expect(new PostgresSessionRepository(migration).findActiveByTokenHash(hashOpaqueToken("other-token")))
-      .resolves.toMatchObject({ userId: other.id });
+    await expect(sessionService().changePasswordAndRevokeAll({ userId: user.id, newPasswordHash: validNewPasswordHash,
+      requestId: "password-change" })).resolves.toEqual({ revokedCount: 2 });
+    await expect(securityChangeState(user.id, "password-change-other")).resolves.toEqual({
+      passwordHash: validNewPasswordHash, status: "active", activeSessions: 0, otherSessionActive: 1,
+      audits: 1, actorUserId: user.id, targetUserId: user.id, reason: "password-change"
+    });
+  });
 
-    const replacement = await createSession(user.id, "replacement-token");
+  it("rolls back the password and session revocations when the audit fails", async () => {
+    const user = await createUser("password-rollback@example.test");
+    const session = await createSession(user.id, "password-rollback-token");
     await installAuditFailure("session.revoke_all");
     try {
-      await expect(service.revokeAllForSecurityChange({ userId: user.id, requestId: "user-disabled",
-        reason: "user-disabled" })).rejects.toMatchObject({ code: "SESSION_SECURITY_DEPENDENCY_UNAVAILABLE" });
-      await expect(new PostgresSessionRepository(migration).findActiveByTokenHash(hashOpaqueToken("replacement-token")))
-        .resolves.toMatchObject({ id: replacement.id });
+      await expect(sessionService().changePasswordAndRevokeAll({ userId: user.id,
+        newPasswordHash: validNewPasswordHash, requestId: "password-rollback" }))
+        .rejects.toMatchObject({ code: "SESSION_SECURITY_DEPENDENCY_UNAVAILABLE" });
+      await expect(new PostgresUserRepository(migration).findById(user.id))
+        .resolves.toMatchObject({ passwordHash: "$argon2id$seed", status: "active" });
+      await expect(new PostgresSessionRepository(migration).findActiveByTokenHash(hashOpaqueToken("password-rollback-token")))
+        .resolves.toMatchObject({ id: session.id });
+      await expect(auditCount()).resolves.toBe(0);
     } finally {
       await removeAuditFailure();
     }
   });
 
+  it("disables the target user, revokes sessions and audits the supplied actor", async () => {
+    const actor = await createUser("disable-actor@example.test");
+    const target = await createUser("disable-target@example.test");
+    await createSession(target.id, "disable-target-token");
+
+    await expect(sessionService().disableUserAndRevokeAll({ targetUserId: target.id, actorUserId: actor.id,
+      requestId: "disable-user" })).resolves.toEqual({ revokedCount: 1 });
+    await expect(securityChangeState(target.id)).resolves.toEqual({ passwordHash: "$argon2id$seed",
+      status: "disabled", activeSessions: 0, otherSessionActive: 0, audits: 1,
+      actorUserId: actor.id, targetUserId: target.id, reason: "user-disabled" });
+  });
+
+  it("rolls back user disabling and session revocations when the audit fails", async () => {
+    const actor = await createUser("disable-rollback-actor@example.test");
+    const target = await createUser("disable-rollback-target@example.test");
+    const session = await createSession(target.id, "disable-rollback-token");
+    await installAuditFailure("session.revoke_all");
+    try {
+      await expect(sessionService().disableUserAndRevokeAll({ targetUserId: target.id, actorUserId: actor.id,
+        requestId: "disable-rollback" }))
+        .rejects.toMatchObject({ code: "SESSION_SECURITY_DEPENDENCY_UNAVAILABLE" });
+      await expect(new PostgresUserRepository(migration).findById(target.id))
+        .resolves.toMatchObject({ status: "active" });
+      await expect(new PostgresSessionRepository(migration).findActiveByTokenHash(hashOpaqueToken("disable-rollback-token")))
+        .resolves.toMatchObject({ id: session.id });
+      await expect(auditCount()).resolves.toBe(0);
+    } finally {
+      await removeAuditFailure();
+    }
+  });
+
+  it("rejects an invalid password hash before opening a transaction", async () => {
+    const service = sessionService(failingPool("transaction must not open"));
+
+    await expect(service.changePasswordAndRevokeAll({
+      userId: "01890f1e-9b4a-7cc2-8f00-000000000001", newPasswordHash: "$argon2id$invalid",
+      requestId: "invalid-password-hash"
+    })).rejects.toMatchObject({ code: "SESSION_INPUT_INVALID" });
+  });
+
+  it("serializes concurrent disable operations so only one state change and audit succeeds", async () => {
+    const actor = await createUser("disable-concurrent-actor@example.test");
+    const target = await createUser("disable-concurrent-target@example.test");
+    await createSession(target.id, "disable-concurrent-token");
+    const input = { targetUserId: target.id, actorUserId: actor.id, requestId: "disable-concurrent" };
+
+    const outcomes = await Promise.allSettled([
+      sessionService(concurrentA).disableUserAndRevokeAll(input),
+      sessionService(concurrentB).disableUserAndRevokeAll(input)
+    ]);
+    expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect(outcomes.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: { code: "SESSION_INVALID" }
+    });
+    await expect(securityChangeState(target.id)).resolves.toMatchObject({
+      status: "disabled", activeSessions: 0, audits: 1
+    });
+  });
+
   it("sanitizes session lookup dependency failures", async () => {
-    const service = createSessionService({ pool: failingPool("session database secret must not leak") });
+    const service = sessionService(failingPool("session database secret must not leak"));
 
     const error = await service.authenticate({ sessionToken: "opaque-session-token" })
       .then(() => undefined, (failure: unknown) => failure);
@@ -169,6 +241,36 @@ function createUser(email: string, status: "active" | "disabled" = "active") {
 function createSession(userId: string, rawToken: string) {
   return new PostgresSessionRepository(migration).create({ userId, tokenHash: hashOpaqueToken(rawToken),
     absoluteLifetimeSeconds: 12 * 60 * 60, idleLifetimeSeconds: 60 * 60, clientSummary: "integration-client" });
+}
+
+function sessionService(pool = web) {
+  return createSessionService({ pool, passwordHashOptions });
+}
+
+async function securityChangeState(userId: string, otherToken?: string) {
+  const result = await migration.query<{ password_hash: string; status: "active" | "disabled";
+    active_sessions: number; other_session_active: number; audits: number; actor_user_id: string | null;
+    target_id: string | null; reason: string | null }>(`SELECT u.password_hash,u.status,
+      (SELECT count(*) FROM platform.sessions WHERE user_id=u.id AND revoked_at IS NULL)::int AS active_sessions,
+      (SELECT count(*) FROM platform.sessions WHERE token_hash=$2 AND revoked_at IS NULL)::int AS other_session_active,
+      (SELECT count(*) FROM platform.audit_events WHERE action='session.revoke_all' AND target_id=u.id)::int AS audits,
+      (SELECT actor_user_id FROM platform.audit_events WHERE action='session.revoke_all' AND target_id=u.id
+        ORDER BY occurred_at DESC LIMIT 1) AS actor_user_id,
+      (SELECT target_id FROM platform.audit_events WHERE action='session.revoke_all' AND target_id=u.id
+        ORDER BY occurred_at DESC LIMIT 1) AS target_id,
+      (SELECT metadata->>'reason' FROM platform.audit_events WHERE action='session.revoke_all' AND target_id=u.id
+        ORDER BY occurred_at DESC LIMIT 1) AS reason
+    FROM platform.users u WHERE u.id=$1`, [userId, otherToken ? hashOpaqueToken(otherToken) : Buffer.alloc(32)]);
+  const row = result.rows[0]!;
+  return { passwordHash: row.password_hash, status: row.status, activeSessions: row.active_sessions,
+    otherSessionActive: row.other_session_active, audits: row.audits, actorUserId: row.actor_user_id,
+    targetUserId: row.target_id, reason: row.reason };
+}
+
+async function auditCount() {
+  const result = await migration.query<{ count: number }>(
+    "SELECT count(*)::int AS count FROM platform.audit_events WHERE action='session.revoke_all'");
+  return result.rows[0]!.count;
 }
 
 async function sessionTimes(id: string) {
