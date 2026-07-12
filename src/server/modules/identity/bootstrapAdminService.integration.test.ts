@@ -40,13 +40,35 @@ beforeEach(async () => {
   await migration.query("TRUNCATE platform.users CASCADE");
 });
 
-function service(secret = totpSecret) {
+function schedulerHarness() {
+  let active = false;
+  let cancelCount = 0;
+  return {
+    scheduler: {
+      schedule() {
+        active = true;
+        return {
+          cancel() {
+            if (!active) return;
+            active = false;
+            cancelCount += 1;
+          }
+        };
+      }
+    },
+    get active() { return active; },
+    get cancelCount() { return cancelCount; }
+  };
+}
+
+function service(secret = totpSecret, scheduler?: ReturnType<typeof schedulerHarness>["scheduler"]) {
   return createBootstrapAdminService({
     pool: bootstrap,
     keyrings,
     passwordHashOptions,
     clock: () => new Date(now),
-    generateTotpSecret: () => Buffer.from(secret)
+    generateTotpSecret: () => Buffer.from(secret),
+    scheduler
   });
 }
 
@@ -72,8 +94,14 @@ async function counts() {
 
 describe("BootstrapAdminService", () => {
   it("creates one complete MFA-enabled administrator and returns ten one-time recovery codes", async () => {
-    const challenge = await prepare();
+    const expiration = schedulerHarness();
+    const challenge = await service(totpSecret, expiration.scheduler).prepare({
+      email: " First.Admin@Example.Test ",
+      displayName: "First Administrator",
+      password: "correct horse battery staple"
+    });
     expect(challenge.otpauthUri).toMatch(/^otpauth:\/\/totp\//);
+    expect(expiration.active).toBe(true);
 
     const completed = await challenge.complete(totpAt(totpSecret, now.getTime()));
 
@@ -97,6 +125,8 @@ describe("BootstrapAdminService", () => {
       confirmed_at: user.rows[0]!.mfa_enabled_at
     }]);
     expect(await counts()).toEqual({ users: "1", credentials: "1", recovery: "10", successful_audits: "1" });
+    expect(expiration.active).toBe(false);
+    expect(expiration.cancelCount).toBe(1);
     await expect(challenge.complete(totpAt(totpSecret, now.getTime())))
       .rejects.toMatchObject({ code: "BOOTSTRAP_ADMIN_CHALLENGE_USED" });
   });

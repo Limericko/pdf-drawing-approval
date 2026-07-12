@@ -52,6 +52,7 @@ export async function runBootstrapAdminCommand(options: CommandOptions): Promise
   }
 
   let runtime: BootstrapAdminRuntime | undefined;
+  let challenge: BootstrapAdminChallenge | undefined;
   let primaryError: unknown;
   let cleanupError: unknown;
   try {
@@ -61,7 +62,7 @@ export async function runBootstrapAdminCommand(options: CommandOptions): Promise
     const email = await options.prompt.text("email");
     const displayName = await options.prompt.text("displayName");
     const enteredPassword = await options.prompt.hidden("password");
-    const challenge = await runtime.prepare({ email, displayName, password: enteredPassword });
+    challenge = await runtime.prepare({ email, displayName, password: enteredPassword });
     options.output.write(challenge.otpauthUri);
     const token = await options.prompt.text("totp");
     const completed = await challenge.complete(token);
@@ -70,6 +71,8 @@ export async function runBootstrapAdminCommand(options: CommandOptions): Promise
   } catch (error) {
     primaryError = error;
   }
+
+  challenge?.dispose();
 
   if (runtime) {
     try {

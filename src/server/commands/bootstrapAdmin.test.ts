@@ -7,20 +7,32 @@ import {
   type BootstrapAdminRuntime,
   type BootstrapCommandPrompt
 } from "./bootstrapAdmin.ts";
-import { BootstrapAdminError } from "../modules/identity/bootstrapAdminService.ts";
+import {
+  BootstrapAdminError,
+  type BootstrapAdminChallenge
+} from "../modules/identity/bootstrapAdminService.ts";
 
 vi.mock("@inquirer/prompts", () => ({ input: vi.fn(), password: vi.fn() }));
 
 const plaintextPassword = "correct horse battery staple";
 const recoveryCodes = Array.from({ length: 10 }, (_, index) => `CODE-${index}`);
 
-function runtime(overrides: Partial<BootstrapAdminRuntime> = {}): BootstrapAdminRuntime {
+function challenge(overrides: Partial<BootstrapAdminChallenge> = {}): BootstrapAdminChallenge {
+  return {
+    otpauthUri: "otpauth://totp/PDF%20Approval:admin%40example.test?secret=TEST",
+    complete: vi.fn(async () => ({ recoveryCodes })),
+    dispose: vi.fn(),
+    ...overrides
+  };
+}
+
+function runtime(
+  overrides: Partial<BootstrapAdminRuntime> = {},
+  preparedChallenge = challenge()
+): BootstrapAdminRuntime {
   return {
     assertSchema: vi.fn(async () => undefined),
-    prepare: vi.fn(async () => ({
-      otpauthUri: "otpauth://totp/PDF%20Approval:admin%40example.test?secret=TEST",
-      complete: vi.fn(async () => ({ recoveryCodes }))
-    })),
+    prepare: vi.fn(async () => preparedChallenge),
     close: vi.fn(async () => undefined),
     ...overrides
   };
@@ -33,12 +45,14 @@ function commandOptions(overrides: Record<string, unknown> = {}) {
     text: vi.fn(async (field) => field === "email" ? "admin@example.test" : field === "displayName" ? "Admin" : "123456"),
     hidden: vi.fn(async () => plaintextPassword)
   };
-  const activeRuntime = runtime();
+  const activeChallenge = challenge();
+  const activeRuntime = runtime({}, activeChallenge);
   return {
     lines,
     errors,
     prompt,
     activeRuntime,
+    activeChallenge,
     options: {
       env: {
         NODE_ENV: "test",
@@ -66,7 +80,50 @@ describe("bootstrap admin command", () => {
     expect(test.lines.join("\n")).toContain("otpauth://");
     for (const code of recoveryCodes) expect(test.lines).toContain(code);
     expect(`${test.lines.join("\n")}\n${test.errors.join("\n")}`).not.toContain(plaintextPassword);
+    expect(test.activeChallenge.dispose).toHaveBeenCalledOnce();
     expect(test.activeRuntime.close).toHaveBeenCalledOnce();
+  });
+
+  it("disposes the challenge when writing the enrollment URI is interrupted", async () => {
+    const errors: string[] = [];
+    const test = commandOptions({
+      output: {
+        write: vi.fn(() => { throw new Error("output interrupted"); }),
+        error: (line: string) => errors.push(line)
+      }
+    });
+
+    await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
+
+    expect(test.activeChallenge.dispose).toHaveBeenCalledOnce();
+    expect(test.activeRuntime.close).toHaveBeenCalledOnce();
+    expect(errors).toEqual(["BOOTSTRAP_ADMIN_FAILED"]);
+  });
+
+  it("disposes the challenge when the TOTP prompt is interrupted", async () => {
+    const test = commandOptions();
+    vi.mocked(test.prompt.text).mockImplementation(async (field) => {
+      if (field === "totp") throw new Error("prompt interrupted");
+      return field === "email" ? "admin@example.test" : "Admin";
+    });
+
+    await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
+
+    expect(test.activeChallenge.dispose).toHaveBeenCalledOnce();
+    expect(test.activeRuntime.close).toHaveBeenCalledOnce();
+  });
+
+  it("disposes the challenge when TOTP completion fails", async () => {
+    const test = commandOptions();
+    vi.mocked(test.activeChallenge.complete).mockRejectedValueOnce(
+      new BootstrapAdminError("BOOTSTRAP_ADMIN_TOTP_INVALID")
+    );
+
+    await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
+
+    expect(test.activeChallenge.dispose).toHaveBeenCalledOnce();
+    expect(test.activeRuntime.close).toHaveBeenCalledOnce();
+    expect(test.errors).toEqual(["BOOTSTRAP_ADMIN_TOTP_INVALID"]);
   });
 
   it("maps the hidden field to the inquirer password prompt without echoing its value", async () => {
@@ -125,11 +182,12 @@ describe("bootstrap admin command", () => {
 
   it("returns failure and reports a stable error when successful work is followed by a close failure", async () => {
     const cleanupSecret = "close-database-secret";
+    const activeChallenge = challenge();
     const failedRuntime = runtime({
       close: vi.fn(async () => {
         throw new Error(`close failed: ${cleanupSecret}`);
       })
-    });
+    }, activeChallenge);
     const test = commandOptions({ openRuntime: vi.fn(async () => failedRuntime) });
 
     await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
@@ -137,6 +195,7 @@ describe("bootstrap admin command", () => {
     expect(test.lines).toContain("RECOVERY_CODES");
     expect(test.errors).toEqual(["BOOTSTRAP_ADMIN_FAILED"]);
     expect(test.errors.join("\n")).not.toContain(cleanupSecret);
+    expect(activeChallenge.dispose).toHaveBeenCalledOnce();
     expect(failedRuntime.close).toHaveBeenCalledOnce();
   });
 
