@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { VersionedKeyring } from "../../platform/config/types.ts";
+import type { PlatformSessionConfig, VersionedKeyring } from "../../platform/config/types.ts";
 import type { PlatformPool } from "../../platform/database/pool.ts";
 import type { QueryExecutor } from "../../platform/database/queryExecutor.ts";
 import { withTransaction } from "../../platform/database/transaction.ts";
@@ -57,6 +57,7 @@ type Options = {
     readonly recoveryHmac: VersionedKeyring;
   };
   readonly passwordHashOptions: Argon2idOptions;
+  readonly session: Pick<PlatformSessionConfig, "absoluteTtlMs" | "idleTtlMs" | "touchIntervalMs">;
   readonly dummyPasswordHash?: string;
   readonly verifyPassword?: typeof verifyPassword;
   readonly verifyTotp?: typeof verifyTotp;
@@ -67,7 +68,7 @@ type Options = {
 
 export function createAuthenticationService(options: Options) {
   const dummyPasswordHash = options?.dummyPasswordHash ?? AUTHENTICATION_DUMMY_PASSWORD_HASH;
-  if (!options?.pool || !options.keyrings || !options.passwordHashOptions ||
+  if (!options?.pool || !options.keyrings || !options.passwordHashOptions || !options.session ||
       !options.logger || typeof options.logger !== "object" || typeof options.logger.error !== "function" ||
       !passwordHashMatchesOptions(dummyPasswordHash, options.passwordHashOptions)) {
     throw new AuthenticationServiceError("AUTHENTICATION_INPUT_INVALID");
@@ -78,7 +79,11 @@ export function createAuthenticationService(options: Options) {
   const makeToken = options.generateOpaqueToken ?? generateOpaqueToken;
   const logger = options.logger;
   const rateLimits = createRateLimitService({ pool: options.pool });
-  const sessions = createSessionService({ pool: options.pool, passwordHashOptions: options.passwordHashOptions });
+  const sessions = createSessionService({
+    pool: options.pool,
+    passwordHashOptions: options.passwordHashOptions,
+    session: options.session
+  });
 
   return Object.freeze({
     async login(input: {

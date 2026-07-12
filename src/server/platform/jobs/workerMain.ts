@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { v7 as uuidv7 } from "uuid";
 import { loadPlatformConfig } from "../config/loadPlatformConfig.ts";
 import type { WorkerPlatformConfig } from "../config/types.ts";
+import { createDependencyHealthCache } from "../dependencyHealthCache.ts";
 import { loadMigrationFiles } from "../database/migrationFiles.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { assertExpectedSchema } from "../database/schemaVersion.ts";
@@ -29,6 +30,8 @@ const RECONCILE_BATCH_SIZE = 100;
 const RECONCILE_INTERVAL_MS = 60_000;
 const IDLE_SLEEP_MS = 250;
 const MAX_STAGING_CLEANUP_VERIFICATION_MS = 1_000;
+const SMTP_HEALTH_TIMEOUT_MS = 1_000;
+const SMTP_HEALTH_TTL_MS = 60_000;
 
 export async function workerMain(env: NodeJS.ProcessEnv = process.env) {
   const config = loadPlatformConfig(env, "worker");
@@ -53,6 +56,12 @@ export function assertWorkerCapacity(config: Pick<WorkerPlatformConfig, "databas
 async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: PlatformPool, storage: StorageAdapter) {
   const controller = new AbortController();
   const mail = createPlatformMailTransport({ config: config.smtp });
+  const smtpHealthCache = createDependencyHealthCache({
+    probe: () => mail.checkHealth(),
+    timeoutMs: SMTP_HEALTH_TIMEOUT_MS,
+    ttlMs: SMTP_HEALTH_TTL_MS
+  });
+  const smtpHealth = async () => (await smtpHealthCache.check()).ok ? "healthy" as const : "unhealthy" as const;
   const stop = () => controller.abort();
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
@@ -118,6 +127,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
         reconciler,
         reconcileIntervalMs: RECONCILE_INTERVAL_MS,
         heartbeat: new WorkerHeartbeatRepository(pool),
+        smtpHealth,
         retryPolicy: createRetryPolicy({ baseDelayMs: config.worker.retryBaseMs, maxDelayMs: config.worker.retryMaxMs, random: Math.random, clock }),
         clock,
         leaseMs: config.worker.leaseMs,

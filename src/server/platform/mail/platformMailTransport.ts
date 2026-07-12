@@ -9,15 +9,18 @@ export type InvitationMail = {
 };
 
 export interface PlatformMailTransport {
+  checkHealth(): Promise<void>;
   sendInvitation(input: InvitationMail): Promise<void>;
   close(): void;
 }
 
 type SendMail = (message: Mail.Options) => Promise<unknown>;
+type Verify = () => Promise<unknown>;
 
 export function createPlatformMailTransport(options: {
   readonly config: PlatformSmtpConfig;
   readonly sendMail?: SendMail;
+  readonly verify?: Verify;
 }): PlatformMailTransport {
   const transport = options.sendMail ? undefined : nodemailer.createTransport({
     host: options.config.host,
@@ -27,7 +30,12 @@ export function createPlatformMailTransport(options: {
     auth: options.config.username ? { user: options.config.username, pass: options.config.password } : undefined
   });
   const sendMail = options.sendMail ?? transport!.sendMail.bind(transport);
+  const verify = options.verify ?? transport?.verify.bind(transport);
   return Object.freeze({
+    async checkHealth() {
+      if (!verify) throw new Error("PLATFORM_SMTP_HEALTH_UNAVAILABLE");
+      await verify();
+    },
     async sendInvitation(input: InvitationMail) {
       assertMail(input);
       const escapedUrl = escapeHtml(input.activationUrl);

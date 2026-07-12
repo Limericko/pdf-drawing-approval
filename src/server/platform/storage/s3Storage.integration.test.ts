@@ -1,4 +1,4 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -452,6 +452,59 @@ describe("S3Storage two-stage streaming cleanup", () => {
       expect(source.listenerCount("error")).toBe(0);
     } finally {
       storage.destroy();
+    }
+  });
+
+  it("aborts a health check whose GetObject body never emits a chunk", async () => {
+    const controller = new AbortController();
+    let getSignal: AbortSignal | undefined;
+    let deleteCalls = 0;
+    let destroyCalls = 0;
+    const body = new Readable({
+      read() {},
+      destroy(error, callback) {
+        destroyCalls += 1;
+        callback(error);
+      }
+    });
+    const storage = new S3Storage(config, {
+      async send(command, options) {
+        if (command instanceof PutObjectCommand) {
+          await consume(command.input.Body as Readable);
+          return {};
+        }
+        if (command instanceof HeadObjectCommand) return { ContentLength: Buffer.byteLength("storage-health") };
+        if (command instanceof GetObjectCommand) {
+          getSignal = options?.abortSignal;
+          return { Body: body };
+        }
+        if (command instanceof DeleteObjectCommand) {
+          deleteCalls += 1;
+          return {};
+        }
+        throw new Error("Unexpected S3 command");
+      },
+      destroy() {
+        body.destroy(new Error("forced test cleanup"));
+      }
+    });
+    const health = storage.checkHealth({ signal: controller.signal });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      controller.abort();
+      const outcome = await Promise.race([
+        health.then(() => "RESOLVED", (error: unknown) => error),
+        new Promise((resolve) => setTimeout(() => resolve("STILL_PENDING_AFTER_ABORT"), 250))
+      ]);
+
+      expect(outcome).not.toBe("STILL_PENDING_AFTER_ABORT");
+      expect(outcome).toMatchObject({ code: "STORAGE_HEALTH_CHECK_FAILED" });
+      expect(getSignal).toBe(controller.signal);
+      expect(destroyCalls).toBe(1);
+      expect(deleteCalls).toBe(1);
+    } finally {
+      storage.destroy();
+      await health.catch(() => undefined);
     }
   });
 

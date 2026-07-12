@@ -26,6 +26,18 @@ const passwordOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outpu
 const correctPassword = "correct horse battery staple";
 const totpSecret = Buffer.alloc(20, 7);
 const recoveryCode = "0000-0000-0000-0000-0000-0000-0000-0001";
+const nonDefaultSessionConfig = {
+  cookieSecure: false,
+  absoluteTtlMs: 10 * 60 * 1000,
+  idleTtlMs: 2 * 60 * 1000,
+  touchIntervalMs: 30 * 1000
+} as const;
+const defaultSessionConfig = {
+  cookieSecure: false,
+  absoluteTtlMs: 12 * 60 * 60 * 1000,
+  idleTtlMs: 60 * 60 * 1000,
+  touchIntervalMs: 5 * 60 * 1000
+} as const;
 const keyrings = {
   totpEncryption: { currentVersion: "totp-v1", keys: new Map([["totp-v1", Buffer.alloc(32, 2)]]) },
   recoveryHmac: { currentVersion: "recovery-v2", keys: new Map([
@@ -203,6 +215,24 @@ describe("AuthenticationService MFA completion", () => {
       sessionRawMatches: 0, successAudits: 1 });
   });
 
+  it("uses the configured session lifetimes for the MFA-created session", async () => {
+    await createUser("configured-session@example.test");
+    const challenge = await login("configured-session@example.test", "configured-session-login");
+    const service = makeService({ session: nonDefaultSessionConfig });
+
+    await service.completeMfa(mfaInput(challenge.challengeToken, "configured-session-mfa", {
+      method: "totp", code: totpAt(totpSecret, Date.now())
+    }));
+
+    await expect(migration.query<{ absolute_seconds: number; idle_seconds: number }>(`SELECT
+      extract(epoch FROM absolute_expires_at-created_at)::int AS absolute_seconds,
+      extract(epoch FROM idle_expires_at-created_at)::int AS idle_seconds
+      FROM platform.sessions`)).resolves.toMatchObject({ rows: [{
+        absolute_seconds: nonDefaultSessionConfig.absoluteTtlMs / 1000,
+        idle_seconds: nonDefaultSessionConfig.idleTtlMs / 1000
+      }] });
+  });
+
   it("allows one of two independent TOTP completions and creates no second session", async () => {
     await createUser("concurrent-totp@example.test");
     const challenge = await login("concurrent-totp@example.test", "mfa-concurrent-login");
@@ -331,7 +361,8 @@ describe("AuthenticationService MFA completion", () => {
 
 function authenticationOptions(overrides: Record<string, unknown> = {}) {
   return { pool: web, keyrings, passwordHashOptions: passwordOptions,
-    dummyPasswordHash: AUTHENTICATION_DUMMY_PASSWORD_HASH, logger: { error: vi.fn() }, ...overrides };
+    session: defaultSessionConfig, dummyPasswordHash: AUTHENTICATION_DUMMY_PASSWORD_HASH,
+    logger: { error: vi.fn() }, ...overrides };
 }
 
 function makeService(overrides: Record<string, unknown> = {}) {

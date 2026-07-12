@@ -24,7 +24,10 @@ export function createDependencyHealthCache(options: DependencyHealthCacheOption
   return Object.freeze({
     check(): Promise<DependencyHealthResult> {
       const current = now();
-      if (cached && current < cached.expiresAt) return Promise.resolve(cached.result);
+      if (cached && (current < cached.expiresAt ||
+          (probeInFlight && !cached.result.ok && cached.result.code === "DEPENDENCY_TIMEOUT"))) {
+        return Promise.resolve(cached.result);
+      }
       if (inFlight) return inFlight;
       const operation = probeInFlight ?? startProbe();
       inFlight = runBoundedProbe(operation, options.timeoutMs)

@@ -64,8 +64,6 @@ export function createPlatformServer(options: CreatePlatformServerOptions) {
   app.use("/api", (_request, _response, next) => {
     next(new HttpProblem(404, "ROUTE_NOT_FOUND", "Not found"));
   });
-  app.use(createErrorMiddleware({ logger: options.logger, emergencySink: options.emergencySink }));
-
   const clientDist = path.resolve(options.clientDist ?? "dist/client");
   const staticClient = express.static(clientDist, { fallthrough: true, index: false });
   app.use(skipOperationalPaths(staticClient));
@@ -76,9 +74,10 @@ export function createPlatformServer(options: CreatePlatformServerOptions) {
       return;
     }
     response.sendFile(path.join(clientDist, "index.html"), (error) => {
-      if (error) next();
+      if (error) next(error);
     });
   });
+  app.use(createErrorMiddleware({ logger: options.logger, emergencySink: options.emergencySink }));
   return app;
 }
 

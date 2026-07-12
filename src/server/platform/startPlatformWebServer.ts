@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Server as HttpServer } from "node:http";
 import type { Express } from "express";
+import type { QueryConfig, QueryResultRow } from "pg";
 import { createAuthenticationService } from "../modules/identity/authenticationService.ts";
 import { createAuthorizationService } from "../modules/identity/authorizationService.ts";
 import { createInvitationService } from "../modules/identity/invitationService.ts";
@@ -9,6 +10,7 @@ import { loadPlatformConfig } from "./config/loadPlatformConfig.ts";
 import type { WebPlatformConfig } from "./config/types.ts";
 import { loadMigrationFiles, type MigrationFile } from "./database/migrationFiles.ts";
 import { createPlatformPool, type PlatformPool } from "./database/pool.ts";
+import type { QueryExecutor } from "./database/queryExecutor.ts";
 import { assertExpectedSchema } from "./database/schemaVersion.ts";
 import { createStorage } from "./storage/createStorage.ts";
 import type { StorageAdapter } from "./storage/storageAdapter.ts";
@@ -16,6 +18,31 @@ import { createPlatformEmergencySink, createPlatformSecurityLogger, createPlatfo
   type CreatePlatformServerOptions } from "./server.ts";
 
 const passwordHashOptions = Object.freeze({ memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 });
+const STARTUP_GATE_TIMEOUT_MS = 2_000;
+const STARTUP_QUERY_TIMEOUT_MS = STARTUP_GATE_TIMEOUT_MS + 100;
+const STARTUP_ABORT_SETTLE_TIMEOUT_MS = 500;
+const HTTP_GRACEFUL_CLOSE_TIMEOUT_MS = 1_000;
+const HTTP_FORCE_CLOSE_TIMEOUT_MS = 2_000;
+const RESOURCE_CLEANUP_TIMEOUT_MS = 2_000;
+const WORKER_HEALTH_FRESHNESS_SECONDS = 120;
+const publicLifecycleErrorCodes = new Set([
+  "PLATFORM_HTTP_CLOSE_FAILED",
+  "PLATFORM_HTTP_CLOSE_TIMEOUT",
+  "PLATFORM_POOL_CLOSE_TIMEOUT",
+  "PLATFORM_POOL_CLOSE_FAILED",
+  "PLATFORM_STORAGE_CLOSE_FAILED",
+  "PLATFORM_STORAGE_CLOSE_TIMEOUT",
+  "PLATFORM_STARTUP_SCHEMA_TIMEOUT",
+  "PLATFORM_STARTUP_STORAGE_TIMEOUT",
+  "PLATFORM_WEB_CLOSE_FAILED",
+  "PLATFORM_WEB_PORT_INVALID",
+  "PLATFORM_WEB_RESOURCE_CLEANUP_FAILED",
+  "SCHEMA_VERSION_AHEAD",
+  "SCHEMA_VERSION_BEHIND",
+  "SCHEMA_VERSION_METADATA_MISSING",
+  "SCHEMA_VERSION_MISMATCH",
+  "STORAGE_HEALTH_CHECK_FAILED"
+]);
 
 type PlatformServices = CreatePlatformServerOptions["services"];
 type PlatformLogger = CreatePlatformServerOptions["logger"];
@@ -24,7 +51,10 @@ type StartPlatformDependencies = {
   readonly loadConfig: (env: NodeJS.ProcessEnv, target: "web") => WebPlatformConfig;
   readonly createPool: (config: WebPlatformConfig["database"], applicationName: string) => PlatformPool;
   readonly loadMigrations: () => Promise<MigrationFile[]>;
-  readonly assertSchema: (pool: PlatformPool, migrations: readonly MigrationFile[]) => Promise<void>;
+  readonly assertSchema: (pool: PlatformPool, migrations: readonly MigrationFile[], gate?: {
+    readonly signal: AbortSignal;
+    readonly queryTimeoutMs: number;
+  }) => Promise<void>;
   readonly createStorage: (config: WebPlatformConfig["storage"]) => StorageAdapter;
   readonly createServices: (config: WebPlatformConfig, pool: PlatformPool, logger: PlatformLogger) => PlatformServices;
   readonly createApp: (options: CreatePlatformServerOptions) => Express;
@@ -60,9 +90,12 @@ export async function startPlatformWebServer(
   let server: HttpServer | undefined;
   try {
     const migrations = await dependencies.loadMigrations();
-    await dependencies.assertSchema(pool, migrations);
+    await runStartupGate(
+      (signal) => dependencies.assertSchema(pool, migrations, { signal, queryTimeoutMs: STARTUP_QUERY_TIMEOUT_MS }),
+      "PLATFORM_STARTUP_SCHEMA_TIMEOUT"
+    );
     storage = dependencies.createStorage(config.storage);
-    await storage.checkHealth();
+    await runStartupGate((signal) => storage!.checkHealth({ signal }), "PLATFORM_STARTUP_STORAGE_TIMEOUT");
     const services = dependencies.createServices(config, pool, logger);
     const app = dependencies.createApp({
       config,
@@ -73,8 +106,15 @@ export async function startPlatformWebServer(
       health: {
         core: {
           postgres: async () => { await pool.query("SELECT 1"); },
-          schema: () => dependencies.assertSchema(pool, migrations),
+          schema: () => dependencies.assertSchema(pool, migrations, {
+            signal: AbortSignal.timeout(STARTUP_GATE_TIMEOUT_MS),
+            queryTimeoutMs: STARTUP_GATE_TIMEOUT_MS
+          }),
           storage: () => storage!.checkHealth()
+        },
+        advisory: {
+          worker: () => probePersistedWorkerHealth(pool, "worker"),
+          smtp: () => probePersistedWorkerHealth(pool, "smtp")
         }
       }
     });
@@ -97,7 +137,10 @@ const defaultDependencies: StartPlatformDependencies = {
   loadConfig: loadPlatformConfig,
   createPool: createPlatformPool,
   loadMigrations: loadMigrationFiles,
-  assertSchema: assertExpectedSchema,
+  assertSchema: (pool, migrations, gate) => assertExpectedSchema(
+    boundedQueryExecutor(pool, gate?.queryTimeoutMs ?? STARTUP_QUERY_TIMEOUT_MS),
+    migrations
+  ),
   createStorage,
   createServices: createServices,
   createApp: createPlatformServer
@@ -109,9 +152,10 @@ function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: P
       pool,
       keyrings: { totpEncryption: config.keyrings.totpEncryption, recoveryHmac: config.keyrings.recoveryHmac },
       passwordHashOptions,
+      session: config.session,
       logger
     }),
-    sessions: createSessionService({ pool, passwordHashOptions }),
+    sessions: createSessionService({ pool, passwordHashOptions, session: config.session }),
     invitations: createInvitationService({
       pool,
       keyrings: {
@@ -123,6 +167,23 @@ function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: P
     }),
     authorization: createAuthorizationService({ pool })
   });
+}
+
+async function probePersistedWorkerHealth(pool: PlatformPool, dependency: "worker" | "smtp") {
+  const result = await pool.query<{ worker_healthy: boolean; smtp_healthy: boolean }>(
+    `SELECT
+       coalesce(last_heartbeat_at >= clock_timestamp() - ($1::integer * interval '1 second'), false)
+         AS worker_healthy,
+       coalesce(
+         smtp_healthy_at >= clock_timestamp() - ($1::integer * interval '1 second')
+         AND (smtp_unhealthy_at IS NULL OR smtp_healthy_at > smtp_unhealthy_at),
+         false
+       ) AS smtp_healthy
+     FROM platform.worker_health`,
+    [WORKER_HEALTH_FRESHNESS_SECONDS]
+  );
+  const row = result.rows[0];
+  if (!row?.[`${dependency}_healthy`]) throw new Error("PLATFORM_ADVISORY_UNHEALTHY");
 }
 
 function listen(app: Express, port: number, host: string) {
@@ -162,13 +223,7 @@ function attachLifecycle(
         let httpFailure: Error | undefined;
         let resourceFailure: Error | undefined;
         try {
-          await new Promise<void>((resolve, reject) => {
-            if (!server.listening) {
-              resolve();
-              return;
-            }
-            originalClose((error) => error ? reject(error) : resolve());
-          });
+          await closeHttpServer(server, originalClose);
         } catch (error) {
           httpFailure = sanitizeLifecycleError(error, "PLATFORM_HTTP_CLOSE_FAILED");
         }
@@ -203,19 +258,58 @@ function attachLifecycle(
   return platformServer;
 }
 
+function closeHttpServer(server: HttpServer, originalClose: HttpServer["close"]): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const gracefulTimer = setTimeout(forceClose, HTTP_GRACEFUL_CLOSE_TIMEOUT_MS);
+    const hardTimer = setTimeout(() => finish(Object.assign(
+      new Error("PLATFORM_HTTP_CLOSE_TIMEOUT"),
+      { code: "PLATFORM_HTTP_CLOSE_TIMEOUT" }
+    )), HTTP_FORCE_CLOSE_TIMEOUT_MS);
+    gracefulTimer.unref?.();
+    hardTimer.unref?.();
+    try {
+      originalClose((error) => finish(error));
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error("PLATFORM_HTTP_CLOSE_FAILED"));
+    }
+
+    function forceClose() {
+      try { server.closeIdleConnections(); } catch { /* hard deadline remains authoritative */ }
+      try { server.closeAllConnections(); } catch { /* hard deadline remains authoritative */ }
+    }
+
+    function finish(error?: Error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(gracefulTimer);
+      clearTimeout(hardTimer);
+      if (error) reject(error);
+      else resolve();
+    }
+  });
+}
+
 async function closeResources(storage: StorageAdapter | undefined, pool: PlatformPool) {
   const failures: Error[] = [];
   try {
-    await destroyStorage(storage);
-  } catch {
-    failures.push(new Error("PLATFORM_STORAGE_CLOSE_FAILED"));
+    await runCleanupGate(() => destroyStorage(storage), "PLATFORM_STORAGE_CLOSE_TIMEOUT");
+  } catch (error) {
+    failures.push(cleanupFailure(error, "PLATFORM_STORAGE_CLOSE_FAILED", "PLATFORM_STORAGE_CLOSE_TIMEOUT"));
   }
   try {
-    await pool.end();
-  } catch {
-    failures.push(new Error("PLATFORM_POOL_CLOSE_FAILED"));
+    await runCleanupGate(() => pool.end().then(() => undefined), "PLATFORM_POOL_CLOSE_TIMEOUT");
+  } catch (error) {
+    failures.push(cleanupFailure(error, "PLATFORM_POOL_CLOSE_FAILED", "PLATFORM_POOL_CLOSE_TIMEOUT"));
   }
   if (failures.length > 0) throw new AggregateError(failures, "PLATFORM_WEB_RESOURCE_CLEANUP_FAILED");
+}
+
+function cleanupFailure(error: unknown, failureCode: string, timeoutCode: string) {
+  return error instanceof Error && "code" in error && error.code === timeoutCode
+    ? error
+    : new Error(failureCode);
 }
 
 async function captureCleanup(storage: StorageAdapter | undefined, pool: PlatformPool) {
@@ -251,6 +345,74 @@ function resolvePort(raw: string | undefined) {
   return port;
 }
 
+async function runStartupGate(operation: (signal: AbortSignal) => Promise<void>, timeoutCode: string) {
+  const controller = new AbortController();
+  let dependency: Promise<void>;
+  try {
+    dependency = Promise.resolve(operation(controller.signal));
+  } catch (error) {
+    dependency = Promise.reject(error);
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(Object.assign(new Error(timeoutCode), { code: timeoutCode }));
+      controller.abort();
+    }, STARTUP_GATE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([dependency, timeout]);
+  } catch (error) {
+    if (timedOut) await waitForAbortSettlement(dependency);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForAbortSettlement(dependency: Promise<void>) {
+  let timer: NodeJS.Timeout | undefined;
+  const boundedWait = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, STARTUP_ABORT_SETTLE_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([dependency.catch(() => undefined), boundedWait]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function runCleanupGate(operation: () => void | Promise<void>, timeoutCode: string) {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(timeoutCode), { code: timeoutCode })),
+      RESOURCE_CLEANUP_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([Promise.resolve().then(operation), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function boundedQueryExecutor(pool: PlatformPool, queryTimeoutMs: number): QueryExecutor {
+  return Object.freeze({
+    query<R extends QueryResultRow = QueryResultRow>(text: string, values?: readonly unknown[]) {
+      const query: QueryConfig & { readonly query_timeout: number } = {
+        text,
+        ...(values ? { values: [...values] } : {}),
+        query_timeout: queryTimeoutMs
+      };
+      return pool.query<R>(query);
+    }
+  });
+}
+
 function sanitizeLifecycleError(error: unknown, fallbackCode: string): Error & { readonly code?: string } {
   if (error instanceof AggregateError) {
     const message = safeErrorToken(error.message) ?? fallbackCode;
@@ -269,5 +431,5 @@ function sanitizeLifecycleError(error: unknown, fallbackCode: string): Error & {
 }
 
 function safeErrorToken(value: unknown) {
-  return typeof value === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(value) ? value : undefined;
+  return typeof value === "string" && publicLifecycleErrorCodes.has(value) ? value : undefined;
 }

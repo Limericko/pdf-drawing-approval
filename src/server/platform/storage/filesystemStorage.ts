@@ -213,11 +213,14 @@ export class FilesystemStorage implements StorageAdapter {
     }
   }
 
-  async checkHealth(): Promise<void> {
+  async checkHealth(options?: { readonly signal?: AbortSignal }): Promise<void> {
     const key = createStorageKey("health", uuidv7());
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.healthCheckTimeoutMs);
     timeout.unref();
+    const signal = options?.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
     let failure: unknown;
 
     try {
@@ -225,20 +228,20 @@ export class FilesystemStorage implements StorageAdapter {
         key,
         this.healthProbeBody(),
         HEALTH_CONTENT_TYPE,
-        controller.signal,
+        signal,
       );
-      controller.signal.throwIfAborted();
-      const headResult = await this.head(key);
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
+      const headResult = await this.head(key, { signal });
+      signal.throwIfAborted();
       if (headResult?.sizeBytes !== writeResult.sizeBytes) {
         throw new Error("Health object metadata mismatch");
       }
 
-      const readResult = await readAll(await this.openRead(key), controller.signal);
+      const readResult = await readAll(await this.openRead(key), signal);
       if (!readResult.equals(HEALTH_PAYLOAD)) {
         throw new Error("Health object content mismatch");
       }
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
     } catch (error) {
       failure = error;
     } finally {

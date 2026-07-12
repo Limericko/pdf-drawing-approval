@@ -20,6 +20,8 @@ import { PostgresUserRepository } from "../repositories/postgres/PostgresUserRep
 import { createIdentityRoutes, noStoreIdentityResponses } from "./identityRoutes.ts";
 
 const passwordHashOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 } as const;
+const sessionConfig = { absoluteTtlMs: 12 * 60 * 60 * 1000, idleTtlMs: 60 * 60 * 1000,
+  touchIntervalMs: 5 * 60 * 1000 } as const;
 const csrfKeyring = { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 7)]]) };
 const publicBaseUrl = "https://approval.example.test/app";
 let database: PlatformTestDatabase;
@@ -288,7 +290,7 @@ async function createHarness(options: { environment?: "test" | "production"; coo
       otpauthUri: "otpauth://totp/PDF%20Approval" }),
     complete: vi.fn().mockResolvedValue({ recoveryCodes: ["recovery-code"] })
   };
-  const sessions = createSessionService({ pool: web, passwordHashOptions });
+  const sessions = createSessionService({ pool: web, passwordHashOptions, session: sessionConfig });
   const authorization = createAuthorizationService({ pool: web });
   const app = express();
   app.set("trust proxy", options.trustProxy ?? false);

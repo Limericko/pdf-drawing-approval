@@ -11,6 +11,18 @@ import { createSessionService } from "./sessionService.ts";
 const passwordHashOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 } as const;
 const validNewPasswordHash =
   "$argon2id$v=19$m=19456,t=2,p=1$rUGf7HCiiHaKSmXoxVCJGA$y/CRugqFEn15nKRtAD1mCOQUYjNQriOuHh1kLhe+heA";
+const nonDefaultSessionConfig = {
+  cookieSecure: false,
+  absoluteTtlMs: 10 * 60 * 1000,
+  idleTtlMs: 2 * 60 * 1000,
+  touchIntervalMs: 30 * 1000
+} as const;
+const defaultSessionConfig = {
+  cookieSecure: false,
+  absoluteTtlMs: 12 * 60 * 60 * 1000,
+  idleTtlMs: 60 * 60 * 1000,
+  touchIntervalMs: 5 * 60 * 1000
+} as const;
 const actorMutations = [
   { label: "role", sql: "UPDATE platform.users SET platform_role='member' WHERE id=$1" },
   { label: "status", sql: `UPDATE platform.users SET status='disabled',
@@ -61,6 +73,36 @@ describe("SessionService", () => {
     expect(session.absoluteExpiresAt.getTime() - session.createdAt.getTime()).toBe(12 * 60 * 60 * 1000);
     expect(session.idleExpiresAt.getTime() - session.createdAt.getTime()).toBe(60 * 60 * 1000);
     expect(session.tokenHash).toEqual(tokenHash);
+  });
+
+  it("uses configured absolute, idle, and touch lifetimes in repository writes", async () => {
+    const user = await createUser("configured-lifetime@example.test");
+    const rawToken = "configured-lifetime-token";
+    const service = createSessionService({
+      pool: web,
+      passwordHashOptions,
+      session: nonDefaultSessionConfig
+    });
+    const session = await service.createInTransaction(migration, {
+      userId: user.id,
+      tokenHash: hashOpaqueToken(rawToken),
+      clientSummary: "configured-integration-client"
+    });
+
+    expect(session.absoluteExpiresAt.getTime() - session.createdAt.getTime()).toBe(nonDefaultSessionConfig.absoluteTtlMs);
+    expect(session.idleExpiresAt.getTime() - session.createdAt.getTime()).toBe(nonDefaultSessionConfig.idleTtlMs);
+
+    await migration.query(`UPDATE platform.sessions
+      SET created_at=clock_timestamp()-interval '1 minute',
+          last_activity_at=clock_timestamp()-interval '31 seconds',
+          last_touch_at=clock_timestamp()-interval '31 seconds'
+      WHERE id=$1`, [session.id]);
+    const before = await sessionTimes(session.id);
+    await service.authenticate({ sessionToken: rawToken });
+    const after = await sessionTimes(session.id);
+    expect(after.lastTouchAt.getTime()).toBeGreaterThan(before.lastTouchAt.getTime());
+    expect(after.idleExpiresAt.getTime()).toBeGreaterThan(before.idleExpiresAt.getTime());
+    expect(after.absoluteExpiresAt).toEqual(before.absoluteExpiresAt);
   });
 
   it("authenticates a hash-only token, throttles concurrent touches, and never extends absolute expiry", async () => {
@@ -346,7 +388,7 @@ function createSession(userId: string, rawToken: string) {
 }
 
 function sessionService(pool = web) {
-  return createSessionService({ pool, passwordHashOptions });
+  return createSessionService({ pool, passwordHashOptions, session: defaultSessionConfig });
 }
 
 async function securityChangeState(userId: string, otherToken?: string) {

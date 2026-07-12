@@ -1,5 +1,6 @@
 import type { QueryExecutor } from "../database/queryExecutor.ts";
 import type { PlatformPool } from "../database/pool.ts";
+import type { PlatformSessionConfig } from "../config/types.ts";
 import { withTransaction } from "../database/transaction.ts";
 import type { PlatformSession } from "../../modules/identity/repositories/sessionRepository.ts";
 import type { PlatformUser } from "../../modules/identity/models.ts";
@@ -9,10 +10,8 @@ import { PostgresUserRepository } from "../../modules/identity/repositories/post
 import { passwordHashMatchesOptions, type Argon2idOptions } from "./passwords.ts";
 import { hashOpaqueToken } from "./tokenHash.ts";
 
-const SESSION_ABSOLUTE_LIFETIME_SECONDS = 12 * 60 * 60;
-const SESSION_IDLE_LIFETIME_SECONDS = 60 * 60;
-const SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+type SessionLifetimeConfig = Pick<PlatformSessionConfig, "absoluteTtlMs" | "idleTtlMs" | "touchIntervalMs">;
 
 export type SessionUser = Omit<PlatformUser, "passwordHash">;
 export type AuthenticatedSession = Omit<PlatformSession, "tokenHash">;
@@ -30,8 +29,10 @@ export class SessionServiceError extends Error {
 export function createSessionService(options: {
   readonly pool: PlatformPool;
   readonly passwordHashOptions: Argon2idOptions;
+  readonly session: SessionLifetimeConfig;
 }) {
   if (!options?.pool || !options.passwordHashOptions) throw inputInvalid();
+  const lifetime = ownSessionLifetime(options.session);
   return Object.freeze({
     createInTransaction(transaction: QueryExecutor, input: {
       readonly userId: string;
@@ -44,8 +45,8 @@ export function createSessionService(options: {
       return new PostgresSessionRepository(transaction).create({
         userId: input.userId,
         tokenHash: input.tokenHash,
-        absoluteLifetimeSeconds: SESSION_ABSOLUTE_LIFETIME_SECONDS,
-        idleLifetimeSeconds: SESSION_IDLE_LIFETIME_SECONDS,
+        absoluteLifetimeSeconds: lifetime.absoluteSeconds,
+        idleLifetimeSeconds: lifetime.idleSeconds,
         clientSummary
       });
     },
@@ -59,7 +60,7 @@ export function createSessionService(options: {
           if (!session) throw invalid();
           const user = await new PostgresUserRepository(options.pool).findById(session.userId);
           if (!user || user.status !== "active") throw invalid();
-          const touched = await sessions.touch(session.id, SESSION_IDLE_LIFETIME_SECONDS, SESSION_TOUCH_INTERVAL_SECONDS);
+          const touched = await sessions.touch(session.id, lifetime.idleSeconds, lifetime.touchIntervalSeconds);
           if (touched) {
             session = touched;
           } else {
@@ -201,6 +202,21 @@ function ownClientSummary(value: unknown) {
     throw inputInvalid();
   }
   return value;
+}
+
+function ownSessionLifetime(config: SessionLifetimeConfig) {
+  if (!config || !positiveMilliseconds(config.absoluteTtlMs) || !positiveMilliseconds(config.idleTtlMs) ||
+      !positiveMilliseconds(config.touchIntervalMs) || config.idleTtlMs > config.absoluteTtlMs ||
+      config.touchIntervalMs >= config.idleTtlMs) throw inputInvalid();
+  return Object.freeze({
+    absoluteSeconds: config.absoluteTtlMs / 1_000,
+    idleSeconds: config.idleTtlMs / 1_000,
+    touchIntervalSeconds: config.touchIntervalMs / 1_000
+  });
+}
+
+function positiveMilliseconds(value: number) {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 function publicUser(user: PlatformUser): SessionUser {

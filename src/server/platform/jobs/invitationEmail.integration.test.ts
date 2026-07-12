@@ -75,7 +75,7 @@ describe("invitation email integration", () => {
       projectId, projectRole: "designer", invitedByUserId: inviterId });
     let sends = 0;
     const handler = createSendInvitationEmailHandler({ pool: worker,
-      transport: { sendInvitation: async () => { sends += 1; }, close() {} },
+      transport: { sendInvitation: async () => { sends += 1; } },
       keyring: invitationHmac, publicBaseUrl: "http://127.0.0.1:8080" });
 
     await expect(handler({ payload: { invitationId: superseded.invitationId } } as never))
@@ -113,7 +113,7 @@ describe("invitation email integration", () => {
     const invalid = await service.createInvitation({ email: "invalid@example.test", platformRole: "member",
       projectId, projectRole: "viewer", invitedByUserId: inviterId });
     await migration.query("UPDATE platform.invitations SET token_hash=$2 WHERE id=$1", [invalid.invitationId, Buffer.alloc(32, 9)]);
-    const fakeTransport = { sendInvitation: async () => undefined, close() {} };
+    const fakeTransport = { sendInvitation: async () => undefined };
     const handler = createSendInvitationEmailHandler({ pool: worker, transport: fakeTransport,
       keyring: invitationHmac, publicBaseUrl: "http://127.0.0.1:8080" });
     await expect(handler({ payload: { invitationId: invalid.invitationId } } as never))
@@ -144,7 +144,7 @@ describe("invitation email integration", () => {
     const active = await service.createInvitation({ email: "smtp@example.test", platformRole: "member",
       projectId, projectRole: "viewer", invitedByUserId: inviterId });
     const smtpFailure = createSendInvitationEmailHandler({ pool: worker,
-      transport: { sendInvitation: async () => { throw new Error("smtp unavailable secret"); }, close() {} },
+      transport: { sendInvitation: async () => { throw new Error("smtp unavailable secret"); } },
       keyring: invitationHmac, publicBaseUrl: "http://127.0.0.1:8080" });
     await expect(smtpFailure({ payload: { invitationId: active.invitationId } } as never))
       .rejects.toMatchObject({ kind: "transient", code: "INVITATION_EMAIL_SEND_FAILED",

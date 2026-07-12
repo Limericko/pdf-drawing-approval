@@ -9,7 +9,7 @@ const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 
 export function createSendInvitationEmailHandler(options: {
   readonly pool: PlatformPool;
-  readonly transport: PlatformMailTransport;
+  readonly transport: Pick<PlatformMailTransport, "sendInvitation">;
   readonly keyring: VersionedKeyring;
   readonly publicBaseUrl: string;
 }): JobHandler {

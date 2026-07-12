@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { apiCompatVersion, appName, appVersion } from "../../shared/appVersion.ts";
 import { createDependencyHealthCache } from "./dependencyHealthCache.ts";
+import { asyncRoute } from "./http/asyncRoute.ts";
 
 type Probe = () => Promise<void>;
 
@@ -45,7 +46,7 @@ export function createPlatformHealthRouter(options: PlatformHealthOptions) {
     response.setHeader("Cache-Control", "no-store");
     response.status(200).json({ ok: true });
   });
-  router.get("/health/ready", async (_request, response) => {
+  router.get("/health/ready", asyncRoute(async (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
     const [postgres, schema, storage, worker, smtp] = await Promise.all([
       core.postgres.check(), core.schema.check(), core.storage.check(),
@@ -62,6 +63,6 @@ export function createPlatformHealthRouter(options: PlatformHealthOptions) {
     } as const;
     const ok = postgres.ok && schema.ok && storage.ok;
     response.status(ok ? 200 : 503).json({ ok, dependencies, advisories });
-  });
+  }));
   return router;
 }

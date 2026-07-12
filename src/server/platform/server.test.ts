@@ -1,9 +1,9 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
-import request from "supertest";
+import request, { type Response } from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import type { WebPlatformConfig } from "./config/types.ts";
-import { createPlatformEmergencySink, createPlatformServer } from "./server.ts";
+import { createPlatformEmergencySink, createPlatformServer, type CreatePlatformServerOptions } from "./server.ts";
 
 const keyring = { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 7)]]) };
 const config: WebPlatformConfig = {
@@ -28,16 +28,22 @@ function services(login = vi.fn(async () => ({ next: "mfa" as const, challengeTo
 }
 
 function createApp(options: { trustedProxy?: WebPlatformConfig["trustedProxy"]; login?: ReturnType<typeof vi.fn>;
-  logger?: { error(event: { requestId: string; code: string }): void }; emergencySink?: ReturnType<typeof createPlatformEmergencySink> } = {}) {
+  logger?: { error(event: { requestId: string; code: string }): void };
+  emergencySink?: ReturnType<typeof createPlatformEmergencySink>;
+  health?: CreatePlatformServerOptions["health"];
+  clientDist?: string } = {}) {
   const identity = services(options.login);
   return {
     identity,
     app: createPlatformServer({
       config: { ...config, trustedProxy: options.trustedProxy ?? false },
       services: identity as never,
-      health: { core: { postgres: async () => undefined, schema: async () => undefined, storage: async () => undefined } },
+      health: options.health ?? {
+        core: { postgres: async () => undefined, schema: async () => undefined, storage: async () => undefined }
+      },
       logger: options.logger ?? { error: vi.fn() },
-      emergencySink: options.emergencySink ?? createPlatformEmergencySink()
+      emergencySink: options.emergencySink ?? createPlatformEmergencySink(),
+      clientDist: options.clientDist
     })
   };
 }
@@ -88,6 +94,51 @@ describe("platform server", () => {
     expect(written).toHaveLength(1);
     expect(written[0]).toContain("LOGGER_FAILURE");
     expect(JSON.stringify([written, response.body])).not.toMatch(/password=|database URL|example\.test|primary logger/i);
+  });
+
+  it("routes readiness clock failures through the terminal problem middleware without leaking secrets", async () => {
+    const logger = { error: vi.fn() };
+    const realNow = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => {
+      if (new Error().stack?.includes("dependencyHealthCache")) {
+        throw new Error("postgresql://platform:secret@database.internal/approval");
+      }
+      return realNow();
+    });
+    const { app } = createApp({
+      logger,
+      health: {
+        core: { postgres: async () => undefined, schema: async () => undefined, storage: async () => undefined },
+        cache: { timeoutMs: 20, ttlMs: 20 }
+      }
+    });
+
+    let response: Response;
+    try {
+      response = await request(app).get("/health/ready").timeout({ response: 500 }).expect(500);
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(response.type).toMatch(/application\/problem\+json/);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["x-request-id"]).toBe(response.body.requestId);
+    expect(response.body).toMatchObject({ status: 500, code: "INTERNAL_ERROR", requestId: expect.any(String) });
+    expect(logger.error).toHaveBeenCalledOnce();
+    expect(JSON.stringify({ body: response.body, headers: response.headers, logs: logger.error.mock.calls }))
+      .not.toMatch(/postgresql|secret|database\.internal/i);
+  });
+
+  it("routes SPA sendFile failures through the terminal problem middleware", async () => {
+    const logger = { error: vi.fn() };
+    const { app } = createApp({ logger, clientDist: path.resolve(".missing-platform-client") });
+
+    const response = await request(app).get("/missing-client-route").expect(500);
+
+    expect(response.type).toMatch(/application\/problem\+json/);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toMatchObject({ status: 500, code: "INTERNAL_ERROR", requestId: expect.any(String) });
+    expect(logger.error).toHaveBeenCalledOnce();
   });
 
   it("keeps the platform composition root free of legacy runtime facilities", () => {

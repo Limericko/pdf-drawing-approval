@@ -10,7 +10,7 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, open, rmdir, unlink, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
+import { addAbortSignal, PassThrough, Readable, Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { v7 as uuidv7 } from "uuid";
 import type { S3StorageConfig } from "../config/types";
@@ -218,14 +218,16 @@ export class S3Storage implements StorageAdapter {
     }
   }
 
-  async openRead(key: string): Promise<Readable> {
+  async openRead(key: string, options?: { readonly signal?: AbortSignal }): Promise<Readable> {
     assertStorageKey(key);
     try {
       const response = await this.client.send(
         new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+        { abortSignal: options?.signal },
       );
       const body = responseField(response, "Body");
-      return mapReadableErrors(toNodeReadable(body));
+      const readable = mapReadableErrors(toNodeReadable(body));
+      return options?.signal ? addAbortSignal(options.signal, readable) : readable;
     } catch (error) {
       if (isMissingObjectError(error)) {
         throw objectNotFound();
@@ -263,16 +265,19 @@ export class S3Storage implements StorageAdapter {
     }
   }
 
-  async checkHealth(): Promise<void> {
+  async checkHealth(options?: { readonly signal?: AbortSignal }): Promise<void> {
     const key = createStorageKey("health", uuidv7());
+    const signal = options?.signal;
     let failure: unknown;
     try {
-      await this.write(key, Readable.from([HEALTH_PAYLOAD]), HEALTH_CONTENT_TYPE);
-      const metadata = await this.head(key);
+      await this.write(key, Readable.from([HEALTH_PAYLOAD]), HEALTH_CONTENT_TYPE, { signal });
+      signal?.throwIfAborted();
+      const metadata = await this.head(key, { signal });
       if (metadata?.sizeBytes !== HEALTH_PAYLOAD.byteLength) {
         throw new StorageError("STORAGE_IO_ERROR", "Storage health metadata mismatch");
       }
-      if (!(await streamEquals(await this.openRead(key), HEALTH_PAYLOAD))) {
+      signal?.throwIfAborted();
+      if (!(await streamEquals(await this.openRead(key, { signal }), HEALTH_PAYLOAD, signal))) {
         throw new StorageError("STORAGE_IO_ERROR", "Storage health content mismatch");
       }
     } catch (error) {
@@ -554,9 +559,10 @@ function isErrno(error: unknown, code: string): boolean {
   );
 }
 
-async function streamEquals(body: Readable, expected: Buffer): Promise<boolean> {
+async function streamEquals(body: Readable, expected: Buffer, signal?: AbortSignal): Promise<boolean> {
   let offset = 0;
   for await (const chunk of body) {
+    signal?.throwIfAborted();
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     if (offset + bytes.byteLength > expected.byteLength) {
       return false;
@@ -568,5 +574,6 @@ async function streamEquals(body: Readable, expected: Buffer): Promise<boolean> 
       offset += 1;
     }
   }
+  signal?.throwIfAborted();
   return offset === expected.byteLength;
 }

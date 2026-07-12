@@ -41,7 +41,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 6, verified: 0, total: 6 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 7, verified: 0, total: 7 });
     await run(database, migration);
   });
 }
@@ -132,7 +132,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 6, total: 6 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 7, total: 7 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -142,7 +142,45 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 3, file_name: "0003_storage_outbox_jobs.sql" },
         { version: 4, file_name: "0004_worker_outbox_publish.sql" },
         { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" },
-        { version: 6, file_name: "0006_storage_cleanup_leases.sql" }
+        { version: 6, file_name: "0006_storage_cleanup_leases.sql" },
+        { version: 7, file_name: "0007_worker_health.sql" }
+      ]);
+    });
+  });
+
+  it("exposes only aggregate worker and SMTP health timestamps to the web role", async () => {
+    await withMigratedDatabase(async (database, migration) => {
+      const worker = database.createPool("worker");
+      await worker.query(
+        `INSERT INTO platform.worker_heartbeats (worker_id, started_at, heartbeat_at, metadata)
+         VALUES ('worker-health-test', clock_timestamp(), clock_timestamp(),
+           '{"state":"active","smtp":"unhealthy"}'::jsonb)`
+      );
+
+      const web = database.createPool("web");
+      await expect(web.query(
+        `SELECT last_heartbeat_at, smtp_healthy_at, smtp_unhealthy_at
+         FROM platform.worker_health`
+      )).resolves.toMatchObject({
+        rowCount: 1,
+        rows: [{
+          last_heartbeat_at: expect.any(Date),
+          smtp_healthy_at: null,
+          smtp_unhealthy_at: expect.any(Date)
+        }]
+      });
+      await expectDenied(web, "SELECT * FROM platform.worker_heartbeats");
+
+      const columns = await migration.query<{ column_name: string }>(
+        `SELECT column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'platform' AND table_name = 'worker_health'
+         ORDER BY ordinal_position`
+      );
+      expect(columns.rows.map(({ column_name }) => column_name)).toEqual([
+        "last_heartbeat_at",
+        "smtp_healthy_at",
+        "smtp_unhealthy_at"
       ]);
     });
   });
@@ -885,7 +923,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["bootstrap", bootstrap]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 6
+          rowCount: 7
         });
         await expectDenied(
           pool,

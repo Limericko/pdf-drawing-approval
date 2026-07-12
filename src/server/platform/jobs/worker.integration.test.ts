@@ -38,6 +38,24 @@ beforeEach(async () => {
 });
 
 describe("leased worker", () => {
+  it("persists only the bounded SMTP advisory state in worker heartbeat metadata", async () => {
+    const now = new Date("2026-07-12T07:59:00.000Z");
+    const record = vi.fn(async () => undefined);
+    await runWorkerIteration({
+      ...deps("smtp-health-worker", now, new PostgresJobRepository(worker), new JobRegistry([], [])),
+      heartbeat: { record },
+      smtpHealth: async () => "unhealthy" as const
+    });
+
+    expect(record).toHaveBeenCalledWith({
+      workerId: "smtp-health-worker",
+      startedAt: now,
+      heartbeatAt: now,
+      metadata: { state: "active", smtp: "unhealthy" }
+    });
+    expect(JSON.stringify(record.mock.calls)).not.toMatch(/error|secret|credential|host/i);
+  });
+
   it("lets concurrent workers execute a job once without holding a database transaction", async () => {
     const now = new Date("2026-07-12T08:00:00.000Z");
     const repository = new PostgresJobRepository(worker);
@@ -335,6 +353,7 @@ function deps(workerId: string, now: Date, repository: PostgresJobRepository, re
     dispatcher: { dispatchBatch: async () => 0 }, dispatchBatchSize: 10,
     reconciler: { runOnce: async () => ({ published: 0 }) }, reconcileIntervalMs: 60_000,
     heartbeat: { record: async () => undefined },
+    smtpHealth: async () => "healthy" as const,
     retryPolicy: { next: () => ({ delayMs: 50, nextRunAt: new Date(now.getTime() + 50) }) },
     leaseSleep: async (_ms: number, signal: AbortSignal) => new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true })),
     signal: new AbortController().signal

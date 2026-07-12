@@ -9,6 +9,7 @@ type Dispatcher = { dispatchBatch(limit: number): Promise<number> };
 type Reconciler = { runOnce(signal: AbortSignal): Promise<{ published: number }> };
 type Heartbeat = { record(input: { workerId: string; startedAt: Date; heartbeatAt: Date; metadata: Record<string, unknown> }): Promise<unknown> };
 type Sleep = (milliseconds: number, signal: AbortSignal) => Promise<void>;
+type SmtpHealth = () => Promise<"healthy" | "unhealthy">;
 
 export type WorkerIterationOptions = {
   readonly workerId: string;
@@ -21,6 +22,7 @@ export type WorkerIterationOptions = {
   readonly reconciler: Reconciler;
   readonly reconcileIntervalMs: number;
   readonly heartbeat: Heartbeat;
+  readonly smtpHealth: SmtpHealth;
   readonly retryPolicy: RetryPolicy;
   readonly clock: () => Date;
   readonly leaseMs: number;
@@ -40,11 +42,15 @@ export async function runWorkerIteration(options: WorkerIterationOptions): Promi
   const owned = ownIterationOptions(options);
   if (owned.signal.aborted) return { status: "stopped" };
   const heartbeatAt = owned.clock();
+  const smtp = await owned.smtpHealth().then(
+    (status) => status === "healthy" ? "healthy" as const : "unhealthy" as const,
+    () => "unhealthy" as const
+  );
   await owned.heartbeat.record({
     workerId: owned.workerId,
     startedAt: owned.startedAt,
     heartbeatAt,
-    metadata: { state: "active" }
+    metadata: { state: "active", smtp }
   });
   if (owned.signal.aborted) return { status: "stopped" };
   await owned.dispatcher.dispatchBatch(owned.dispatchBatchSize);
@@ -158,7 +164,8 @@ type OwnedIterationOptions = Omit<WorkerIterationOptions, "startedAt" | "leaseSl
 function ownIterationOptions(options: WorkerIterationOptions): OwnedIterationOptions {
   if (!options || typeof options !== "object" || typeof options.workerId !== "string" || !options.workerId ||
       options.workerId !== options.workerId.trim() || options.workerId.length > 255 || /[\u0000-\u001f\u007f]/.test(options.workerId) ||
-      typeof options.clock !== "function" || !options.signal || typeof options.signal.aborted !== "boolean") throw invalidWorker();
+      typeof options.clock !== "function" || typeof options.smtpHealth !== "function" ||
+      !options.signal || typeof options.signal.aborted !== "boolean") throw invalidWorker();
   assertInteger(options.dispatchBatchSize, 1, 1_000);
   assertInteger(options.reconcileIntervalMs, 1, 86_400_000);
   assertInteger(options.leaseMs, 2, 3_600_000);
