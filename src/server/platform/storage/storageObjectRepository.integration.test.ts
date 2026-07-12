@@ -10,12 +10,14 @@ import { PostgresStorageObjectRepository } from "./postgres/PostgresStorageObjec
 let database: PlatformTestDatabase;
 let migration: Pool;
 let web: Pool;
+let worker: Pool;
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
   migration = database.createPool("migration");
   await runMigrations(migration);
   web = database.createPool("web");
+  worker = database.createPool("worker");
 });
 
 afterAll(async () => database?.dispose());
@@ -173,7 +175,7 @@ describe("PostgresStorageObjectRepository", () => {
     await expect(repository.listStaleStaging(new Date(), 0)).rejects.toMatchObject({
       code: "INVALID_STORAGE_OBJECT_LIMIT"
     });
-    await expect(repository.listDeletePending(Number.NaN)).rejects.toMatchObject({
+    await expect(repository.listDeletePending(new Date(), Number.NaN)).rejects.toMatchObject({
       code: "INVALID_STORAGE_OBJECT_LIMIT"
     });
   });
@@ -188,5 +190,65 @@ describe("PostgresStorageObjectRepository", () => {
     const selected = await repository.listStaleStaging(now, 10);
     expect(selected).toContainEqual(expect.objectContaining({ id: recentButExpired.id, uploadExpiresAt: recentButExpired.uploadExpiresAt }));
     expect(selected.map((object) => object.id)).not.toContain(oldButActive.id);
+  });
+
+  it("advances an S3 tombstone generation once and fences stale cleanup jobs", async () => {
+    const webRepository = new PostgresStorageObjectRepository(web);
+    const repository = new PostgresStorageObjectRepository(worker);
+    const createdAt = new Date("2026-07-12T12:10:00.000Z");
+    const requestedAt = new Date(createdAt.getTime() + 1_000);
+    const input = {
+      ...stagingInput(),
+      driver: "s3" as const,
+      createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    };
+    await webRepository.createStaging(input);
+    await expect(repository.prepareCleanup({
+      id: input.id,
+      expectedStatus: "staging",
+      driver: "s3",
+      objectKey: input.objectKey,
+      requestedAt,
+      cleanupGeneration: 0
+    })).resolves.toMatchObject({
+      status: "delete_pending",
+      cleanupTombstone: true,
+      cleanupGeneration: 0,
+      cleanupNotBefore: requestedAt
+    });
+
+    const nextCleanupAt = new Date(requestedAt.getTime() + 60_000);
+    await expect(repository.scheduleCleanupReap({
+      id: input.id,
+      driver: "s3",
+      objectKey: input.objectKey,
+      expectedGeneration: 0,
+      scheduledAt: requestedAt,
+      nextCleanupAt,
+      lastError: null
+    })).resolves.toMatchObject({
+      status: "delete_pending",
+      cleanupTombstone: true,
+      cleanupGeneration: 1,
+      cleanupNotBefore: nextCleanupAt
+    });
+    await expect(repository.scheduleCleanupReap({
+      id: input.id,
+      driver: "s3",
+      objectKey: input.objectKey,
+      expectedGeneration: 0,
+      scheduledAt: requestedAt,
+      nextCleanupAt: new Date(nextCleanupAt.getTime() + 60_000),
+      lastError: null
+    })).resolves.toBeUndefined();
+    const beforeDue = await repository.listDeletePending(new Date(nextCleanupAt.getTime() - 1), 10);
+    expect(beforeDue.map((object) => object.id)).not.toContain(input.id);
+    const atDue = await repository.listDeletePending(nextCleanupAt, 10);
+    expect(atDue).toContainEqual(expect.objectContaining({
+      id: input.id,
+      cleanupGeneration: 1,
+      cleanupNotBefore: nextCleanupAt
+    }));
   });
 });

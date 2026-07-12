@@ -63,10 +63,10 @@ async function selectSingle(
 ): Promise<StorageObject[]> {
   const primary = priority === "staging"
     ? await repository.listStaleStaging(cutoff, 1)
-    : await repository.listDeletePending(1);
+    : await repository.listDeletePending(cutoff, 1);
   if (primary.length > 0) return primary;
   return priority === "staging"
-    ? repository.listDeletePending(1)
+    ? repository.listDeletePending(cutoff, 1)
     : repository.listStaleStaging(cutoff, 1);
 }
 
@@ -76,7 +76,7 @@ async function selectFairBatch(
   batchSize: number
 ): Promise<StorageObject[]> {
   const staleCandidates = await repository.listStaleStaging(cutoff, batchSize);
-  const pendingCandidates = await repository.listDeletePending(batchSize);
+  const pendingCandidates = await repository.listDeletePending(cutoff, batchSize);
   const staleQuota = Math.ceil(batchSize / 2);
   const pendingQuota = Math.floor(batchSize / 2);
   const stale = staleCandidates.slice(0, staleQuota);

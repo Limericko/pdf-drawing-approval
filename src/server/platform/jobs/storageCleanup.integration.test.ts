@@ -6,6 +6,7 @@ import { withTransaction } from "../database/transaction.ts";
 import type { StorageAdapter } from "../storage/storageAdapter.ts";
 import { StorageError } from "../storage/storageErrors.ts";
 import { PostgresStorageObjectRepository } from "../storage/postgres/PostgresStorageObjectRepository.ts";
+import { S3Storage } from "../storage/s3Storage.ts";
 import { createStorageKey } from "../storage/storageKey.ts";
 import { StorageObjectService } from "../storage/storageObjectService.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testing/postgresHarness.ts";
@@ -190,9 +191,103 @@ describe("storage cleanup handler", () => {
     expect(deletes).toBeGreaterThanOrEqual(2);
     await expect(new PostgresStorageObjectRepository(worker).findById(id)).resolves.toMatchObject({ status: "deleted" });
   });
+
+  it("keeps an S3 tombstone and removes a Put that commits after the first verified cleanup", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("objects/original", id);
+    const createdAt = new Date("2026-07-12T11:00:00.000Z");
+    let now = new Date(createdAt.getTime() + 1_000);
+    let activeSleeps = 0;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on("unhandledRejection", onUnhandled);
+    const storage = new S3Storage(readS3Config());
+    const repository = new PostgresStorageObjectRepository(migration);
+    await repository.createStaging({
+      id,
+      driver: "s3",
+      objectKey: key,
+      createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    });
+    const handler = createDeleteStorageObjectHandler({
+      transactionRunner: (callback) => withTransaction(worker, callback),
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      adapter: storage,
+      clock: () => new Date(now),
+      verificationDelayMs: 1,
+      tombstoneReapIntervalMs: 60_000,
+      sleep: async () => {
+        activeSleeps += 1;
+        await Promise.resolve();
+        activeSleeps -= 1;
+      }
+    });
+    try {
+      await storage.delete(key);
+      await handler({ payload: {
+        idempotencyKey: `storage-object-cleanup:${id}:staging`,
+        storageObjectId: id,
+        expectedStatus: "staging",
+        driver: "s3",
+        objectKey: key
+      } } as never);
+      const firstTombstone = await repository.findById(id);
+      expect(firstTombstone).toMatchObject({
+        status: "delete_pending",
+        deletedAt: null,
+        cleanupTombstone: true,
+        cleanupGeneration: 1,
+        cleanupNotBefore: new Date(now.getTime() + 60_000)
+      });
+
+      const lateBody = Readable.from(["late remote commit"]);
+      await storage.write(key, lateBody, "application/pdf");
+      await expect(storage.head(key)).resolves.toEqual({ sizeBytes: 18 });
+      expect(lateBody.readableEnded).toBe(true);
+
+      now = new Date(firstTombstone!.cleanupNotBefore!);
+      await handler({ payload: {
+        idempotencyKey: `storage-object-cleanup:${id}:delete_pending:1`,
+        storageObjectId: id,
+        expectedStatus: "delete_pending",
+        driver: "s3",
+        objectKey: key,
+        cleanupGeneration: 1
+      } } as never);
+
+      await expect(storage.head(key)).resolves.toBeNull();
+      await expect(repository.findById(id)).resolves.toMatchObject({
+        status: "delete_pending",
+        deletedAt: null,
+        cleanupTombstone: true,
+        cleanupGeneration: 2,
+        cleanupNotBefore: new Date(now.getTime() + 60_000)
+      });
+      expect(activeSleeps).toBe(0);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener("unhandledRejection", onUnhandled);
+      await storage.delete(key);
+      storage.destroy();
+    }
+  });
 });
 
 function fakeAdapter(driver: "filesystem" | "s3"): StorageAdapter {
   return { driver, write: vi.fn(), openRead: vi.fn(), head: vi.fn(async () => null), delete: vi.fn(async () => undefined), checkHealth: vi.fn() } as unknown as StorageAdapter;
+}
+
+function readS3Config() {
+  return {
+    driver: "s3" as const,
+    endpoint: process.env.PDF_APPROVAL_STORAGE_S3_ENDPOINT!,
+    region: process.env.PDF_APPROVAL_STORAGE_S3_REGION!,
+    bucket: process.env.PDF_APPROVAL_STORAGE_S3_BUCKET!,
+    accessKey: process.env.PDF_APPROVAL_STORAGE_S3_ACCESS_KEY!,
+    secretKey: process.env.PDF_APPROVAL_STORAGE_S3_SECRET_KEY!,
+    forcePathStyle: process.env.PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE === "true"
+  };
 }
 import { Readable } from "node:stream";

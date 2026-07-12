@@ -1,5 +1,5 @@
 import type { JobRepository } from "./jobRepository.ts";
-import type { Job } from "./jobTypes.ts";
+import { JobRepositoryError, type Job } from "./jobTypes.ts";
 import type { RetryPolicy } from "./retryPolicy.ts";
 import { JobHandlerError, type JobRegistry } from "./jobRegistry.ts";
 
@@ -60,12 +60,16 @@ export async function runWorkerIteration(options: WorkerIterationOptions): Promi
   const claimed = await owned.repository.claim({ workerId: owned.workerId, now: owned.clock(), leaseDurationMs: owned.leaseMs });
   if (!claimed) return { status: "idle" };
   if (owned.signal.aborted) {
-    await owned.repository.release({
-      id: claimed.id,
-      workerId: owned.workerId,
-      leaseToken: claimed.leaseToken!,
-      releasedAt: owned.clock()
-    });
+    try {
+      await owned.repository.release({
+        id: claimed.id,
+        workerId: owned.workerId,
+        leaseToken: claimed.leaseToken!,
+        releasedAt: owned.clock()
+      });
+    } catch (error) {
+      if (!(error instanceof JobRepositoryError && error.code === "STALE_LEASE")) throw error;
+    }
     return { status: "stopped" };
   }
   return executeClaimedJob(owned, claimed);

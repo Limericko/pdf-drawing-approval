@@ -16,10 +16,14 @@ type Options = {
   readonly adapter: StorageAdapter;
   readonly clock: () => Date;
   readonly verificationDelayMs?: number;
+  readonly tombstoneReapIntervalMs?: number;
   readonly sleep?: (milliseconds: number) => Promise<void>;
 };
 
 const DEFAULT_STAGING_VERIFICATION_DELAY_MS = 1_000;
+const DEFAULT_TOMBSTONE_REAP_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+const MIN_TOMBSTONE_REAP_INTERVAL_MS = 60_000;
+const MAX_TOMBSTONE_REAP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1_000;
 
 type CleanupPayload = {
   readonly idempotencyKey: string;
@@ -27,6 +31,7 @@ type CleanupPayload = {
   readonly expectedStatus: "staging" | "delete_pending";
   readonly driver: StorageDriver;
   readonly objectKey: string;
+  readonly cleanupGeneration: number;
 };
 
 export function createDeleteStorageObjectHandler(options: Options): JobHandler {
@@ -36,7 +41,10 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
   }
   const { transactionRunner, createRepository, adapter, clock } = options;
   const verificationDelayMs = options.verificationDelayMs ?? DEFAULT_STAGING_VERIFICATION_DELAY_MS;
+  const tombstoneReapIntervalMs = options.tombstoneReapIntervalMs ?? DEFAULT_TOMBSTONE_REAP_INTERVAL_MS;
   if (!Number.isSafeInteger(verificationDelayMs) || verificationDelayMs < 1 || verificationDelayMs >= 30_000 ||
+      !Number.isSafeInteger(tombstoneReapIntervalMs) || tombstoneReapIntervalMs < MIN_TOMBSTONE_REAP_INTERVAL_MS ||
+      tombstoneReapIntervalMs > MAX_TOMBSTONE_REAP_INTERVAL_MS ||
       (options.sleep !== undefined && typeof options.sleep !== "function")) {
     throw new Error("INVALID_STORAGE_CLEANUP_HANDLER_OPTIONS");
   }
@@ -52,9 +60,26 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
       expectedStatus: payload.expectedStatus,
       driver: payload.driver,
       objectKey: payload.objectKey,
-      requestedAt
+      requestedAt,
+      cleanupGeneration: payload.cleanupGeneration
     }));
     if (!prepared) return;
+
+    if (prepared.cleanupTombstone) {
+      const lastError = await reapTombstoneBytes(adapter, payload.objectKey, verificationDelayMs, sleep);
+      const scheduledAt = ownClock(clock());
+      const nextCleanupAt = addMilliseconds(scheduledAt, tombstoneReapIntervalMs);
+      await transactionRunner((executor) => createRepository(executor).scheduleCleanupReap({
+        id: payload.storageObjectId,
+        driver: payload.driver,
+        objectKey: payload.objectKey,
+        expectedGeneration: payload.cleanupGeneration,
+        scheduledAt,
+        nextCleanupAt,
+        lastError
+      }));
+      return;
+    }
 
     await deleteBytes(adapter, payload.objectKey);
     if (payload.expectedStatus === "staging") {
@@ -76,9 +101,36 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
       id: payload.storageObjectId,
       driver: payload.driver,
       objectKey: payload.objectKey,
+      expectedGeneration: payload.cleanupGeneration,
       deletedAt
     }));
   };
+}
+
+async function reapTombstoneBytes(
+  adapter: StorageAdapter,
+  objectKey: string,
+  verificationDelayMs: number,
+  sleep: (milliseconds: number) => Promise<void>
+) {
+  await attemptDelete(adapter, objectKey);
+  await sleep(verificationDelayMs);
+  await attemptDelete(adapter, objectKey);
+  try {
+    const remaining = await adapter.head(objectKey);
+    return remaining === null ? null : "STORAGE_DELETE_NOT_VERIFIED";
+  } catch {
+    return "STORAGE_DELETE_VERIFY_FAILED";
+  }
+}
+
+async function attemptDelete(adapter: StorageAdapter, objectKey: string) {
+  try {
+    await deleteBytes(adapter, objectKey);
+  } catch {
+    // The durable tombstone owns another generation even when this delete fails.
+    // A final head below decides whether the current cycle can be considered clean.
+  }
 }
 
 async function deleteBytes(adapter: StorageAdapter, objectKey: string) {
@@ -95,12 +147,24 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function addMilliseconds(date: Date, milliseconds: number) {
+  const value = date.getTime() + milliseconds;
+  if (!Number.isSafeInteger(value) || Math.abs(value) > 8_640_000_000_000_000) {
+    throw new JobHandlerError("transient", "INVALID_WORKER_CLOCK", "Worker clock returned an invalid timestamp");
+  }
+  return new Date(value);
+}
+
 function ownPayload(value: unknown): CleanupPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidPayload();
   const payload = value as Record<string, unknown>;
   const keys = Object.keys(payload).sort();
-  const expectedKeys = ["driver", "expectedStatus", "idempotencyKey", "objectKey", "storageObjectId"];
-  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) throw invalidPayload();
+  const hasGeneration = Object.hasOwn(payload, "cleanupGeneration");
+  const expectedKeys = hasGeneration
+    ? ["cleanupGeneration", "driver", "expectedStatus", "idempotencyKey", "objectKey", "storageObjectId"]
+    : ["driver", "expectedStatus", "idempotencyKey", "objectKey", "storageObjectId"];
+  if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index]) ||
+      (hasGeneration && (!Number.isSafeInteger(payload.cleanupGeneration) || (payload.cleanupGeneration as number) < 0))) throw invalidPayload();
   if (typeof payload.storageObjectId !== "string" || !UUID_V7_PATTERN.test(payload.storageObjectId) ||
       (payload.expectedStatus !== "staging" && payload.expectedStatus !== "delete_pending") ||
       (payload.driver !== "filesystem" && payload.driver !== "s3") || typeof payload.objectKey !== "string" ||
@@ -110,14 +174,16 @@ function ownPayload(value: unknown): CleanupPayload {
   } catch {
     throw invalidPayload();
   }
-  const expectedIdempotencyKey = `storage-object-cleanup:${payload.storageObjectId}:${payload.expectedStatus}`;
+  if (hasGeneration && payload.expectedStatus !== "delete_pending") throw invalidPayload();
+  const expectedIdempotencyKey = `storage-object-cleanup:${payload.storageObjectId}:${payload.expectedStatus}${hasGeneration ? `:${payload.cleanupGeneration}` : ""}`;
   if (payload.idempotencyKey !== expectedIdempotencyKey) throw invalidPayload();
   return {
     idempotencyKey: payload.idempotencyKey,
     storageObjectId: payload.storageObjectId,
     expectedStatus: payload.expectedStatus,
     driver: payload.driver,
-    objectKey: payload.objectKey
+    objectKey: payload.objectKey,
+    cleanupGeneration: hasGeneration ? payload.cleanupGeneration as number : 0
   };
 }
 

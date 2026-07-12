@@ -67,6 +67,7 @@ export type PlatformWorkerConfig = {
   maxAttempts: number;
   retryBaseMs: number;
   retryMaxMs: number;
+  storageCleanupReapIntervalMs: number;
 };
 
 type BasePlatformConfig<TTarget extends PlatformProcessTarget> = {

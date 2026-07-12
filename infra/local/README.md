@@ -17,6 +17,11 @@ npm run infra:status
 
 `infra:up` 每次都会重新执行幂等 PostgreSQL 角色授权，并确认私有 `pdf-approval` Bucket 存在。
 
+S3 上传在超时或连接中断后可能出现远端结果不确定。平台会故意保留这类对象的
+`delete_pending` tombstone，并按 `PDF_APPROVAL_STORAGE_CLEANUP_REAP_INTERVAL_MS`
+（默认 6 小时，最小 1 分钟）持续执行 generation-fenced 删除复核。该元数据不是泄漏，
+不得手工改成 `deleted`；它保证进程重启或迟到 PUT 后仍有持久清理所有权。
+
 ## 停止与重置
 
 ```powershell

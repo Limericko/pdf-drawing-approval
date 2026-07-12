@@ -17,6 +17,9 @@ export type StorageObject = {
   readonly deleteRequestedAt: Date | null;
   readonly deletedAt: Date | null;
   readonly uploadExpiresAt: Date | null;
+  readonly cleanupTombstone: boolean;
+  readonly cleanupGeneration: number;
+  readonly cleanupNotBefore: Date | null;
 };
 
 export type CreateStagingStorageObject = Pick<StorageObject, "id" | "driver" | "objectKey" | "createdAt"> & {
@@ -36,10 +39,19 @@ export type PrepareStorageCleanup = {
   readonly driver: StorageDriver;
   readonly objectKey: string;
   readonly requestedAt: Date;
+  readonly cleanupGeneration: number;
 };
 
 export type CompleteStorageCleanup = Pick<PrepareStorageCleanup, "id" | "driver" | "objectKey"> & {
+  readonly expectedGeneration: number;
   readonly deletedAt: Date;
+};
+
+export type ScheduleStorageCleanupReap = Pick<PrepareStorageCleanup, "id" | "driver" | "objectKey"> & {
+  readonly expectedGeneration: number;
+  readonly scheduledAt: Date;
+  readonly nextCleanupAt: Date;
+  readonly lastError: string | null;
 };
 
 export interface StorageObjectRepository {
@@ -48,9 +60,10 @@ export interface StorageObjectRepository {
   markReady(id: string, content: ReadyStorageObjectContent): Promise<StorageObject>;
   markDeletePending(id: string, requestedAt: Date): Promise<StorageObject>;
   listStaleStaging(createdBefore: Date, limit: number): Promise<StorageObject[]>;
-  listDeletePending(limit: number): Promise<StorageObject[]>;
+  listDeletePending(dueAt: Date, limit: number): Promise<StorageObject[]>;
   prepareCleanup(input: PrepareStorageCleanup): Promise<StorageObject | undefined>;
   completeCleanup(input: CompleteStorageCleanup): Promise<StorageObject | undefined>;
+  scheduleCleanupReap(input: ScheduleStorageCleanupReap): Promise<StorageObject | undefined>;
 }
 
 export type StorageObjectRepositoryErrorCode =

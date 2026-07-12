@@ -252,7 +252,14 @@ function loadWorkerConfig(env: NodeJS.ProcessEnv): PlatformWorkerConfig {
     leaseMs: boundedInteger(env, "PDF_APPROVAL_WORKER_LEASE_MS", 30000, 1000, 3600000),
     maxAttempts: boundedInteger(env, "PDF_APPROVAL_WORKER_MAX_ATTEMPTS", 5, 1, 100),
     retryBaseMs,
-    retryMaxMs
+    retryMaxMs,
+    storageCleanupReapIntervalMs: boundedInteger(
+      env,
+      "PDF_APPROVAL_STORAGE_CLEANUP_REAP_INTERVAL_MS",
+      6 * 60 * 60 * 1_000,
+      60_000,
+      7 * 24 * 60 * 60 * 1_000
+    )
   };
 }
 

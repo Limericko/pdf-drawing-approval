@@ -14,6 +14,7 @@ import { StorageReconciler } from "./storageReconciler.ts";
 let database: PlatformTestDatabase;
 let migration: Pool;
 let web: PlatformPool;
+let worker: PlatformPool;
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
@@ -23,13 +24,19 @@ beforeAll(async () => {
   await migration.query("CREATE TABLE platform.test_cleanup_intents(idempotency_key text PRIMARY KEY, payload jsonb NOT NULL)");
   await migration.query("GRANT SELECT, INSERT, DELETE ON platform.test_storage_refs TO platform_web");
   await migration.query("GRANT SELECT, INSERT ON platform.test_cleanup_intents TO platform_web");
+  await migration.query("GRANT SELECT, INSERT ON platform.test_cleanup_intents TO platform_worker");
   web = createPlatformPool({
     connectionString: database.urls.web, poolMax: 4, connectTimeoutMs: 2_000,
     queryTimeoutMs: 2_000, lockTimeoutMs: 1_000, transactionTimeoutMs: 5_000
   }, "storage-reconciler-test");
+  worker = createPlatformPool({
+    connectionString: database.urls.worker, poolMax: 4, connectTimeoutMs: 2_000,
+    queryTimeoutMs: 2_000, lockTimeoutMs: 1_000, transactionTimeoutMs: 5_000
+  }, "storage-reconciler-worker-test");
 });
 
 afterAll(async () => {
+  await worker?.end();
   await web?.end();
   await database?.dispose();
 });
@@ -41,6 +48,7 @@ beforeEach(async () => {
 });
 
 const transactionRunner = <T>(callback: (tx: QueryExecutor) => Promise<T>) => withTransaction(web, callback);
+const workerTransactionRunner = <T>(callback: (tx: QueryExecutor) => Promise<T>) => withTransaction(worker, callback);
 
 class RecordingPublisher implements CleanupIntentPublisher {
   readonly intents: CleanupIntent[] = [];
@@ -185,6 +193,59 @@ describe("StorageReconciler", () => {
     ].sort());
     expect(second).toEqual(first);
     expect(publisher.intents.every((intent) => intent.payloadVersion === 1)).toBe(true);
+  });
+
+  it("deduplicates one due tombstone generation across reconcilers and resumes after restart", async () => {
+    const webRepository = new PostgresStorageObjectRepository(web);
+    const repository = new PostgresStorageObjectRepository(worker);
+    const createdAt = new Date("2026-07-12T00:10:00.000Z");
+    const dueAt = new Date(createdAt.getTime() + 61_000);
+    const id = uuidv7();
+    const objectKey = `objects/original/${id}`;
+    await webRepository.createStaging({
+      id,
+      driver: "s3",
+      objectKey,
+      createdAt,
+      uploadExpiresAt: new Date(createdAt.getTime() + 500)
+    });
+    await repository.prepareCleanup({
+      id,
+      expectedStatus: "staging",
+      driver: "s3",
+      objectKey,
+      requestedAt: new Date(createdAt.getTime() + 1_000),
+      cleanupGeneration: 0
+    });
+    await repository.scheduleCleanupReap({
+      id,
+      driver: "s3",
+      objectKey,
+      expectedGeneration: 0,
+      scheduledAt: new Date(createdAt.getTime() + 1_000),
+      nextCleanupAt: dueAt,
+      lastError: null
+    });
+    const createReconciler = (now: Date) => new StorageReconciler({
+      transactionRunner: workerTransactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher: new DatabasePublisher(),
+      clock: () => now,
+      batchSize: 10
+    });
+
+    await expect(createReconciler(new Date(dueAt.getTime() - 1)).runOnce()).resolves.toEqual({ published: 0 });
+    await Promise.all([createReconciler(dueAt).runOnce(), createReconciler(dueAt).runOnce()]);
+    await createReconciler(new Date(dueAt.getTime() + 1)).runOnce();
+
+    const intents = await web.query<{ idempotency_key: string; payload: { cleanupGeneration: number } }>(
+      "SELECT idempotency_key, payload FROM platform.test_cleanup_intents WHERE payload->>'storageObjectId' = $1",
+      [id]
+    );
+    expect(intents.rows).toEqual([{
+      idempotency_key: `storage-object-cleanup:${id}:delete_pending:1`,
+      payload: expect.objectContaining({ cleanupGeneration: 1 })
+    }]);
   });
 
   it("commits reference removal, delete_pending and cleanup publication in one transaction", async () => {

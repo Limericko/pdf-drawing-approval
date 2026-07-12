@@ -151,7 +151,10 @@ function ownCleanupIntent(intent: CleanupIntent) {
     !["staging", "delete_pending"].includes(intent.expectedStatus) ||
     !["filesystem", "s3"].includes(intent.driver)
   ) throw invalidEvent();
-  const expectedIdempotencyKey = `storage-object-cleanup:${intent.storageObjectId}:${intent.expectedStatus}`;
+  const hasGeneration = intent.cleanupGeneration !== undefined;
+  if (hasGeneration && (intent.expectedStatus !== "delete_pending" ||
+      !Number.isSafeInteger(intent.cleanupGeneration) || intent.cleanupGeneration! < 0)) throw invalidEvent();
+  const expectedIdempotencyKey = `storage-object-cleanup:${intent.storageObjectId}:${intent.expectedStatus}${hasGeneration ? `:${intent.cleanupGeneration}` : ""}`;
   if (intent.idempotencyKey !== expectedIdempotencyKey) throw invalidEvent();
   try {
     if (assertStorageKey(intent.objectKey).id !== intent.storageObjectId) throw invalidEvent();
@@ -163,7 +166,8 @@ function ownCleanupIntent(intent: CleanupIntent) {
     storageObjectId: intent.storageObjectId,
     expectedStatus: intent.expectedStatus,
     driver: intent.driver,
-    objectKey: intent.objectKey
+    objectKey: intent.objectKey,
+    ...(hasGeneration ? { cleanupGeneration: intent.cleanupGeneration } : {})
   }, invalidEvent);
 }
 

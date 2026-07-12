@@ -134,6 +134,51 @@ describe("leased worker", () => {
     await expect(repository.findById(id)).resolves.toMatchObject({ status: "pending", attemptCount: 0, workerId: null, startedAt: now });
   });
 
+  it("stops cleanly when another worker recovers the claim before abort release", async () => {
+    const claimedAt = new Date("2026-07-12T08:27:00.000Z");
+    let currentTime = claimedAt;
+    const repository = new PostgresJobRepository(worker);
+    const id = uuidv7();
+    await repository.create({ id, jobType: "abort-recovered", payloadVersion: 1, payload: {}, idempotencyKey: `abort-recovered:${id}`, maxAttempts: 2, nextRunAt: claimedAt, createdAt: claimedAt });
+    let claimed!: () => void;
+    let returnClaim!: () => void;
+    const claimObserved = new Promise<void>((resolve) => { claimed = resolve; });
+    const barrier = new Promise<void>((resolve) => { returnClaim = resolve; });
+    const delayedRepository = new Proxy(repository, {
+      get(target, property, receiver) {
+        if (property === "claim") return async (...args: Parameters<typeof repository.claim>) => {
+          const job = await target.claim(...args);
+          claimed();
+          await barrier;
+          return job;
+        };
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    const handler = vi.fn(async () => undefined);
+    const controller = new AbortController();
+    const running = runWorkerIteration({
+      ...deps("abort-old-owner", claimedAt, delayedRepository, new JobRegistry([], [{ jobType: "abort-recovered", payloadVersion: 1, handler }])),
+      clock: () => new Date(currentTime),
+      signal: controller.signal
+    });
+    await claimObserved;
+    currentTime = new Date(claimedAt.getTime() + 1_000);
+    const recovered = await repository.claim({ workerId: "abort-new-owner", now: currentTime, leaseDurationMs: 1_000 });
+    controller.abort();
+    returnClaim();
+
+    await expect(running).resolves.toEqual({ status: "stopped" });
+    expect(handler).not.toHaveBeenCalled();
+    await expect(repository.findById(id)).resolves.toMatchObject({
+      status: "running",
+      attemptCount: 2,
+      workerId: "abort-new-owner",
+      leaseToken: recovered!.leaseToken
+    });
+  });
+
   it("lets an in-flight short job finish after abort and does not claim another job", async () => {
     const now = new Date("2026-07-12T08:30:00.000Z");
     const realRepository = new PostgresJobRepository(worker);

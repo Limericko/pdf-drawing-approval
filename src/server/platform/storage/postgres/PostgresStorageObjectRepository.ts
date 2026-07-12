@@ -7,6 +7,7 @@ import {
   type CompleteStorageCleanup,
   type PrepareStorageCleanup,
   type ReadyStorageObjectContent,
+  type ScheduleStorageCleanupReap,
   type StorageObject,
   type StorageObjectRepository,
   StorageObjectRepositoryError,
@@ -31,6 +32,9 @@ type StorageObjectRow = QueryResultRow & {
   delete_requested_at: Date | null;
   deleted_at: Date | null;
   upload_expires_at: Date | null;
+  cleanup_tombstone: boolean;
+  cleanup_generation: string | number;
+  cleanup_not_before: Date | null;
 };
 
 type TransitionRow = StorageObjectRow & {
@@ -38,13 +42,15 @@ type TransitionRow = StorageObjectRow & {
 };
 
 const COLUMNS = `id, status, driver, object_key, size_bytes, sha256, media_type, last_error,
-  created_at, updated_at, ready_at, delete_requested_at, deleted_at, upload_expires_at`;
+  created_at, updated_at, ready_at, delete_requested_at, deleted_at, upload_expires_at,
+  cleanup_tombstone, cleanup_generation, cleanup_not_before`;
 const NULL_TRANSITION_COLUMNS = `NULL::uuid AS id, NULL::text AS status, NULL::text AS driver,
   NULL::text AS object_key, NULL::bigint AS size_bytes, NULL::bytea AS sha256,
   NULL::text AS media_type, NULL::text AS last_error, NULL::timestamptz AS created_at,
   NULL::timestamptz AS updated_at, NULL::timestamptz AS ready_at,
   NULL::timestamptz AS delete_requested_at, NULL::timestamptz AS deleted_at,
-  NULL::timestamptz AS upload_expires_at`;
+  NULL::timestamptz AS upload_expires_at, NULL::boolean AS cleanup_tombstone,
+  NULL::bigint AS cleanup_generation, NULL::timestamptz AS cleanup_not_before`;
 
 export class PostgresStorageObjectRepository implements StorageObjectRepository {
   constructor(private readonly executor: QueryExecutor) {}
@@ -150,13 +156,15 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return result.rows.map(mapStorageObject);
   }
 
-  async listDeletePending(limit: number) {
+  async listDeletePending(dueAt: Date, limit: number) {
+    const due = ownDate(dueAt);
     assertLimit(limit);
     const result = await this.executor.query<StorageObjectRow>(
       `SELECT ${COLUMNS} FROM platform.storage_objects
        WHERE status = 'delete_pending'
-       ORDER BY delete_requested_at, id LIMIT $1`,
-      [limit]
+         AND (cleanup_tombstone = false OR cleanup_not_before <= $1)
+       ORDER BY cleanup_not_before NULLS FIRST, delete_requested_at, id LIMIT $2`,
+      [due, limit]
     );
     return result.rows.map(mapStorageObject);
   }
@@ -167,23 +175,29 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
       ? await this.executor.query<StorageObjectRow>(
         `WITH transitioned AS (
            UPDATE platform.storage_objects
-           SET status = 'delete_pending', delete_requested_at = $4, updated_at = $4
+           SET status = 'delete_pending', delete_requested_at = $4, updated_at = $4,
+             cleanup_tombstone = (driver = 's3'),
+             cleanup_generation = 0,
+             cleanup_not_before = CASE WHEN driver = 's3' THEN $4 ELSE NULL END
            WHERE id = $1 AND status = 'staging' AND driver = $2 AND object_key = $3
-             AND created_at <= $4 AND upload_expires_at <= $4
+             AND created_at <= $4 AND upload_expires_at <= $4 AND $5 = 0
            RETURNING ${COLUMNS}
          )
          SELECT ${COLUMNS} FROM transitioned
          UNION ALL
          SELECT ${COLUMNS} FROM platform.storage_objects
          WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+           AND cleanup_generation = $5
            AND NOT EXISTS (SELECT 1 FROM transitioned)
          LIMIT 1`,
-        [owned.id, owned.driver, owned.objectKey, owned.requestedAt]
+        [owned.id, owned.driver, owned.objectKey, owned.requestedAt, owned.cleanupGeneration]
       )
       : await this.executor.query<StorageObjectRow>(
         `SELECT ${COLUMNS} FROM platform.storage_objects
-         WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3`,
-        [owned.id, owned.driver, owned.objectKey]
+         WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+           AND cleanup_generation = $4
+           AND (cleanup_tombstone = false OR cleanup_not_before <= $5)`,
+        [owned.id, owned.driver, owned.objectKey, owned.cleanupGeneration, owned.requestedAt]
       );
     return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
   }
@@ -194,9 +208,25 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
       `UPDATE platform.storage_objects
        SET status = 'deleted', deleted_at = $4, updated_at = $4
        WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+         AND cleanup_tombstone = false AND cleanup_generation = $5
          AND delete_requested_at <= $4
        RETURNING ${COLUMNS}`,
-      [owned.id, owned.driver, owned.objectKey, owned.deletedAt]
+      [owned.id, owned.driver, owned.objectKey, owned.deletedAt, owned.expectedGeneration]
+    );
+    return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
+  }
+
+  async scheduleCleanupReap(input: ScheduleStorageCleanupReap) {
+    const owned = ownScheduleCleanupReap(input);
+    const result = await this.executor.query<StorageObjectRow>(
+      `UPDATE platform.storage_objects
+       SET cleanup_generation = cleanup_generation + 1,
+         cleanup_not_before = $5, last_error = $6, updated_at = $4
+       WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+         AND cleanup_tombstone = true AND cleanup_generation = $7
+         AND delete_requested_at <= $4 AND $5 > $4
+       RETURNING ${COLUMNS}`,
+      [owned.id, owned.driver, owned.objectKey, owned.scheduledAt, owned.nextCleanupAt, owned.lastError, owned.expectedGeneration]
     );
     return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
   }
@@ -209,7 +239,14 @@ function ownCleanup(input: PrepareStorageCleanup) {
   assertDriver(input.driver);
   const key = assertStorageKey(input.objectKey);
   if (key.id !== input.id || (input.expectedStatus !== "staging" && input.expectedStatus !== "delete_pending")) throw invalidContent();
-  return { id: input.id, expectedStatus: input.expectedStatus, driver: input.driver, objectKey: input.objectKey, requestedAt: ownDate(input.requestedAt) };
+  return {
+    id: input.id,
+    expectedStatus: input.expectedStatus,
+    driver: input.driver,
+    objectKey: input.objectKey,
+    requestedAt: ownDate(input.requestedAt),
+    cleanupGeneration: ownGeneration(input.cleanupGeneration)
+  };
 }
 
 function ownCompleteCleanup(input: CompleteStorageCleanup) {
@@ -218,7 +255,36 @@ function ownCompleteCleanup(input: CompleteStorageCleanup) {
   assertDriver(input.driver);
   const key = assertStorageKey(input.objectKey);
   if (key.id !== input.id) throw invalidContent();
-  return { id: input.id, driver: input.driver, objectKey: input.objectKey, deletedAt: ownDate(input.deletedAt) };
+  return {
+    id: input.id,
+    driver: input.driver,
+    objectKey: input.objectKey,
+    deletedAt: ownDate(input.deletedAt),
+    expectedGeneration: ownGeneration(input.expectedGeneration)
+  };
+}
+
+function ownScheduleCleanupReap(input: ScheduleStorageCleanupReap) {
+  if (!input || typeof input !== "object") throw invalidContent();
+  assertId(input.id);
+  assertDriver(input.driver);
+  const key = assertStorageKey(input.objectKey);
+  const scheduledAt = ownDate(input.scheduledAt);
+  const nextCleanupAt = ownDate(input.nextCleanupAt);
+  if (key.id !== input.id || input.driver !== "s3" || nextCleanupAt.getTime() <= scheduledAt.getTime() ||
+      (input.lastError !== null && (typeof input.lastError !== "string" || !input.lastError || input.lastError !== input.lastError.trim() ||
+        input.lastError.length > 2_000 || /[\u0000-\u001f\u007f]/.test(input.lastError)))) {
+    throw invalidContent();
+  }
+  return {
+    id: input.id,
+    driver: input.driver,
+    objectKey: input.objectKey,
+    expectedGeneration: ownGeneration(input.expectedGeneration),
+    scheduledAt,
+    nextCleanupAt,
+    lastError: input.lastError
+  };
 }
 
 function transitionResult(row: TransitionRow, expectedStatus: StorageObjectStatus): StorageObject {
@@ -256,8 +322,22 @@ function mapStorageObject(row: StorageObjectRow): StorageObject {
     readyAt: row.ready_at === null ? null : cloneDate(row.ready_at),
     deleteRequestedAt: row.delete_requested_at === null ? null : cloneDate(row.delete_requested_at),
     deletedAt: row.deleted_at === null ? null : cloneDate(row.deleted_at),
-    uploadExpiresAt: row.upload_expires_at === null ? null : cloneDate(row.upload_expires_at)
+    uploadExpiresAt: row.upload_expires_at === null ? null : cloneDate(row.upload_expires_at),
+    cleanupTombstone: row.cleanup_tombstone,
+    cleanupGeneration: mapGeneration(row.cleanup_generation),
+    cleanupNotBefore: row.cleanup_not_before === null ? null : cloneDate(row.cleanup_not_before)
   };
+}
+
+function mapGeneration(value: string | number) {
+  const generation = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(generation) || generation < 0) throw invalidContent();
+  return generation;
+}
+
+function ownGeneration(value: number) {
+  if (!Number.isSafeInteger(value) || value < 0) throw invalidContent();
+  return value;
 }
 
 function mapSize(value: string | number | null) {

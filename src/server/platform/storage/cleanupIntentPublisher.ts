@@ -12,6 +12,7 @@ export type CleanupIntent = {
   readonly expectedStatus: CleanupIntentStatus;
   readonly driver: StorageDriver;
   readonly objectKey: string;
+  readonly cleanupGeneration?: number;
 };
 
 export interface CleanupIntentPublisher {
@@ -19,16 +20,18 @@ export interface CleanupIntentPublisher {
 }
 
 export function createCleanupIntent(
-  object: Pick<StorageObject, "id" | "driver" | "objectKey">,
+  object: Pick<StorageObject, "id" | "driver" | "objectKey" | "cleanupTombstone" | "cleanupGeneration">,
   expectedStatus: CleanupIntentStatus
 ): CleanupIntent {
+  const isTombstoneReap = expectedStatus === "delete_pending" && object.cleanupTombstone;
   return Object.freeze({
     type: "storage_object_cleanup",
     payloadVersion: 1,
-    idempotencyKey: `storage-object-cleanup:${object.id}:${expectedStatus}`,
+    idempotencyKey: `storage-object-cleanup:${object.id}:${expectedStatus}${isTombstoneReap ? `:${object.cleanupGeneration}` : ""}`,
     storageObjectId: object.id,
     expectedStatus,
     driver: object.driver,
-    objectKey: object.objectKey
+    objectKey: object.objectKey,
+    ...(isTombstoneReap ? { cleanupGeneration: object.cleanupGeneration } : {})
   });
 }

@@ -61,7 +61,8 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       adapter: storage,
       clock,
-      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3)))
+      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
+      tombstoneReapIntervalMs: config.worker.storageCleanupReapIntervalMs
     });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts)],

@@ -88,6 +88,7 @@ class MemoryStorage implements StorageAdapter {
     return Readable.from(content);
   }
   async delete(key: string) {
+    this.calls.push("delete");
     if (this.deleteFailure) throw this.deleteFailure;
     this.objects.delete(key);
   }
@@ -378,7 +379,64 @@ describe("StorageObjectService", () => {
       status: "staging", driver: "filesystem", object_key: objectKey
     });
     expect(storage.objects.has(objectKey)).toBe(false);
+    expect(storage.calls).toEqual(["write", "delete"]);
     expect(body.destroyed).toBe(false);
+  });
+
+  it("reports compensation failure while retaining deadline-owned staging metadata", async () => {
+    const storage = new MemoryStorage();
+    const primary = new StorageError("STORAGE_IO_ERROR", "write failed");
+    const compensation = new StorageError("STORAGE_IO_ERROR", "delete failed");
+    storage.writeFailure = primary;
+    storage.deleteFailure = compensation;
+    const id = uuidv7();
+
+    await expect(service(storage, transactionRunner, () => id)
+      .create({ body: Readable.from("pdf"), mediaType: "application/pdf" }))
+      .rejects.toMatchObject({
+        message: "STORAGE_UPLOAD_COMPENSATION_FAILED",
+        cause: primary,
+        errors: [primary, compensation]
+      });
+    await expect(findStoredObject(id)).resolves.toMatchObject({ status: "staging" });
+    expect(storage.calls).toEqual(["write", "delete"]);
+  });
+
+  it("compensates an upload deadline abort and leaves durable staging ownership", async () => {
+    const id = uuidv7();
+    let writeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { writeStarted = resolve; });
+    let fireDeadline!: () => void;
+    const deleted: string[] = [];
+    const storage: StorageAdapter = {
+      driver: "s3",
+      async write(_key, _body, _contentType, options) {
+        writeStarted();
+        return new Promise((_resolve, reject) => options!.signal!.addEventListener("abort", () => {
+          reject(new StorageError("STORAGE_IO_ERROR", "aborted write"));
+        }, { once: true }));
+      },
+      async delete(key) { deleted.push(key); },
+      async head() { return null; },
+      async openRead() { throw new Error("UNUSED"); },
+      async checkHealth() {}
+    };
+    const uploading = new StorageObjectService({
+      storage,
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      createId: () => id,
+      clock: () => new Date("2026-07-12T12:30:00.000Z"),
+      uploadTimeoutMs: 1_000,
+      scheduleTimeout: (callback) => { fireDeadline = callback; return () => undefined; }
+    }).create({ body: Readable.from("pdf"), mediaType: "application/pdf" });
+    await started;
+    fireDeadline();
+
+    await expect(uploading).rejects.toMatchObject({ code: "STORAGE_IO_ERROR" });
+    const objectKey = `objects/original/${id}`;
+    expect(deleted).toEqual([objectKey]);
+    await expect(findStoredObject(id)).resolves.toMatchObject({ status: "staging", object_key: objectKey });
   });
 
   it("rejects a head mismatch without reporting ready", async () => {

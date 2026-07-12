@@ -170,7 +170,7 @@ export class PostgresJobRepository implements JobRepository {
          worker_id = NULL, lease_expires_at = NULL, lease_token = NULL,
          next_run_at = $4, updated_at = $4, completed_at = NULL
        WHERE id = $1 AND worker_id = $2 AND lease_token = $3 AND status = 'running'
-         AND attempt_count > 0 AND lease_expires_at > $4 AND updated_at <= $4`,
+         AND attempt_count > 0`,
       [owned.id, owned.workerId, owned.leaseToken, owned.releasedAt]
     );
   }

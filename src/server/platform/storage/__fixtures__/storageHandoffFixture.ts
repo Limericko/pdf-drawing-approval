@@ -26,7 +26,10 @@ const repository: StorageObjectRepository = {
       readyAt: null,
       deleteRequestedAt: null,
       deletedAt: null,
-      uploadExpiresAt: input.uploadExpiresAt
+      uploadExpiresAt: input.uploadExpiresAt,
+      cleanupTombstone: false,
+      cleanupGeneration: 0,
+      cleanupNotBefore: null
     };
   },
   async markReady(id, content) {
@@ -42,7 +45,10 @@ const repository: StorageObjectRepository = {
       updatedAt: now,
       deleteRequestedAt: null,
       deletedAt: null,
-      uploadExpiresAt: new Date(now.getTime() + 1)
+      uploadExpiresAt: new Date(now.getTime() + 1),
+      cleanupTombstone: false,
+      cleanupGeneration: 0,
+      cleanupNotBefore: null
     } satisfies StorageObject;
   },
   async findById() { return undefined; },
@@ -50,7 +56,8 @@ const repository: StorageObjectRepository = {
   async listStaleStaging() { return []; },
   async listDeletePending() { return []; },
   async prepareCleanup() { throw new Error("UNEXPECTED_PREPARE_CLEANUP"); },
-  async completeCleanup() { throw new Error("UNEXPECTED_COMPLETE_CLEANUP"); }
+  async completeCleanup() { throw new Error("UNEXPECTED_COMPLETE_CLEANUP"); },
+  async scheduleCleanupReap() { throw new Error("UNEXPECTED_SCHEDULE_CLEANUP_REAP"); }
 };
 
 const body = new Readable({ read() {} });

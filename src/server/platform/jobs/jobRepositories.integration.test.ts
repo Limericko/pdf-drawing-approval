@@ -426,6 +426,56 @@ describe("PostgresJobRepository", () => {
       .rejects.toMatchObject({ code: "STALE_LEASE" });
   });
 
+  it.each([
+    ["exactly at expiry", 1_000],
+    ["after expiry", 1_001]
+  ])("releases an unexecuted max-attempt claim %s", async (_label, releaseOffsetMs) => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T02:06:00.000Z");
+    const input = jobInput({ maxAttempts: 1, nextRunAt: dueAt });
+    await repository.create(input);
+    const claimed = await repository.claim({ workerId: "expired-release-worker", now: dueAt, leaseDurationMs: 1_000 });
+    const releasedAt = new Date(dueAt.getTime() + releaseOffsetMs);
+
+    await expect(repository.release({
+      id: input.id,
+      workerId: "expired-release-worker",
+      leaseToken: claimed!.leaseToken!,
+      releasedAt
+    })).resolves.toMatchObject({
+      status: "pending",
+      attemptCount: 0,
+      nextRunAt: releasedAt,
+      workerId: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      completedAt: null
+    });
+  });
+
+  it("fences an expired release after another worker recovers the job", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T02:07:00.000Z");
+    const input = jobInput({ maxAttempts: 2, nextRunAt: dueAt });
+    await repository.create(input);
+    const abandoned = await repository.claim({ workerId: "expired-owner", now: dueAt, leaseDurationMs: 1_000 });
+    const recoveredAt = new Date(dueAt.getTime() + 1_000);
+    const recovered = await repository.claim({ workerId: "new-owner", now: recoveredAt, leaseDurationMs: 1_000 });
+
+    await expect(repository.release({
+      id: input.id,
+      workerId: "expired-owner",
+      leaseToken: abandoned!.leaseToken!,
+      releasedAt: recoveredAt
+    })).rejects.toMatchObject({ code: "STALE_LEASE" });
+    await expect(repository.findById(input.id)).resolves.toMatchObject({
+      status: "running",
+      attemptCount: 2,
+      workerId: "new-owner",
+      leaseToken: recovered!.leaseToken
+    });
+  });
+
   it("rejects success exactly at lease expiry and leaves the job reclaimable", async () => {
     const repository = new PostgresJobRepository(worker);
     const dueAt = new Date("2026-07-12T02:10:00.000Z");

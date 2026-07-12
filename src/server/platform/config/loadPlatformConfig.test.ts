@@ -130,7 +130,8 @@ describe("loadPlatformConfig target composition", () => {
       leaseMs: 30000,
       maxAttempts: 5,
       retryBaseMs: 1000,
-      retryMaxMs: 60000
+      retryMaxMs: 60000,
+      storageCleanupReapIntervalMs: 6 * 60 * 60 * 1_000
     });
     expect("session" in config).toBe(false);
   });
@@ -271,10 +272,18 @@ describe("database and numeric validation", () => {
     ["PDF_APPROVAL_WORKER_CONCURRENCY", "101"],
     ["PDF_APPROVAL_WORKER_LEASE_MS", "999"],
     ["PDF_APPROVAL_WORKER_MAX_ATTEMPTS", "0"],
+    ["PDF_APPROVAL_STORAGE_CLEANUP_REAP_INTERVAL_MS", "59999"],
     ["PDF_APPROVAL_WORKER_RETRY_BASE_MS", "0"],
     ["PDF_APPROVAL_WORKER_RETRY_MAX_MS", "86400001"]
   ])("rejects out-of-bounds worker setting %s=%s", (key, value) => {
     expect(() => loadPlatformConfig(workerEnv({ [key]: value }), "worker")).toThrow(`PLATFORM_CONFIG_INVALID:${key}`);
+  });
+
+  it("defaults S3 tombstone reaping to a low-frequency interval", () => {
+    expect(loadPlatformConfig(workerEnv(), "worker").worker.storageCleanupReapIntervalMs).toBe(6 * 60 * 60 * 1_000);
+    expect(loadPlatformConfig(workerEnv({
+      PDF_APPROVAL_STORAGE_CLEANUP_REAP_INTERVAL_MS: "60000"
+    }), "worker").worker.storageCleanupReapIntervalMs).toBe(60_000);
   });
 
   it("requires two worker pool connections per configured concurrency slot", () => {

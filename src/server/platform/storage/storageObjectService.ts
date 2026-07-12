@@ -103,6 +103,7 @@ export class StorageObjectService {
         } finally {
           cancelDeadline();
         }
+        await compensateFailedWrite(this.dependencies.storage, staged.objectKey, error);
         throw error;
       }
       try {
@@ -185,6 +186,19 @@ export class StorageObjectService {
       throw new StorageObjectServiceError("INVALID_STORAGE_OBJECT_CLOCK", "Invalid storage object service clock");
     }
     return new Date(now.getTime());
+  }
+}
+
+async function compensateFailedWrite(storage: StorageAdapter, objectKey: string, primaryError: unknown) {
+  try {
+    await storage.delete(objectKey);
+  } catch (cleanupError) {
+    if (cleanupError instanceof StorageError && cleanupError.code === "OBJECT_NOT_FOUND") return;
+    throw new AggregateError(
+      [primaryError, cleanupError],
+      "STORAGE_UPLOAD_COMPENSATION_FAILED",
+      { cause: primaryError }
+    );
   }
 }
 

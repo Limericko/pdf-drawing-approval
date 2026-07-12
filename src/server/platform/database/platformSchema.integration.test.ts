@@ -40,7 +40,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 4, verified: 0, total: 4 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 5, verified: 0, total: 5 });
     await run(database, migration);
   });
 }
@@ -125,7 +125,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 4, total: 4 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 5, total: 5 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -133,7 +133,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 1, file_name: "0001_identity_projects.sql" },
         { version: 2, file_name: "0002_security_sessions_audit.sql" },
         { version: 3, file_name: "0003_storage_outbox_jobs.sql" },
-        { version: 4, file_name: "0004_worker_outbox_publish.sql" }
+        { version: 4, file_name: "0004_worker_outbox_publish.sql" },
+        { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" }
       ]);
     });
   });
@@ -843,7 +844,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["worker", worker]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 4
+          rowCount: 5
         });
         await expectDenied(
           pool,
