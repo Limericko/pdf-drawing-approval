@@ -300,7 +300,7 @@ async function createHarness(options: { environment?: "test" | "production"; coo
     services: { authentication, sessions, invitations: options.invitationsService ?? invitations, authorization },
     logger
   }));
-  app.use(createErrorMiddleware({ logger }));
+  app.use(createErrorMiddleware({ logger, emergencySink: vi.fn() }));
   return { app, authentication, invitations };
 }
 

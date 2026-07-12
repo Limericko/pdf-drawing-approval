@@ -7,6 +7,8 @@ type SecurityLogger = {
   error(event: { readonly requestId: string; readonly userId?: string; readonly code: string }): void;
 };
 
+type EmergencySink = (event: { readonly requestId: string; readonly code: "LOGGER_FAILURE" }) => void;
+
 type ProblemMapping = { status: number; title: string };
 
 const DOMAIN_PROBLEMS: Readonly<Record<string, ProblemMapping>> = Object.freeze({
@@ -30,8 +32,18 @@ const DOMAIN_PROBLEMS: Readonly<Record<string, ProblemMapping>> = Object.freeze(
   CLIENT_ADDRESS_INVALID: { status: 400, title: "Invalid client address" }
 });
 
-export function createErrorMiddleware(options: { readonly logger: SecurityLogger }): ErrorRequestHandler {
-  if (!options?.logger) throw new Error("ERROR_MIDDLEWARE_LOGGER_REQUIRED");
+export function createErrorMiddleware(options: {
+  readonly logger: SecurityLogger;
+  readonly emergencySink: EmergencySink;
+}): ErrorRequestHandler {
+  if (!options?.logger || typeof options.logger !== "object" || typeof options.logger.error !== "function") {
+    throw new Error("ERROR_MIDDLEWARE_LOGGER_REQUIRED");
+  }
+  if (typeof options.emergencySink !== "function") {
+    throw new Error("ERROR_MIDDLEWARE_EMERGENCY_SINK_REQUIRED");
+  }
+  const logger = options.logger;
+  const emergencySink = options.emergencySink;
   return (error, _request, response, next) => {
     if (response.headersSent) {
       next(error);
@@ -60,9 +72,9 @@ export function createErrorMiddleware(options: { readonly logger: SecurityLogger
 
     if (mapping.status >= 500) {
       try {
-        options.logger.error({ requestId, code: mapping.code });
+        logger.error({ requestId, code: mapping.code });
       } catch {
-        // The HTTP response must remain stable even if the emergency logger is unavailable.
+        emergencySink({ requestId, code: "LOGGER_FAILURE" });
       }
     }
     sendProblem(response, { status: mapping.status, title: mapping.title, code: mapping.code, requestId });
