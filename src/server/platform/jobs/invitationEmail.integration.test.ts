@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runMigrations } from "../database/migrationRunner.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { createPlatformMailTransport } from "../mail/platformMailTransport.ts";
@@ -35,6 +35,7 @@ beforeEach(async () => {
   await migration.query(`INSERT INTO platform.project_members (id,project_id,user_id,role,status)
     VALUES ('01890f1e-9b4a-7cc2-8f00-000000000073',$1,$2,'manager','active')`, [projectId, inviterId]);
 });
+afterEach(async () => { await mailpit.clear(); });
 
 describe("invitation email integration", () => {
   it("sends a fragment invitation through Mailpit with a stable Message-ID and supports at-least-once replay", async () => {
@@ -67,6 +68,47 @@ describe("invitation email integration", () => {
     await expect(mailpit.findByMessageIdAndRecipient(
       "<invitation-01890f1e-9b4a-7cc2-8f00-000000000053@pdf-approval.local>", "invitee@example.test"
     )).resolves.toBeUndefined();
+  });
+
+  it("rejects a superseded invitation when its old outbox job arrives late", async () => {
+    const service = makeService();
+    const superseded = await service.createInvitation({ email: "late-job@example.test", platformRole: "member",
+      projectId, projectRole: "viewer", invitedByUserId: inviterId });
+    await service.createInvitation({ email: "LATE-JOB@example.test", platformRole: "member",
+      projectId, projectRole: "designer", invitedByUserId: inviterId });
+    let sends = 0;
+    const handler = createSendInvitationEmailHandler({ pool: worker,
+      transport: { sendInvitation: async () => { sends += 1; }, close() {} },
+      keyring: invitationHmac, publicBaseUrl: "http://127.0.0.1:8080" });
+
+    await expect(handler({ payload: { invitationId: superseded.invitationId } } as never))
+      .rejects.toMatchObject({ kind: "permanent", code: "INVITATION_NOT_ACTIVE" });
+    expect(sends).toBe(0);
+  });
+
+  it("delivers a stored old-key invitation when retained and permanently rejects it after removal", async () => {
+    const created = await makeService().createInvitation({ email: "old-key@example.test", platformRole: "member",
+      projectId, projectRole: "viewer", invitedByUserId: inviterId });
+    const rotatedKeyring = { currentVersion: "v2", keys: new Map([
+      ["v1", Buffer.alloc(32, 1)], ["v2", Buffer.alloc(32, 4)]
+    ]) };
+    const transport = createPlatformMailTransport({ config: { host: "127.0.0.1", port: 51025,
+      from: "pdf-approval@local.test", secure: false, requireTls: false, username: undefined, password: undefined } });
+    try {
+      const retained = createSendInvitationEmailHandler({ pool: worker, transport, keyring: rotatedKeyring,
+        publicBaseUrl: "http://127.0.0.1:8080" });
+      await retained({ payload: { invitationId: created.invitationId } } as never);
+      await expect(waitForMessage(`<invitation-${created.invitationId}@pdf-approval.local>`, "old-key@example.test"))
+        .resolves.toBeDefined();
+
+      const removed = createSendInvitationEmailHandler({ pool: worker, transport,
+        keyring: { currentVersion: "v2", keys: new Map([["v2", Buffer.alloc(32, 4)]]) },
+        publicBaseUrl: "http://127.0.0.1:8080" });
+      await expect(removed({ payload: { invitationId: created.invitationId } } as never))
+        .rejects.toMatchObject({ kind: "permanent", code: "INVITATION_TOKEN_INVALID" });
+    } finally {
+      transport.close();
+    }
   });
 
   it("permanently rejects invalid records and classifies SMTP failures as transient", async () => {
@@ -116,6 +158,14 @@ describe("invitation email integration", () => {
         message: "Invitation email delivery failed" });
   });
 });
+
+function makeService() {
+  return createInvitationService({ pool: web, keyrings: {
+    invitationHmac,
+    totpEncryption: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 2)]]) },
+    recoveryHmac: { currentVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, 3)]]) }
+  }, passwordHashOptions: { memoryCost: 8192, timeCost: 1, parallelism: 1, outputLen: 32 } });
+}
 
 async function waitForMessage(messageId: string, recipient: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {

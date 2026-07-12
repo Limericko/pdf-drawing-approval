@@ -61,11 +61,11 @@ export function identityRepositoryContract(options: ContractOptions) {
     });
   }
 
-  async function createInvitation(projectId: string, invitedByUserId: string) {
+  async function createInvitation(projectId: string, invitedByUserId: string, email = uniqueEmail("invitee")) {
     return repositories().invitations.create({
       tokenHash: randomBytes(32),
       tokenKeyVersion: "v1",
-      email: uniqueEmail("invitee"),
+      email,
       platformRole: "member",
       projectId,
       projectRole: "viewer",
@@ -130,6 +130,36 @@ export function identityRepositoryContract(options: ContractOptions) {
       await expect(repositories().projects.findByIdForMember(project.id, creator.id)).resolves.toBeUndefined();
     });
 
+    it("authorizes invitation creation only for an active admin with an active manager membership on an active project", async () => {
+      const authorized = await createUser({ platformRole: "admin" });
+      const { project } = await createProject(authorized.id);
+      await expect(repositories().projects.lockActiveProjectForInvitation(project.id, authorized.id)).resolves.toBe(true);
+
+      const adminViewer = await createUser({ platformRole: "admin" });
+      await repositories().projects.addMember({ projectId: project.id, userId: adminViewer.id, role: "viewer", status: "active" });
+      await expect(repositories().projects.lockActiveProjectForInvitation(project.id, adminViewer.id)).resolves.toBe(false);
+
+      const memberManager = await createUser({ platformRole: "member" });
+      const memberProject = await createProject(memberManager.id);
+      await expect(repositories().projects.lockActiveProjectForInvitation(memberProject.project.id, memberManager.id)).resolves.toBe(false);
+
+      const disabledAdmin = await createUser({ platformRole: "admin", status: "disabled" });
+      const disabledProject = await createProject(disabledAdmin.id);
+      await expect(repositories().projects.lockActiveProjectForInvitation(disabledProject.project.id, disabledAdmin.id)).resolves.toBe(false);
+
+      const inactiveAdmin = await createUser({ platformRole: "admin" });
+      const inactiveProject = await createProject(inactiveAdmin.id);
+      await options.getContext().migration.query(
+        "UPDATE platform.project_members SET status='disabled',updated_at=clock_timestamp() WHERE id=$1",
+        [inactiveProject.creatorMembership.id]
+      );
+      await expect(repositories().projects.lockActiveProjectForInvitation(inactiveProject.project.id, inactiveAdmin.id)).resolves.toBe(false);
+
+      const archivedAdmin = await createUser({ platformRole: "admin" });
+      const archivedProject = await createProject(archivedAdmin.id, "archived");
+      await expect(repositories().projects.lockActiveProjectForInvitation(archivedProject.project.id, archivedAdmin.id)).resolves.toBe(false);
+    });
+
     it("rolls back project creation when the creator membership cannot be inserted", async () => {
       const missingUserId = "01890f1e-9b4a-7cc2-8f00-ffffffffffff";
       const name = `Atomic rollback ${sequence + 1}`;
@@ -181,6 +211,22 @@ export function identityRepositoryContract(options: ContractOptions) {
       await expect(repositories().invitations.findActiveById(invitation.id)).resolves.toEqual(invitation);
       await repositories().invitations.revoke(invitation.id);
       await expect(repositories().invitations.findActiveById(invitation.id)).resolves.toBeUndefined();
+    });
+
+    it("revokes every active invitation for one project and normalized email without touching another project", async () => {
+      const inviter = await createUser();
+      const firstProject = await createProject(inviter.id);
+      const secondProject = await createProject(inviter.id);
+      const email = uniqueEmail("reinvite");
+      const first = await createInvitation(firstProject.project.id, inviter.id, email);
+      const second = await createInvitation(firstProject.project.id, inviter.id, email.toUpperCase());
+      const other = await createInvitation(secondProject.project.id, inviter.id, email);
+
+      await expect(repositories().invitations.revokeActiveByProjectEmail(firstProject.project.id, ` ${email.toUpperCase()} `))
+        .resolves.toBe(2);
+      await expect(repositories().invitations.findActiveById(first.id)).resolves.toBeUndefined();
+      await expect(repositories().invitations.findActiveById(second.id)).resolves.toBeUndefined();
+      await expect(repositories().invitations.findActiveById(other.id)).resolves.toEqual(other);
     });
 
     it("revokes an active invitation once and fails closed when consumption is attempted", async () => {

@@ -22,4 +22,5 @@ export interface ProjectRepository {
   create(input: CreateProjectInput): Promise<CreateProjectResult>;
   addMember(input: AddProjectMemberInput): Promise<ProjectMember>;
   findByIdForMember(projectId: string, requesterUserId: string): Promise<Project | undefined>;
+  lockActiveProjectForInvitation(projectId: string, inviterUserId: string): Promise<boolean>;
 }

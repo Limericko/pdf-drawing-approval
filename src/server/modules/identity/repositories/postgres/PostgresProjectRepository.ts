@@ -129,4 +129,20 @@ export class PostgresProjectRepository implements ProjectRepository {
     );
     return result.rows[0] ? mapProject(result.rows[0]) : undefined;
   }
+
+  async lockActiveProjectForInvitation(projectId: string, inviterUserId: string) {
+    const result = await this.executor.query<{ id: string }>(
+      `SELECT project.id
+       FROM platform.projects project
+       INNER JOIN platform.users inviter
+         ON inviter.id = $2 AND inviter.platform_role = 'admin' AND inviter.status = 'active'
+       INNER JOIN platform.project_members membership
+         ON membership.project_id = project.id AND membership.user_id = inviter.id
+           AND membership.role = 'manager' AND membership.status = 'active'
+       WHERE project.id = $1 AND project.status = 'active'
+       FOR UPDATE OF project`,
+      [projectId, inviterUserId]
+    );
+    return result.rowCount === 1;
+  }
 }

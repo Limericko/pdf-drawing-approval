@@ -70,9 +70,12 @@ export function createInvitationService(options: Options) {
       const invitationId = uuidv7();
       const createdToken = createInvitationToken(invitationId, options.keyrings.invitationHmac);
       await withTransaction(options.pool, async (tx) => {
-        const project = await new PostgresProjectRepository(tx).findByIdForMember(owned.projectId, owned.invitedByUserId);
-        if (!project || project.status !== "active") throw invalid();
-        await new PostgresInvitationRepository(tx).create({
+        if (!await new PostgresProjectRepository(tx).lockActiveProjectForInvitation(
+          owned.projectId, owned.invitedByUserId
+        )) throw invalid();
+        const invitations = new PostgresInvitationRepository(tx);
+        await invitations.revokeActiveByProjectEmail(owned.projectId, owned.email);
+        await invitations.create({
           id: invitationId,
           tokenHash: createdToken.record.tokenHash,
           tokenKeyVersion: createdToken.record.keyVersion,
@@ -89,7 +92,7 @@ export function createInvitationService(options: Options) {
         });
         await outbox.publish(tx, { eventType: "invitation.created", payloadVersion: 1, payload: { invitationId } });
       });
-      return Object.freeze({ invitationId, token: createdToken.token });
+      return Object.freeze({ invitationId });
     },
 
     async prepare(input: { readonly invitationToken: string; readonly sourceIpPrefix: string }) {

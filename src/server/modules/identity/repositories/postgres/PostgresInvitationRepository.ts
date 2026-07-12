@@ -86,6 +86,21 @@ export class PostgresInvitationRepository implements InvitationRepository {
     return result.rows[0] ? mapInvitation(result.rows[0]) : undefined;
   }
 
+  async revokeActiveByProjectEmail(projectId: string, email: string) {
+    const result = await this.executor.query<{ id: string }>(
+      `WITH times AS (SELECT clock_timestamp() AS now)
+       UPDATE platform.invitations invitation
+       SET revoked_at = times.now
+       FROM times
+       WHERE invitation.project_id = $1 AND invitation.email_normalized = $2
+         AND invitation.accepted_at IS NULL AND invitation.revoked_at IS NULL
+         AND invitation.expires_at > times.now
+       RETURNING invitation.id`,
+      [projectId, normalizeEmail(email)]
+    );
+    return result.rowCount ?? 0;
+  }
+
   async revoke(id: string) {
     const result = await this.executor.query<InvitationRow>(
       `WITH times AS (SELECT clock_timestamp() AS now)

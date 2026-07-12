@@ -15,6 +15,7 @@ export interface InvitationRepository {
   create(input: CreateInvitationInput): Promise<Invitation>;
   findById(id: string): Promise<Invitation | undefined>;
   findActiveById(id: string): Promise<Invitation | undefined>;
+  revokeActiveByProjectEmail(projectId: string, email: string): Promise<number>;
   revoke(id: string): Promise<Invitation | undefined>;
   consume(id: string, acceptedByUserId: string): Promise<Invitation | undefined>;
 }
