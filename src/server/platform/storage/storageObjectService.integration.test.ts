@@ -30,6 +30,9 @@ const execFileAsync = promisify(execFile);
 const asyncCleanupFixture = fileURLToPath(
   new URL("./__fixtures__/storageAsyncCleanupFixture.ts", import.meta.url)
 );
+const cleanupRaceFixture = fileURLToPath(
+  new URL("./__fixtures__/storageCleanupRaceFixture.ts", import.meta.url)
+);
 
 let database: PlatformTestDatabase;
 let migration: Pool;
@@ -220,6 +223,62 @@ describe("StorageObjectService", () => {
       closeListeners: 0,
       destroyed: true
     });
+  });
+
+  it.each([
+    ["already-destroying", ["ASYNC_STREAM_CLEANUP_FAILED"]],
+    ["early-error", ["EARLY_STREAM_ERROR", "ASYNC_STREAM_CLEANUP_FAILED"]],
+    ["early-close", ["ASYNC_STREAM_CLEANUP_FAILED"]],
+    ["super-then-throw", ["DESTROY_AFTER_SUPER_FAILED", "ASYNC_STREAM_CLEANUP_FAILED"]]
+  ] as const)("closes the %s cleanup race without losing failures", async (scenario, cleanupMessages) => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", cleanupRaceFixture, scenario],
+      { cwd: process.cwd(), timeout: 5_000, windowsHide: true }
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
+      aggregate: true,
+      primaryCode: "INVALID_STORAGE_OBJECT_MEDIA_TYPE",
+      causeIsPrimary: true,
+      cleanupMessages,
+      uncaughtMessages: [],
+      unhandledCount: 0,
+      errorListeners: 0,
+      closeListeners: 0,
+      destroyed: true,
+      closed: true
+    });
+  });
+
+  it("does not hand a body that failed during staging to the storage adapter", async () => {
+    const storage = new MemoryStorage();
+    const bodyFailure = new Error("BODY_FAILED_DURING_STAGING");
+    const body = Readable.from("pdf");
+    const observedByCaller: unknown[] = [];
+    const callerErrorListener = (error: unknown) => { observedByCaller.push(error); };
+    body.on("error", callerErrorListener);
+    let release!: () => void;
+    let entered!: () => void;
+    const stagingEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const barrierRunner = async <T>(callback: Parameters<typeof withTransaction<T>>[1]) => {
+      entered();
+      await barrier;
+      return transactionRunner(callback);
+    };
+
+    const creating = service(storage, barrierRunner).create({ body, mediaType: "application/pdf" });
+    await stagingEntered;
+    body.destroy(bodyFailure);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    release();
+
+    await expect(creating).rejects.toBe(bodyFailure);
+    expect(storage.calls).toEqual([]);
+    expect(observedByCaller).toEqual([bodyFailure]);
+    expect(body.listenerCount("error")).toBe(1);
+    body.removeListener("error", callerErrorListener);
   });
 
   it("preserves primary and synchronous destroy errors in one AggregateError", async () => {

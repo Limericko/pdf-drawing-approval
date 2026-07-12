@@ -49,6 +49,7 @@ export class StorageObjectService {
   async create(input: { readonly body: Readable; readonly mediaType: string }): Promise<StorageObject> {
     const body = input.body;
     const rawMediaType = input.mediaType;
+    const bodyMonitor = new PrewriteBodyMonitor(body);
     let writeStarted = false;
     try {
       const mediaType = normalizeMediaType(rawMediaType);
@@ -64,6 +65,7 @@ export class StorageObjectService {
       );
       this.assertCurrentDriver(staged.driver);
 
+      bodyMonitor.releaseToStorage();
       writeStarted = true;
       const written = await this.dependencies.storage.write(staged.objectKey, body, mediaType);
       const head = await this.dependencies.storage.head(staged.objectKey);
@@ -80,7 +82,7 @@ export class StorageObjectService {
         })
       );
     } catch (error) {
-      if (!writeStarted) await destroyUnownedBody(body, error);
+      if (!writeStarted) await bodyMonitor.destroyAndReport(error);
       throw error;
     }
   }
@@ -167,73 +169,66 @@ function normalizeMediaType(mediaType: string) {
   return normalized;
 }
 
-async function destroyUnownedBody(body: Readable, primaryError: unknown) {
-  const cleanupError = await destroyAndObserve(body);
-  if (cleanupError !== undefined) {
+class PrewriteBodyMonitor {
+  private readonly cleanupErrors: unknown[] = [];
+  private observing = true;
+  private readonly onError = (error: unknown) => {
+    this.recordCleanupError(error);
+  };
+
+  constructor(private readonly body: Readable) {
+    body.on("error", this.onError);
+  }
+
+  releaseToStorage() {
+    if (this.cleanupErrors.length > 0) throw this.cleanupErrors[0];
+    this.stopObserving();
+  }
+
+  async destroyAndReport(primaryError: unknown) {
+    try {
+      if (!this.body.destroyed) {
+        try {
+          this.body.destroy();
+        } catch (cleanupError) {
+          this.recordCleanupError(cleanupError);
+        }
+      }
+      while (this.body.destroyed && !this.body.closed) {
+        await nextImmediate();
+      }
+      // A synchronous _destroy callback marks the stream closed before Node's
+      // queued error notification. Keep ownership through that notification.
+      await nextImmediate();
+    } finally {
+      this.stopObserving();
+    }
+
+    const cleanupErrors = this.cleanupErrors.filter((error) => !Object.is(error, primaryError));
+    if (cleanupErrors.length === 0) return;
     throw new AggregateError(
-      [primaryError, cleanupError],
+      [primaryError, ...cleanupErrors],
       "STORAGE_OBJECT_PREWRITE_CLEANUP_FAILED",
       { cause: primaryError }
     );
   }
+
+  private recordCleanupError(error: unknown) {
+    const ownedError = error instanceof Error ? error : new Error("STORAGE_BODY_CLEANUP_FAILED");
+    if (!this.cleanupErrors.some((candidate) => Object.is(candidate, ownedError))) {
+      this.cleanupErrors.push(ownedError);
+    }
+  }
+
+  private stopObserving() {
+    if (!this.observing) return;
+    this.observing = false;
+    this.body.removeListener("error", this.onError);
+  }
 }
 
-function destroyAndObserve(body: Readable): Promise<unknown | undefined> {
-  if (body.destroyed) return Promise.resolve(undefined);
-  return new Promise((resolve) => {
-    const hadOwnDestroy = Object.prototype.hasOwnProperty.call(body, "_destroy");
-    const originalDestroy = body._destroy;
-    let settled = false;
-    let wrappedDestroy: Readable["_destroy"] | undefined;
-
-    const restoreDestroy = () => {
-      if (body._destroy !== wrappedDestroy) return;
-      if (hadOwnDestroy) body._destroy = originalDestroy;
-      else Reflect.deleteProperty(body, "_destroy");
-    };
-    const finish = (error?: unknown) => {
-      if (settled) return;
-      settled = true;
-      body.removeListener("error", onError);
-      body.removeListener("close", onClose);
-      restoreDestroy();
-      resolve(error);
-    };
-    const onError = (error: unknown) => { finish(error); };
-    const onClose = () => { finish(); };
-
-    body.once("error", onError);
-    body.once("close", onClose);
-    wrappedDestroy = function observedDestroy(this: Readable, error, callback) {
-      let callbackCalled = false;
-      const observedCallback = (cleanupError?: Error | null) => {
-        if (callbackCalled) return;
-        callbackCalled = true;
-        restoreDestroy();
-        try {
-          callback(cleanupError);
-        } catch (callbackError) {
-          setImmediate(() => { finish(callbackError); });
-          return;
-        }
-        // Node normally emits error/close on nextTick. This callback fallback also
-        // supports compliant Readables configured with emitClose: false.
-        setImmediate(() => { finish(cleanupError ?? undefined); });
-      };
-      try {
-        originalDestroy.call(this, error, observedCallback);
-      } catch (cleanupError) {
-        observedCallback(cleanupError instanceof Error ? cleanupError : new Error("STREAM_DESTROY_FAILED"));
-      }
-    };
-
-    try {
-      body._destroy = wrappedDestroy;
-      body.destroy();
-    } catch (cleanupError) {
-      finish(cleanupError);
-    }
-  });
+function nextImmediate() {
+  return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 function ownDeletionDate(value: Date) {
