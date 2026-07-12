@@ -2,10 +2,12 @@ import { input, password } from "@inquirer/prompts";
 import { describe, expect, it, vi } from "vitest";
 import {
   createInteractiveBootstrapPrompt,
+  openBootstrapRuntime,
   runBootstrapAdminCommand,
   type BootstrapAdminRuntime,
   type BootstrapCommandPrompt
 } from "./bootstrapAdmin.ts";
+import { BootstrapAdminError } from "../modules/identity/bootstrapAdminService.ts";
 
 vi.mock("@inquirer/prompts", () => ({ input: vi.fn(), password: vi.fn() }));
 
@@ -119,5 +121,60 @@ describe("bootstrap admin command", () => {
     expect(test.errors).toEqual(["BOOTSTRAP_ADMIN_FAILED"]);
     expect(`${test.lines.join("\n")}\n${test.errors.join("\n")}`).not.toContain(plaintextPassword);
     expect(failedRuntime.close).toHaveBeenCalledOnce();
+  });
+
+  it("returns failure and reports a stable error when successful work is followed by a close failure", async () => {
+    const cleanupSecret = "close-database-secret";
+    const failedRuntime = runtime({
+      close: vi.fn(async () => {
+        throw new Error(`close failed: ${cleanupSecret}`);
+      })
+    });
+    const test = commandOptions({ openRuntime: vi.fn(async () => failedRuntime) });
+
+    await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
+
+    expect(test.lines).toContain("RECOVERY_CODES");
+    expect(test.errors).toEqual(["BOOTSTRAP_ADMIN_FAILED"]);
+    expect(test.errors.join("\n")).not.toContain(cleanupSecret);
+    expect(failedRuntime.close).toHaveBeenCalledOnce();
+  });
+
+  it("sanitizes combined business and close failures without losing either lifecycle step", async () => {
+    const cleanupSecret = "cleanup-database-secret";
+    const failedRuntime = runtime({
+      prepare: vi.fn(async () => {
+        throw new BootstrapAdminError("BOOTSTRAP_ADMIN_TOTP_INVALID");
+      }),
+      close: vi.fn(async () => {
+        throw new Error(`close failed: ${cleanupSecret}`);
+      })
+    });
+    const test = commandOptions({ openRuntime: vi.fn(async () => failedRuntime) });
+
+    await expect(runBootstrapAdminCommand(test.options)).resolves.toBe(1);
+
+    expect(failedRuntime.prepare).toHaveBeenCalledOnce();
+    expect(failedRuntime.close).toHaveBeenCalledOnce();
+    expect(test.errors).toEqual(["BOOTSTRAP_ADMIN_FAILED"]);
+    expect(test.errors).not.toContain("BOOTSTRAP_ADMIN_TOTP_INVALID");
+    expect(test.errors.join("\n")).not.toContain(cleanupSecret);
+  });
+
+  it("aggregates runtime initialization and pool close failures without leaking either detail", async () => {
+    const primary = new Error("service initialization database secret");
+    const cleanup = new Error("pool close database secret");
+    const pool = { end: vi.fn(async () => { throw cleanup; }) };
+
+    const thrown = await openBootstrapRuntime({ database: {}, keyrings: {} } as never, {
+      createPool: vi.fn(() => pool as never),
+      createService: vi.fn(() => { throw primary; })
+    }).then(() => undefined, (error: unknown) => error);
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect([...(thrown as AggregateError).errors]).toEqual([primary, cleanup]);
+    expect((thrown as Error).cause).toBe(primary);
+    expect((thrown as Error).message).toBe("BOOTSTRAP_ADMIN_RUNTIME_INITIALIZATION_CLEANUP_FAILED");
+    expect(pool.end).toHaveBeenCalledOnce();
   });
 });

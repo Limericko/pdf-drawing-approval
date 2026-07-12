@@ -52,6 +52,8 @@ export async function runBootstrapAdminCommand(options: CommandOptions): Promise
   }
 
   let runtime: BootstrapAdminRuntime | undefined;
+  let primaryError: unknown;
+  let cleanupError: unknown;
   try {
     const config = loadPlatformConfig(options.env, "bootstrap-admin");
     runtime = await options.openRuntime(config);
@@ -65,19 +67,49 @@ export async function runBootstrapAdminCommand(options: CommandOptions): Promise
     const completed = await challenge.complete(token);
     options.output.write("RECOVERY_CODES");
     for (const code of completed.recoveryCodes) options.output.write(code);
-    return 0;
   } catch (error) {
-    options.output.error(safeErrorCode(error));
-    return 1;
-  } finally {
-    await runtime?.close().catch(() => undefined);
+    primaryError = error;
   }
+
+  if (runtime) {
+    try {
+      await runtime.close();
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
+
+  const lifecycleError = combineLifecycleErrors(primaryError, cleanupError);
+  if (lifecycleError !== undefined) {
+    options.output.error(safeErrorCode(lifecycleError));
+    return 1;
+  }
+  return 0;
 }
 
-async function openBootstrapRuntime(config: BootstrapPlatformConfig): Promise<BootstrapAdminRuntime> {
-  const pool = createPlatformPool(config.database, "platform-bootstrap-admin");
+function combineLifecycleErrors(primaryError: unknown, cleanupError: unknown) {
+  if (primaryError !== undefined && cleanupError !== undefined) {
+    return new AggregateError(
+      [primaryError, cleanupError],
+      "BOOTSTRAP_ADMIN_RUNTIME_CLEANUP_FAILED",
+      { cause: primaryError }
+    );
+  }
+  return primaryError ?? cleanupError;
+}
+
+type OpenBootstrapRuntimeDependencies = {
+  readonly createPool?: typeof createPlatformPool;
+  readonly createService?: typeof createBootstrapAdminService;
+};
+
+export async function openBootstrapRuntime(
+  config: BootstrapPlatformConfig,
+  dependencies: OpenBootstrapRuntimeDependencies = {}
+): Promise<BootstrapAdminRuntime> {
+  const pool = (dependencies.createPool ?? createPlatformPool)(config.database, "platform-bootstrap-admin");
   try {
-    const service = createBootstrapAdminService({
+    const service = (dependencies.createService ?? createBootstrapAdminService)({
       pool,
       keyrings: config.keyrings,
       passwordHashOptions
@@ -89,9 +121,17 @@ async function openBootstrapRuntime(config: BootstrapPlatformConfig): Promise<Bo
       prepare: service.prepare,
       close: () => pool.end()
     };
-  } catch (error) {
-    await pool.end().catch(() => undefined);
-    throw error;
+  } catch (primaryError) {
+    try {
+      await pool.end();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [primaryError, cleanupError],
+        "BOOTSTRAP_ADMIN_RUNTIME_INITIALIZATION_CLEANUP_FAILED",
+        { cause: primaryError }
+      );
+    }
+    throw primaryError;
   }
 }
 
