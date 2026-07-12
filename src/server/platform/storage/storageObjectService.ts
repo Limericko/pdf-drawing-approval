@@ -80,7 +80,7 @@ export class StorageObjectService {
         })
       );
     } catch (error) {
-      if (!writeStarted) destroyUnownedBody(body, error);
+      if (!writeStarted) await destroyUnownedBody(body, error);
       throw error;
     }
   }
@@ -167,16 +167,73 @@ function normalizeMediaType(mediaType: string) {
   return normalized;
 }
 
-function destroyUnownedBody(body: Readable, primaryError: unknown) {
-  try {
-    body.destroy();
-  } catch (cleanupError) {
+async function destroyUnownedBody(body: Readable, primaryError: unknown) {
+  const cleanupError = await destroyAndObserve(body);
+  if (cleanupError !== undefined) {
     throw new AggregateError(
       [primaryError, cleanupError],
       "STORAGE_OBJECT_PREWRITE_CLEANUP_FAILED",
       { cause: primaryError }
     );
   }
+}
+
+function destroyAndObserve(body: Readable): Promise<unknown | undefined> {
+  if (body.destroyed) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const hadOwnDestroy = Object.prototype.hasOwnProperty.call(body, "_destroy");
+    const originalDestroy = body._destroy;
+    let settled = false;
+    let wrappedDestroy: Readable["_destroy"] | undefined;
+
+    const restoreDestroy = () => {
+      if (body._destroy !== wrappedDestroy) return;
+      if (hadOwnDestroy) body._destroy = originalDestroy;
+      else Reflect.deleteProperty(body, "_destroy");
+    };
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      body.removeListener("error", onError);
+      body.removeListener("close", onClose);
+      restoreDestroy();
+      resolve(error);
+    };
+    const onError = (error: unknown) => { finish(error); };
+    const onClose = () => { finish(); };
+
+    body.once("error", onError);
+    body.once("close", onClose);
+    wrappedDestroy = function observedDestroy(this: Readable, error, callback) {
+      let callbackCalled = false;
+      const observedCallback = (cleanupError?: Error | null) => {
+        if (callbackCalled) return;
+        callbackCalled = true;
+        restoreDestroy();
+        try {
+          callback(cleanupError);
+        } catch (callbackError) {
+          setImmediate(() => { finish(callbackError); });
+          return;
+        }
+        // Node normally emits error/close on nextTick. This callback fallback also
+        // supports compliant Readables configured with emitClose: false.
+        setImmediate(() => { finish(cleanupError ?? undefined); });
+      };
+      try {
+        originalDestroy.call(this, error, observedCallback);
+      } catch (cleanupError) {
+        observedCallback(cleanupError instanceof Error ? cleanupError : new Error("STREAM_DESTROY_FAILED"));
+      }
+    };
+
+    try {
+      body._destroy = wrappedDestroy;
+      body.destroy();
+    } catch (cleanupError) {
+      finish(cleanupError);
+    }
+  });
 }
 
 function ownDeletionDate(value: Date) {

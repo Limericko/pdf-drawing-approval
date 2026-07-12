@@ -1,4 +1,7 @@
 import { Readable } from "node:stream";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { Pool } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +26,10 @@ const HEAD_MISMATCH_ID = "019f524e-d487-71a9-9853-199234c29b92";
 const FINAL_UPDATE_FAILURE_ID = "019f524e-d487-71a9-9853-199234c29b93";
 const INTERRUPTED_UPLOAD_ID = "019f524e-d487-71a9-9853-199234c29b94";
 const OWNERSHIP_ID = "019f524e-d487-71a9-9853-199234c29b95";
+const execFileAsync = promisify(execFile);
+const asyncCleanupFixture = fileURLToPath(
+  new URL("./__fixtures__/storageAsyncCleanupFixture.ts", import.meta.url)
+);
 
 let database: PlatformTestDatabase;
 let migration: Pool;
@@ -193,6 +200,72 @@ describe("StorageObjectService", () => {
     );
     expect(body.destroyed).toBe(true);
     expect(storage.calls).toEqual([]);
+  });
+
+  it("awaits asynchronous stream cleanup errors and leaves no unmanaged process event", async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--import", "tsx", asyncCleanupFixture],
+      { cwd: process.cwd(), timeout: 5_000, windowsHide: true }
+    );
+
+    expect(JSON.parse(stdout)).toEqual({
+      aggregate: true,
+      primaryCode: "INVALID_STORAGE_OBJECT_MEDIA_TYPE",
+      causeIsPrimary: true,
+      cleanupIsExpected: true,
+      uncaughtCount: 0,
+      unhandledCount: 0,
+      errorListeners: 0,
+      closeListeners: 0,
+      destroyed: true
+    });
+  });
+
+  it("preserves primary and synchronous destroy errors in one AggregateError", async () => {
+    const primary = new Error("INVALID_ID");
+    const cleanup = new Error("SYNC_STREAM_CLEANUP_FAILED");
+    class SyncThrowDestroyReadable extends Readable {
+      override _read() {}
+      override destroy(): this { throw cleanup; }
+    }
+    const body = new SyncThrowDestroyReadable();
+    let rejection: unknown;
+    try {
+      await service(new MemoryStorage(), transactionRunner, () => { throw primary; })
+        .create({ body, mediaType: "application/pdf" });
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(rejection).toBeInstanceOf(AggregateError);
+    const aggregate = rejection as AggregateError;
+    expect(aggregate.errors).toEqual([primary, cleanup]);
+    expect(aggregate.cause).toBe(primary);
+    expect(body.listenerCount("error")).toBe(0);
+    expect(body.listenerCount("close")).toBe(0);
+  });
+
+  it("waits for clean destroy completion when the stream has emitClose disabled", async () => {
+    const primary = new Error("INVALID_ID");
+    let cleanupCompleted = false;
+    class NoCloseReadable extends Readable {
+      constructor() { super({ emitClose: false }); }
+      override _read() {}
+      override _destroy(_error: Error | null, callback: (error?: Error | null) => void) {
+        setImmediate(() => {
+          cleanupCompleted = true;
+          callback();
+        });
+      }
+    }
+    const body = new NoCloseReadable();
+
+    await expect(service(new MemoryStorage(), transactionRunner, () => { throw primary; })
+      .create({ body, mediaType: "application/pdf" })).rejects.toBe(primary);
+    expect(cleanupCompleted).toBe(true);
+    expect(body.listenerCount("error")).toBe(0);
+    expect(body.listenerCount("close")).toBe(0);
   });
 
   it("keeps staging diagnostic state when object write fails", async () => {
