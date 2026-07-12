@@ -305,6 +305,29 @@ describe("PostgresJobRepository", () => {
     })).resolves.toMatchObject({ created: false, job: { id: input.id } });
   });
 
+  it("uses JSONB number semantics for negative zero without hiding different numbers", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const negativeZero = jobInput({
+      idempotencyKey: `negative-zero:${uuidv7()}`,
+      payload: { value: -0 }
+    });
+    await repository.create(negativeZero);
+    await expect(repository.create({ ...negativeZero, id: uuidv7(), payload: { value: -0 } }))
+      .resolves.toMatchObject({ created: false, job: { id: negativeZero.id } });
+    await expect(repository.create({ ...negativeZero, id: uuidv7(), payload: { value: 0 } }))
+      .resolves.toMatchObject({ created: false, job: { id: negativeZero.id } });
+
+    const positiveZero = jobInput({
+      idempotencyKey: `positive-zero:${uuidv7()}`,
+      payload: { value: 0 }
+    });
+    await repository.create(positiveZero);
+    await expect(repository.create({ ...positiveZero, id: uuidv7(), payload: { value: -0 } }))
+      .resolves.toMatchObject({ created: false, job: { id: positiveZero.id } });
+    await expect(repository.create({ ...positiveZero, id: uuidv7(), payload: { value: 1 } }))
+      .rejects.toMatchObject({ code: "JOB_IDEMPOTENCY_CONFLICT" });
+  });
+
   it("reclaims an expired lease with a new token and fences every stale worker write", async () => {
     const repository = new PostgresJobRepository(worker);
     const dueAt = new Date("2026-07-12T01:00:00.000Z");
@@ -402,6 +425,37 @@ describe("PostgresJobRepository", () => {
       workerId: null, leaseToken: null, leaseExpiresAt: null,
       lastErrorCode: "LEASE_EXPIRED_MAX_ATTEMPTS"
     });
+  });
+
+  it("skips a locked exhausted lease and still claims a due pending job", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T05:30:00.000Z");
+    const exhausted = jobInput({ maxAttempts: 1, nextRunAt: dueAt });
+    const pending = jobInput({ nextRunAt: dueAt });
+    await repository.create(exhausted);
+    await repository.create(pending);
+    await repository.claim({ workerId: "crashed-worker", now: dueAt, leaseDurationMs: 1 });
+    const recoveryAt = new Date(dueAt.getTime() + 2);
+    const locker = await worker.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM platform.jobs WHERE id = $1 FOR UPDATE", [exhausted.id]);
+
+      const claimed = await workerTransaction(async (transaction) => {
+        await transaction.query("SELECT set_config('lock_timeout', '100ms', true)");
+        return new PostgresJobRepository(transaction).claim({
+          workerId: "available-worker", now: recoveryAt, leaseDurationMs: 1_000
+        });
+      });
+
+      expect(claimed).toMatchObject({ id: pending.id, workerId: "available-worker", status: "running" });
+    } finally {
+      try {
+        await locker.query("ROLLBACK");
+      } finally {
+        locker.release();
+      }
+    }
   });
 
   it("rejects malformed text at the job row-mapping boundary", async () => {

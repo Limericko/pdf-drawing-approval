@@ -105,14 +105,22 @@ export class PostgresJobRepository implements JobRepository {
     assertLeaseToken(leaseToken);
     const leaseExpiresAt = addDuration(owned.now, owned.leaseDurationMs);
     const result = await this.executor.query<JobRow>(
-      `WITH exhausted AS MATERIALIZED (
-         UPDATE platform.jobs
+      `WITH exhausted_candidate AS MATERIALIZED (
+         SELECT j.id
+         FROM platform.jobs j
+         WHERE j.status = 'running' AND j.lease_expires_at <= $2 AND j.attempt_count >= j.max_attempts
+         ORDER BY j.lease_expires_at, j.next_run_at, j.created_at, j.id
+         FOR UPDATE OF j SKIP LOCKED
+         LIMIT 1
+       ), exhausted AS MATERIALIZED (
+         UPDATE platform.jobs j
          SET status = 'dead', worker_id = NULL, lease_expires_at = NULL, lease_token = NULL,
            last_error_code = 'LEASE_EXPIRED_MAX_ATTEMPTS',
            last_error_message = 'Job lease expired after maximum attempts',
            updated_at = $2, completed_at = $2
-         WHERE status = 'running' AND lease_expires_at <= $2 AND attempt_count >= max_attempts
-         RETURNING id
+         FROM exhausted_candidate
+         WHERE j.id = exhausted_candidate.id
+         RETURNING j.id
        ), next_job AS MATERIALIZED (
          SELECT j.id
          FROM platform.jobs j
@@ -305,7 +313,8 @@ function sameIdempotentJob(existing: Job, requested: CreateJob) {
 }
 
 function sameJsonValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
+  if (typeof left === "number" && typeof right === "number") return left === right;
+  if (left === right) return true;
   if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
   if (Array.isArray(left) || Array.isArray(right)) {
     return Array.isArray(left) && Array.isArray(right) &&
