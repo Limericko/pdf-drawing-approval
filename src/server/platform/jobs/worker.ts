@@ -59,6 +59,15 @@ export async function runWorkerIteration(options: WorkerIterationOptions): Promi
 
   const claimed = await owned.repository.claim({ workerId: owned.workerId, now: owned.clock(), leaseDurationMs: owned.leaseMs });
   if (!claimed) return { status: "idle" };
+  if (owned.signal.aborted) {
+    await owned.repository.release({
+      id: claimed.id,
+      workerId: owned.workerId,
+      leaseToken: claimed.leaseToken!,
+      releasedAt: owned.clock()
+    });
+    return { status: "stopped" };
+  }
   return executeClaimedJob(owned, claimed);
 }
 

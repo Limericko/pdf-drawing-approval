@@ -16,9 +16,12 @@ export type StorageObject = {
   readonly readyAt: Date | null;
   readonly deleteRequestedAt: Date | null;
   readonly deletedAt: Date | null;
+  readonly uploadExpiresAt: Date | null;
 };
 
-export type CreateStagingStorageObject = Pick<StorageObject, "id" | "driver" | "objectKey" | "createdAt">;
+export type CreateStagingStorageObject = Pick<StorageObject, "id" | "driver" | "objectKey" | "createdAt"> & {
+  readonly uploadExpiresAt: Date;
+};
 
 export type ReadyStorageObjectContent = {
   readonly sizeBytes: number;
@@ -59,6 +62,7 @@ export type StorageObjectRepositoryErrorCode =
   | "INVALID_STORAGE_OBJECT_LIMIT"
   | "STORAGE_OBJECT_NOT_FOUND"
   | "STORAGE_OBJECT_STATE_CONFLICT"
+  | "STORAGE_OBJECT_UPLOAD_EXPIRED"
   | "STORAGE_OBJECT_SIZE_OUT_OF_RANGE";
 
 export class StorageObjectRepositoryError extends Error {

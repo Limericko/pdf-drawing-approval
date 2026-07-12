@@ -26,7 +26,8 @@ function stagingInput() {
     id,
     driver: "filesystem" as const,
     objectKey: createStorageKey("objects/original", id),
-    createdAt: new Date()
+    createdAt: new Date(),
+    uploadExpiresAt: new Date(Date.now() + 60_000)
   };
 }
 
@@ -175,5 +176,17 @@ describe("PostgresStorageObjectRepository", () => {
     await expect(repository.listDeletePending(Number.NaN)).rejects.toMatchObject({
       code: "INVALID_STORAGE_OBJECT_LIMIT"
     });
+  });
+
+  it("selects staging cleanup by the hard upload deadline rather than creation age", async () => {
+    const repository = new PostgresStorageObjectRepository(web);
+    const now = new Date("2026-07-12T12:00:00.000Z");
+    const oldButActive = { ...stagingInput(), createdAt: new Date("2026-01-01T00:00:00.000Z"), uploadExpiresAt: new Date("2026-07-12T12:00:01.000Z") };
+    const recentButExpired = { ...stagingInput(), createdAt: new Date("2026-07-12T11:59:58.000Z"), uploadExpiresAt: new Date("2026-07-12T11:59:59.000Z") };
+    await repository.createStaging(oldButActive);
+    await repository.createStaging(recentButExpired);
+    const selected = await repository.listStaleStaging(now, 10);
+    expect(selected).toContainEqual(expect.objectContaining({ id: recentButExpired.id, uploadExpiresAt: recentButExpired.uploadExpiresAt }));
+    expect(selected.map((object) => object.id)).not.toContain(oldButActive.id);
   });
 });

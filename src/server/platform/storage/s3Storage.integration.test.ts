@@ -503,9 +503,9 @@ class TrackingStorageAdapter implements StorageAdapter {
 
   constructor(private readonly storage: S3Storage) {}
 
-  write(key: string, body: Readable, contentType: string): Promise<StorageWriteResult> {
+  write(key: string, body: Readable, contentType: string, options?: { readonly signal?: AbortSignal }): Promise<StorageWriteResult> {
     this.keys.add(key);
-    return this.storage.write(key, body, contentType);
+    return this.storage.write(key, body, contentType, options);
   }
 
   openRead(key: string): Promise<Readable> {

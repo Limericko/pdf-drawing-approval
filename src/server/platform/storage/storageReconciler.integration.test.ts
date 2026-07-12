@@ -60,10 +60,11 @@ async function insertObject(status: "staging" | "ready" | "delete_pending", crea
   const id = uuidv7();
   await migration.query(
     `INSERT INTO platform.storage_objects
-       (id, status, driver, object_key, size_bytes, sha256, media_type, created_at, updated_at, ready_at, delete_requested_at)
+       (id, status, driver, object_key, size_bytes, sha256, media_type, created_at, updated_at, ready_at, delete_requested_at, upload_expires_at)
      VALUES ($1, $2, 'filesystem', $3, $4, $5, $6, $7::timestamptz, $7::timestamptz,
        CASE WHEN $2 IN ('ready', 'delete_pending') THEN $7::timestamptz ELSE NULL END,
-       CASE WHEN $2 = 'delete_pending' THEN $7::timestamptz ELSE NULL END)`,
+       CASE WHEN $2 = 'delete_pending' THEN $7::timestamptz ELSE NULL END,
+       CASE WHEN $2 = 'staging' THEN $7::timestamptz + interval '1 hour' ELSE NULL END)`,
     [id, status, `objects/original/${id}`, status === "staging" ? null : 1,
       status === "staging" ? null : Buffer.alloc(32), status === "staging" ? null : "application/pdf", createdAt]
   );
@@ -80,7 +81,6 @@ describe("StorageReconciler", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
-      stagingMaxAgeMs: 60_000,
       batchSize: 1
     });
 
@@ -106,7 +106,6 @@ describe("StorageReconciler", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
-      stagingMaxAgeMs: 60_000,
       batchSize: 1
     });
 
@@ -126,12 +125,10 @@ describe("StorageReconciler", () => {
       createRepository: (executor: QueryExecutor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
-      stagingMaxAgeMs: 60_000,
       batchSize: 2
     };
     const reconciler = new StorageReconciler(options);
     options.batchSize = 99;
-    options.stagingMaxAgeMs = 1;
 
     const result = await reconciler.runOnce();
 
@@ -154,7 +151,6 @@ describe("StorageReconciler", () => {
         createRepository: (executor) => new PostgresStorageObjectRepository(executor),
         publisher,
         clock: () => new Date("2026-07-12T00:00:00.000Z"),
-        stagingMaxAgeMs: 60_000,
         batchSize: 3
       });
 
@@ -175,7 +171,6 @@ describe("StorageReconciler", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => now,
-      stagingMaxAgeMs: 60 * 60 * 1000,
       batchSize: 10
     });
 
@@ -253,7 +248,6 @@ describe("StorageReconciler", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
-      stagingMaxAgeMs: 60_000,
       batchSize: 2
     });
 

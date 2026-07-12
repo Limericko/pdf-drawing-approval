@@ -276,6 +276,21 @@ describe("database and numeric validation", () => {
   ])("rejects out-of-bounds worker setting %s=%s", (key, value) => {
     expect(() => loadPlatformConfig(workerEnv({ [key]: value }), "worker")).toThrow(`PLATFORM_CONFIG_INVALID:${key}`);
   });
+
+  it("requires two worker pool connections per configured concurrency slot", () => {
+    expect(() => loadPlatformConfig(workerEnv({
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: "1",
+      PDF_APPROVAL_WORKER_CONCURRENCY: "100"
+    }), "worker")).toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_PLATFORM_DB_POOL_MAX");
+    expect(() => loadPlatformConfig(workerEnv({
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: "4",
+      PDF_APPROVAL_WORKER_CONCURRENCY: "2"
+    }), "worker")).not.toThrow();
+    expect(() => loadPlatformConfig(workerEnv({
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: "3",
+      PDF_APPROVAL_WORKER_CONCURRENCY: "2"
+    }), "worker")).toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_PLATFORM_DB_POOL_MAX");
+  });
 });
 
 describe("selective storage validation", () => {

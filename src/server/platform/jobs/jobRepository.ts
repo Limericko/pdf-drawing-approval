@@ -14,6 +14,7 @@ export type RenewJobLeaseInput = JobLease & {
 };
 
 export type CompleteJobInput = JobLease & { readonly completedAt: Date };
+export type ReleaseJobInput = JobLease & { readonly releasedAt: Date };
 
 export type FailJobInput = JobLease & {
   readonly failedAt: Date;
@@ -29,5 +30,6 @@ export interface JobRepository {
   claim(input: ClaimJobInput): Promise<Job | null>;
   renewLease(input: RenewJobLeaseInput): Promise<Job>;
   succeed(input: CompleteJobInput): Promise<Job>;
+  release(input: ReleaseJobInput): Promise<Job>;
   fail(input: FailJobInput): Promise<Job>;
 }

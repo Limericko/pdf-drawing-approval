@@ -7,7 +7,6 @@ type StorageReconcilerOptions = {
   readonly createRepository: StorageObjectRepositoryFactory;
   readonly publisher: CleanupIntentPublisher;
   readonly clock?: () => Date;
-  readonly stagingMaxAgeMs: number;
   readonly batchSize: number;
 };
 
@@ -16,14 +15,10 @@ export class StorageReconciler {
   private readonly transactionRunner: StorageTransactionRunner;
   private readonly createRepository: StorageObjectRepositoryFactory;
   private readonly publisher: CleanupIntentPublisher;
-  private readonly stagingMaxAgeMs: number;
   private readonly batchSize: number;
   private nextSinglePriority: "staging" | "delete_pending" = "staging";
 
   constructor(options: StorageReconcilerOptions) {
-    if (!Number.isSafeInteger(options.stagingMaxAgeMs) || options.stagingMaxAgeMs < 1) {
-      throw new Error("INVALID_STORAGE_RECONCILER_STAGING_MAX_AGE");
-    }
     if (!Number.isInteger(options.batchSize) || options.batchSize < 1 || options.batchSize > 1_000) {
       throw new Error("INVALID_STORAGE_RECONCILER_BATCH_SIZE");
     }
@@ -31,21 +26,19 @@ export class StorageReconciler {
     this.transactionRunner = options.transactionRunner;
     this.createRepository = options.createRepository;
     this.publisher = options.publisher;
-    this.stagingMaxAgeMs = options.stagingMaxAgeMs;
     this.batchSize = options.batchSize;
   }
 
   async runOnce() {
     const now = this.clock();
     if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("INVALID_STORAGE_RECONCILER_CLOCK");
-    const cutoff = new Date(now.getTime() - this.stagingMaxAgeMs);
     const singlePriority = this.nextSinglePriority;
 
     const result = await this.transactionRunner(async (executor) => {
       const repository = this.createRepository(executor);
       const selected = this.batchSize === 1
-        ? await selectSingle(repository, cutoff, singlePriority)
-        : await selectFairBatch(repository, cutoff, this.batchSize);
+        ? await selectSingle(repository, now, singlePriority)
+        : await selectFairBatch(repository, now, this.batchSize);
       const stale = selected.filter((object) => object.status === "staging");
       const pending = selected.filter((object) => object.status === "delete_pending");
       for (const object of stale) {

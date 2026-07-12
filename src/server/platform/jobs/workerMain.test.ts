@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runWorkerResourceLifecycle } from "./workerMain.ts";
+import { assertWorkerCapacity, runWorkerResourceLifecycle } from "./workerMain.ts";
 
 describe("worker process resource lifecycle", () => {
   it("closes storage and pool once when the schema gate fails and never starts loops", async () => {
@@ -40,6 +40,19 @@ describe("worker process resource lifecycle", () => {
       assertReady: vi.fn(),
       run: vi.fn()
     })).rejects.toThrow("STORAGE_GATE_FAILED");
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a runtime capacity gate before storage creation and closes the pool", async () => {
+    const pool = { end: vi.fn(async () => undefined) };
+    const createStorage = vi.fn(() => ({}));
+    await expect(runWorkerResourceLifecycle({
+      createPool: () => pool,
+      createStorage,
+      assertReady: async () => assertWorkerCapacity({ database: { poolMax: 3 }, worker: { concurrency: 2 } } as never),
+      run: vi.fn()
+    })).rejects.toThrow("WORKER_POOL_CAPACITY_INSUFFICIENT");
+    expect(createStorage).not.toHaveBeenCalled();
     expect(pool.end).toHaveBeenCalledTimes(1);
   });
 });

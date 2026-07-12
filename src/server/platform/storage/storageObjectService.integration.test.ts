@@ -418,7 +418,8 @@ describe("StorageObjectService", () => {
     const id = INTERRUPTED_UPLOAD_ID;
     const objectKey = `objects/original/${id}`;
     await transactionRunner(async (tx) => new PostgresStorageObjectRepository(tx).createStaging({
-      id, driver: storage.driver, objectKey, createdAt: new Date("2026-01-01T00:00:00.000Z")
+      id, driver: storage.driver, objectKey, createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      uploadExpiresAt: new Date("2026-01-02T00:00:00.000Z")
     }));
     const written = await storage.write(objectKey, Readable.from("interrupted-pdf"), "application/pdf");
     const head = await storage.head(objectKey);
@@ -441,7 +442,6 @@ describe("StorageObjectService", () => {
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher,
       clock: () => new Date("2026-07-12T00:00:00.000Z"),
-      stagingMaxAgeMs: 60_000,
       batchSize: 100
     });
     await reconciler.runOnce();

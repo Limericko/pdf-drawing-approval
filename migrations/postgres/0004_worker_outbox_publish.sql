@@ -15,3 +15,22 @@ CREATE UNIQUE INDEX outbox_events_idempotency_key_uidx
 
 GRANT INSERT (id, event_type, payload_version, payload, idempotency_key, created_at)
   ON TABLE platform.outbox_events TO platform_worker;
+
+ALTER TABLE platform.storage_objects ADD COLUMN upload_expires_at timestamptz;
+UPDATE platform.storage_objects
+SET upload_expires_at = created_at + interval '24 hours'
+WHERE status = 'staging';
+ALTER TABLE platform.storage_objects
+  ADD CONSTRAINT storage_objects_upload_expiry_check CHECK (
+    upload_expires_at IS NULL OR upload_expires_at >= created_at
+  ),
+  ADD CONSTRAINT storage_objects_staging_upload_expiry_check CHECK (
+    status <> 'staging' OR upload_expires_at IS NOT NULL
+  ),
+  ADD CONSTRAINT storage_objects_ready_before_upload_expiry_check CHECK (
+    ready_at IS NULL OR upload_expires_at IS NULL OR ready_at < upload_expires_at
+  );
+
+CREATE INDEX storage_objects_staging_upload_expiry_idx
+  ON platform.storage_objects (upload_expires_at, id)
+  WHERE status = 'staging';

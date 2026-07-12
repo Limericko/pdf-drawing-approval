@@ -25,7 +25,8 @@ const repository: StorageObjectRepository = {
       updatedAt: input.createdAt,
       readyAt: null,
       deleteRequestedAt: null,
-      deletedAt: null
+      deletedAt: null,
+      uploadExpiresAt: input.uploadExpiresAt
     };
   },
   async markReady(id, content) {
@@ -40,7 +41,8 @@ const repository: StorageObjectRepository = {
       createdAt: now,
       updatedAt: now,
       deleteRequestedAt: null,
-      deletedAt: null
+      deletedAt: null,
+      uploadExpiresAt: new Date(now.getTime() + 1)
     } satisfies StorageObject;
   },
   async findById() { return undefined; },

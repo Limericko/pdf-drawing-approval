@@ -95,8 +95,9 @@ export class S3Storage implements StorageAdapter {
     this.diagnostics = diagnostics;
   }
 
-  async write(key: string, body: Readable, contentType: string): Promise<StorageWriteResult> {
+  async write(key: string, body: Readable, contentType: string, options?: { readonly signal?: AbortSignal }): Promise<StorageWriteResult> {
     assertStorageKey(key);
+    const signal = options?.signal;
     let spoolDirectory: string;
     try {
       spoolDirectory = await mkdtemp(join(this.spoolParent, "pdf-approval-s3-"));
@@ -110,15 +111,18 @@ export class S3Storage implements StorageAdapter {
     let primaryError: StorageError | undefined;
     let committed = false;
     try {
+      signal?.throwIfAborted();
       spoolHandle = await open(spoolPath, "wx", 0o600);
-      await pipeline(body, meter, spoolHandle.createWriteStream());
+      if (signal) await pipeline(body, meter, spoolHandle.createWriteStream(), { signal });
+      else await pipeline(body, meter, spoolHandle.createWriteStream());
       await spoolHandle.close();
       spoolHandle = undefined;
 
       result = meter.result();
       // MinIO rejects unknown-length transfer-encoding with HTTP 411. Spooling keeps memory
       // bounded while allowing one atomic If-None-Match PUT with an exact Content-Length.
-      await this.putSpooledObject(key, spoolPath, result.sizeBytes, contentType);
+      await this.putSpooledObject(key, spoolPath, result.sizeBytes, contentType, signal);
+      signal?.throwIfAborted();
       committed = true;
     } catch (error) {
       body.destroy();
@@ -178,9 +182,11 @@ export class S3Storage implements StorageAdapter {
     spoolPath: string,
     contentLength: number,
     contentType: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const body = createReadStream(spoolPath);
     const abortController = new AbortController();
+    const operationSignal = signal ? AbortSignal.any([signal, abortController.signal]) : abortController.signal;
     const bodyPromise = readableCompletion(body);
     const putPromise = Promise.resolve().then(() =>
       this.client.send(
@@ -192,11 +198,12 @@ export class S3Storage implements StorageAdapter {
           ContentType: contentType,
           IfNoneMatch: "*",
         }),
-        { abortSignal: abortController.signal },
+        { abortSignal: operationSignal },
       ),
     );
     try {
       await Promise.all([bodyPromise, putPromise]);
+      signal?.throwIfAborted();
     } catch (error) {
       abortController.abort();
       body.destroy();

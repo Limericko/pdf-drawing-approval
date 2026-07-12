@@ -79,13 +79,15 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
   const invitationHmac = parseKeyring(env, "PDF_APPROVAL_INVITATION_HMAC_KEYRING", environment);
 
   if (target === "worker") {
+    const worker = loadWorkerConfig(env);
+    if (database.poolMax < worker.concurrency * 2) configInvalid("PDF_APPROVAL_PLATFORM_DB_POOL_MAX");
     const config: WorkerPlatformConfig = {
       target,
       environment,
       database,
       storage,
       smtp: loadSmtpConfig(env),
-      worker: loadWorkerConfig(env),
+      worker,
       keyrings: { invitationHmac: invitationHmac.value }
     };
     assertProductionWorker(config, invitationHmac);

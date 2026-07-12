@@ -30,19 +30,21 @@ type StorageObjectRow = QueryResultRow & {
   ready_at: Date | null;
   delete_requested_at: Date | null;
   deleted_at: Date | null;
+  upload_expires_at: Date | null;
 };
 
 type TransitionRow = StorageObjectRow & {
-  outcome: "updated" | "missing" | "date_order" | "state_conflict";
+  outcome: "updated" | "missing" | "date_order" | "upload_expired" | "state_conflict";
 };
 
 const COLUMNS = `id, status, driver, object_key, size_bytes, sha256, media_type, last_error,
-  created_at, updated_at, ready_at, delete_requested_at, deleted_at`;
+  created_at, updated_at, ready_at, delete_requested_at, deleted_at, upload_expires_at`;
 const NULL_TRANSITION_COLUMNS = `NULL::uuid AS id, NULL::text AS status, NULL::text AS driver,
   NULL::text AS object_key, NULL::bigint AS size_bytes, NULL::bytea AS sha256,
   NULL::text AS media_type, NULL::text AS last_error, NULL::timestamptz AS created_at,
   NULL::timestamptz AS updated_at, NULL::timestamptz AS ready_at,
-  NULL::timestamptz AS delete_requested_at, NULL::timestamptz AS deleted_at`;
+  NULL::timestamptz AS delete_requested_at, NULL::timestamptz AS deleted_at,
+  NULL::timestamptz AS upload_expires_at`;
 
 export class PostgresStorageObjectRepository implements StorageObjectRepository {
   constructor(private readonly executor: QueryExecutor) {}
@@ -53,11 +55,13 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     const parsed = assertStorageKey(input.objectKey);
     if (parsed.id !== input.id) throw invalidContent();
     const createdAt = ownDate(input.createdAt);
+    const uploadExpiresAt = ownDate(input.uploadExpiresAt);
+    if (uploadExpiresAt.getTime() <= createdAt.getTime()) throw invalidContent();
     const result = await this.executor.query<StorageObjectRow>(
-      `INSERT INTO platform.storage_objects (id, status, driver, object_key, created_at, updated_at)
-       VALUES ($1, 'staging', $2, $3, $4, $4)
+      `INSERT INTO platform.storage_objects (id, status, driver, object_key, created_at, updated_at, upload_expires_at)
+       VALUES ($1, 'staging', $2, $3, $4, $4, $5)
        RETURNING ${COLUMNS}`,
-      [input.id, input.driver, input.objectKey, createdAt]
+      [input.id, input.driver, input.objectKey, createdAt, uploadExpiresAt]
     );
     return mapStorageObject(result.rows[0]!);
   }
@@ -75,13 +79,13 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     const owned = ownReadyContent(content);
     const result = await this.executor.query<TransitionRow>(
       `WITH existing AS MATERIALIZED (
-         SELECT status, created_at AS prior_at
+         SELECT status, created_at AS prior_at, upload_expires_at
          FROM platform.storage_objects WHERE id = $1
        ), updated AS (
          UPDATE platform.storage_objects
          SET status = 'ready', size_bytes = $2, sha256 = $3, media_type = $4,
            ready_at = $5, updated_at = $5
-         WHERE id = $1 AND status = 'staging' AND created_at <= $5
+         WHERE id = $1 AND status = 'staging' AND created_at <= $5 AND upload_expires_at > $5
          RETURNING ${COLUMNS}
        ), classified AS (
          SELECT CASE
@@ -89,6 +93,9 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
            WHEN EXISTS (
              SELECT 1 FROM existing WHERE status = 'staging' AND prior_at > $5
            ) THEN 'date_order'
+           WHEN EXISTS (
+             SELECT 1 FROM existing WHERE status = 'staging' AND upload_expires_at <= $5
+           ) THEN 'upload_expired'
            ELSE 'state_conflict'
          END AS outcome
          WHERE NOT EXISTS (SELECT 1 FROM updated)
@@ -131,13 +138,13 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return transitionResult(result.rows[0]!, "ready");
   }
 
-  async listStaleStaging(createdBefore: Date, limit: number) {
-    const cutoff = ownDate(createdBefore);
+  async listStaleStaging(expiredAt: Date, limit: number) {
+    const cutoff = ownDate(expiredAt);
     assertLimit(limit);
     const result = await this.executor.query<StorageObjectRow>(
       `SELECT ${COLUMNS} FROM platform.storage_objects
-       WHERE status = 'staging' AND created_at < $1
-       ORDER BY created_at, id LIMIT $2`,
+       WHERE status = 'staging' AND upload_expires_at <= $1
+       ORDER BY upload_expires_at, id LIMIT $2`,
       [cutoff, limit]
     );
     return result.rows.map(mapStorageObject);
@@ -158,11 +165,19 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     const owned = ownCleanup(input);
     const result = owned.expectedStatus === "staging"
       ? await this.executor.query<StorageObjectRow>(
-        `UPDATE platform.storage_objects
-         SET status = 'delete_pending', delete_requested_at = $4, updated_at = $4
-         WHERE id = $1 AND status = 'staging' AND driver = $2 AND object_key = $3
-           AND created_at <= $4
-         RETURNING ${COLUMNS}`,
+        `WITH transitioned AS (
+           UPDATE platform.storage_objects
+           SET status = 'delete_pending', delete_requested_at = $4, updated_at = $4
+           WHERE id = $1 AND status = 'staging' AND driver = $2 AND object_key = $3
+             AND created_at <= $4 AND upload_expires_at <= $4
+           RETURNING ${COLUMNS}
+         )
+         SELECT ${COLUMNS} FROM transitioned
+         UNION ALL
+         SELECT ${COLUMNS} FROM platform.storage_objects
+         WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+           AND NOT EXISTS (SELECT 1 FROM transitioned)
+         LIMIT 1`,
         [owned.id, owned.driver, owned.objectKey, owned.requestedAt]
       )
       : await this.executor.query<StorageObjectRow>(
@@ -217,6 +232,9 @@ function transitionResult(row: TransitionRow, expectedStatus: StorageObjectStatu
       "Storage object lifecycle timestamp is before the prior transition"
     );
   }
+  if (row.outcome === "upload_expired") {
+    throw new StorageObjectRepositoryError("STORAGE_OBJECT_UPLOAD_EXPIRED", "Storage upload deadline has expired");
+  }
   throw new StorageObjectRepositoryError(
     "STORAGE_OBJECT_STATE_CONFLICT",
     `Storage object is not in expected ${expectedStatus} state`
@@ -237,7 +255,8 @@ function mapStorageObject(row: StorageObjectRow): StorageObject {
     updatedAt: cloneDate(row.updated_at),
     readyAt: row.ready_at === null ? null : cloneDate(row.ready_at),
     deleteRequestedAt: row.delete_requested_at === null ? null : cloneDate(row.delete_requested_at),
-    deletedAt: row.deleted_at === null ? null : cloneDate(row.deleted_at)
+    deletedAt: row.deleted_at === null ? null : cloneDate(row.deleted_at),
+    uploadExpiresAt: row.upload_expires_at === null ? null : cloneDate(row.upload_expires_at)
   };
 }
 

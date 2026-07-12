@@ -20,7 +20,9 @@ export type StorageObjectServiceErrorCode =
   | "STORAGE_OBJECT_NOT_FOUND"
   | "STORAGE_OBJECT_NOT_READY"
   | "STORAGE_OBJECT_DRIVER_MISMATCH"
-  | "STORAGE_OBJECT_HEAD_MISMATCH";
+  | "STORAGE_OBJECT_HEAD_MISMATCH"
+  | "STORAGE_UPLOAD_EXPIRED"
+  | "STORAGE_UPLOAD_SUPERSEDED";
 
 export class StorageObjectServiceError extends Error {
   constructor(readonly code: StorageObjectServiceErrorCode, message: string) {
@@ -35,59 +37,122 @@ type StorageObjectServiceDependencies = {
   readonly createRepository: StorageObjectRepositoryFactory;
   readonly createId?: () => string;
   readonly clock?: () => Date;
+  readonly uploadTimeoutMs?: number;
+  readonly scheduleTimeout?: (callback: () => void, milliseconds: number) => () => void;
 };
+
+const DEFAULT_UPLOAD_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const MAX_UPLOAD_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1_000;
 
 export class StorageObjectService {
   private readonly createId: () => string;
   private readonly clock: () => Date;
+  private readonly uploadTimeoutMs: number;
+  private readonly scheduleTimeout: (callback: () => void, milliseconds: number) => () => void;
 
   constructor(private readonly dependencies: StorageObjectServiceDependencies) {
     this.createId = dependencies.createId ?? uuidv7;
     this.clock = dependencies.clock ?? (() => new Date());
+    this.uploadTimeoutMs = dependencies.uploadTimeoutMs ?? DEFAULT_UPLOAD_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.uploadTimeoutMs) || this.uploadTimeoutMs < 1 || this.uploadTimeoutMs > MAX_UPLOAD_TIMEOUT_MS) {
+      throw new StorageObjectServiceError("INVALID_STORAGE_OBJECT_CLOCK", "Invalid storage upload timeout");
+    }
+    this.scheduleTimeout = dependencies.scheduleTimeout ?? scheduleTimeout;
   }
 
-  async create(input: { readonly body: Readable; readonly mediaType: string }): Promise<StorageObject> {
+  async create(input: { readonly body: Readable; readonly mediaType: string; readonly signal?: AbortSignal }): Promise<StorageObject> {
     const body = input.body;
     const rawMediaType = input.mediaType;
+    const callerSignal = input.signal;
+    if (callerSignal !== undefined && !(callerSignal instanceof AbortSignal)) {
+      throw new StorageObjectServiceError("INVALID_STORAGE_OBJECT_CLOCK", "Invalid storage upload signal");
+    }
     const bodyMonitor = new PrewriteBodyMonitor(body);
     let writeStarted = false;
     try {
       const mediaType = normalizeMediaType(rawMediaType);
       const id = this.createId();
       const objectKey = createStorageKey("objects/original", id);
+      const createdAt = this.now();
+      const uploadExpiresAt = addMilliseconds(createdAt, this.uploadTimeoutMs);
       const staged = await this.dependencies.transactionRunner((executor) =>
         this.dependencies.createRepository(executor).createStaging({
           id,
           driver: this.dependencies.storage.driver,
           objectKey,
-          createdAt: this.now()
+          createdAt,
+          uploadExpiresAt
         })
       );
       this.assertCurrentDriver(staged.driver);
 
       bodyMonitor.assertReadyForStorage();
       writeStarted = true;
+      const deadlineController = new AbortController();
+      const signal = callerSignal
+        ? AbortSignal.any([callerSignal, deadlineController.signal])
+        : deadlineController.signal;
+      const remainingMs = Math.max(0, uploadExpiresAt.getTime() - this.now().getTime());
+      const cancelDeadline = this.scheduleTimeout(() => deadlineController.abort(), remainingMs);
       let written: StorageWriteResult;
       try {
-        written = await this.dependencies.storage.write(staged.objectKey, body, mediaType);
+        written = await this.dependencies.storage.write(staged.objectKey, body, mediaType, { signal });
       } catch (error) {
-        await bodyMonitor.finishStorageWrite(true);
+        try {
+          await bodyMonitor.finishStorageWrite(true);
+        } finally {
+          cancelDeadline();
+        }
         throw error;
       }
-      await bodyMonitor.finishStorageWrite(false);
-      const head = await this.dependencies.storage.head(staged.objectKey);
-      if (head === null || head.sizeBytes !== written.sizeBytes) {
-        throw new StorageObjectServiceError("STORAGE_OBJECT_HEAD_MISMATCH", "Stored object size verification failed");
+      try {
+        await bodyMonitor.finishStorageWrite(false);
+      } catch (error) {
+        cancelDeadline();
+        throw error;
       }
+      try {
+        const beforeHead = this.now();
+        if (signal.aborted || beforeHead.getTime() >= uploadExpiresAt.getTime()) {
+          await this.dependencies.storage.delete(staged.objectKey);
+          throw new StorageObjectServiceError("STORAGE_UPLOAD_EXPIRED", "Storage upload deadline expired before commit");
+        }
+        const head = await this.dependencies.storage.head(staged.objectKey);
+        if (head === null || head.sizeBytes !== written.sizeBytes) {
+          throw new StorageObjectServiceError("STORAGE_OBJECT_HEAD_MISMATCH", "Stored object size verification failed");
+        }
+        const readyAt = this.now();
+        if (signal.aborted || readyAt.getTime() >= uploadExpiresAt.getTime()) {
+          await this.dependencies.storage.delete(staged.objectKey);
+          throw new StorageObjectServiceError("STORAGE_UPLOAD_EXPIRED", "Storage upload deadline expired before commit");
+        }
 
-      return this.dependencies.transactionRunner((executor) =>
-        this.dependencies.createRepository(executor).markReady(staged.id, {
-          sizeBytes: written.sizeBytes,
-          sha256: Buffer.from(written.sha256),
-          mediaType,
-          readyAt: this.now()
-        })
-      );
+        try {
+          return await this.dependencies.transactionRunner((executor) =>
+            this.dependencies.createRepository(executor).markReady(staged.id, {
+              sizeBytes: written.sizeBytes,
+              sha256: Buffer.from(written.sha256),
+              mediaType,
+              readyAt
+            })
+          );
+        } catch (error) {
+          if (error instanceof StorageObjectRepositoryError &&
+              (error.code === "STORAGE_OBJECT_STATE_CONFLICT" || error.code === "STORAGE_OBJECT_UPLOAD_EXPIRED")) {
+            const current = await this.dependencies.transactionRunner((executor) =>
+              this.dependencies.createRepository(executor).findById(staged.id)
+            );
+            if (current && current.driver === staged.driver && current.objectKey === staged.objectKey &&
+                (current.status === "delete_pending" || current.status === "deleted")) {
+              await this.dependencies.storage.delete(staged.objectKey);
+              throw new StorageObjectServiceError("STORAGE_UPLOAD_SUPERSEDED", "Storage upload was superseded by cleanup");
+            }
+          }
+          throw error;
+        }
+      } finally {
+        cancelDeadline();
+      }
     } catch (error) {
       if (!writeStarted) await bodyMonitor.destroyAndReport(error);
       throw error;
@@ -121,6 +186,20 @@ export class StorageObjectService {
     }
     return new Date(now.getTime());
   }
+}
+
+function addMilliseconds(date: Date, milliseconds: number) {
+  const value = date.getTime() + milliseconds;
+  if (!Number.isSafeInteger(value) || Math.abs(value) > 8_640_000_000_000_000) {
+    throw new StorageObjectServiceError("INVALID_STORAGE_OBJECT_CLOCK", "Invalid storage upload deadline");
+  }
+  return new Date(value);
+}
+
+function scheduleTimeout(callback: () => void, milliseconds: number) {
+  const timer = setTimeout(callback, milliseconds);
+  timer.unref();
+  return () => clearTimeout(timer);
 }
 
 type DeleteStorageObjectOptions = {

@@ -172,7 +172,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
                ('invitations', 'token_key_version'), ('totp_credentials', 'key_version'),
                ('recovery_codes', 'key_version'), ('mfa_enrollments', 'key_version'),
                ('outbox_events', 'payload'), ('outbox_events', 'idempotency_key'), ('jobs', 'payload'),
-               ('users', 'created_at'), ('jobs', 'lease_expires_at')
+               ('users', 'created_at'), ('jobs', 'lease_expires_at'),
+               ('storage_objects', 'upload_expires_at')
              ))`
       );
       const byColumn: Map<string, (typeof typedColumns.rows)[number]> = new Map(
@@ -198,6 +199,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(byColumn.get("jobs.payload")?.data_type).toBe("jsonb");
       expect(byColumn.get("users.created_at")?.data_type).toBe("timestamp with time zone");
       expect(byColumn.get("jobs.lease_expires_at")?.data_type).toBe("timestamp with time zone");
+      expect(byColumn.get("storage_objects.upload_expires_at")?.data_type).toBe("timestamp with time zone");
       for (const key of [
         "invitations.token_key_version",
         "totp_credentials.key_version",
@@ -329,6 +331,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(predicates.get("jobs_running_lease_idx")).toBe("(status = 'running'::text)");
       expect(predicates.get("jobs_dead_idx")).toBe("(status = 'dead'::text)");
       expect(predicates.get("storage_objects_staging_idx")).toBe("(status = 'staging'::text)");
+      expect(predicates.get("storage_objects_staging_upload_expiry_idx")).toBe("(status = 'staging'::text)");
       expect(predicates.get("storage_objects_delete_pending_idx")).toBe("(status = 'delete_pending'::text)");
       expect([...predicates.values()].every((predicate) => !predicate.toLowerCase().includes("now()"))).toBe(true);
     });
@@ -624,9 +627,9 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       const staleStagingId = "01890f1e-9b4a-7cc2-8f00-000000000033";
       await migration.query(
         `INSERT INTO platform.storage_objects
-          (id, status, driver, object_key, created_at, updated_at)
+          (id, status, driver, object_key, created_at, updated_at, upload_expires_at)
          VALUES ($1, 'staging', 'filesystem', 'valid/stale-staging.pdf',
-           '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+           '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z')`,
         [staleStagingId]
       );
       await migration.query(

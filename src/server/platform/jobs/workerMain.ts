@@ -24,17 +24,27 @@ import { runWorker } from "./worker.ts";
 const DISPATCH_BATCH_SIZE = 100;
 const RECONCILE_BATCH_SIZE = 100;
 const RECONCILE_INTERVAL_MS = 60_000;
-const STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 const IDLE_SLEEP_MS = 250;
+const MAX_STAGING_CLEANUP_VERIFICATION_MS = 1_000;
 
 export async function workerMain(env: NodeJS.ProcessEnv = process.env) {
   const config = loadPlatformConfig(env, "worker");
   return runWorkerResourceLifecycle({
     createPool: () => createPlatformPool(config.database, "pdf-approval-worker"),
     createStorage: () => createStorage(config.storage),
-    assertReady: async (pool) => assertExpectedSchema(pool, await loadMigrationFiles()),
+    assertReady: async (pool) => {
+      assertWorkerCapacity(config);
+      await assertExpectedSchema(pool, await loadMigrationFiles());
+    },
     run: (pool, storage) => runConfiguredWorkers(config, pool, storage)
   });
+}
+
+export function assertWorkerCapacity(config: Pick<WorkerPlatformConfig, "database" | "worker">) {
+  if (!config || !config.database || !config.worker || !Number.isSafeInteger(config.database.poolMax) ||
+      !Number.isSafeInteger(config.worker.concurrency) || config.database.poolMax < config.worker.concurrency * 2) {
+    throw new Error("WORKER_POOL_CAPACITY_INSUFFICIENT");
+  }
 }
 
 async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: PlatformPool, storage: StorageAdapter) {
@@ -50,7 +60,8 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
       transactionRunner,
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       adapter: storage,
-      clock
+      clock,
+      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3)))
     });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts)],
@@ -73,7 +84,6 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
         createRepository: (executor) => new PostgresStorageObjectRepository(executor),
         publisher: outboxPublisher,
         clock,
-        stagingMaxAgeMs: STAGING_MAX_AGE_MS,
         batchSize: RECONCILE_BATCH_SIZE
       });
       const promise = runWorker({

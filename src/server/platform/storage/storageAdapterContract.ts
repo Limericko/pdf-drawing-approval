@@ -107,6 +107,20 @@ export function storageAdapterContract(
       ).resolves.toMatchObject({ sizeBytes: retryBody.byteLength });
     });
 
+    it("aborts an in-flight write and leaves no readable object", async () => {
+      const key = createStorageKey("objects/original", uuidv7());
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const body = new Readable({ read() { entered(); } });
+      const controller = new AbortController();
+      const writing = harness.adapter.write(key, body, "application/pdf", { signal: controller.signal });
+      await started;
+      controller.abort();
+      await expect(writing).rejects.toMatchObject({ code: "STORAGE_IO_ERROR" });
+      await expect(harness.adapter.head(key)).resolves.toBeNull();
+      expect(body.destroyed).toBe(true);
+    });
+
     it("deletes idempotently", async () => {
       const key = newObjectKey();
       await harness.adapter.write(key, Readable.from([Buffer.from("temporary")]), "application/pdf");

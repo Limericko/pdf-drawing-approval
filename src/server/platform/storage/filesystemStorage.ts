@@ -101,8 +101,9 @@ export class FilesystemStorage implements StorageAdapter {
     key: string,
     body: Readable,
     contentType: string,
+    options?: { readonly signal?: AbortSignal },
   ): Promise<StorageWriteResult> {
-    return this.writeInternal(key, body, contentType);
+    return this.writeInternal(key, body, contentType, options?.signal);
   }
 
   async openRead(key: string): Promise<Readable> {

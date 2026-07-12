@@ -102,6 +102,38 @@ describe("leased worker", () => {
     expect((repository as { claim: ReturnType<typeof vi.fn> }).claim).not.toHaveBeenCalled();
   });
 
+  it("requeues a claim that returns after abort without starting its handler", async () => {
+    const now = new Date("2026-07-12T08:25:00.000Z");
+    const repository = new PostgresJobRepository(worker);
+    const id = uuidv7();
+    await repository.create({ id, jobType: "abort-window", payloadVersion: 1, payload: {}, idempotencyKey: `abort-window:${id}`, maxAttempts: 3, nextRunAt: now, createdAt: now });
+    let claimed!: () => void;
+    let releaseClaim!: () => void;
+    const claimObserved = new Promise<void>((resolve) => { claimed = resolve; });
+    const barrier = new Promise<void>((resolve) => { releaseClaim = resolve; });
+    const delayedRepository = new Proxy(repository, {
+      get(target, property, receiver) {
+        if (property === "claim") return async (...args: Parameters<typeof repository.claim>) => {
+          const job = await target.claim(...args);
+          claimed();
+          await barrier;
+          return job;
+        };
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    const handler = vi.fn(async () => undefined);
+    const controller = new AbortController();
+    const running = runWorkerIteration({ ...deps("abort-window", now, delayedRepository, new JobRegistry([], [{ jobType: "abort-window", payloadVersion: 1, handler }])), signal: controller.signal });
+    await claimObserved;
+    controller.abort();
+    releaseClaim();
+    await expect(running).resolves.toEqual({ status: "stopped" });
+    expect(handler).not.toHaveBeenCalled();
+    await expect(repository.findById(id)).resolves.toMatchObject({ status: "pending", attemptCount: 0, workerId: null, startedAt: now });
+  });
+
   it("lets an in-flight short job finish after abort and does not claim another job", async () => {
     const now = new Date("2026-07-12T08:30:00.000Z");
     const realRepository = new PostgresJobRepository(worker);
@@ -168,12 +200,12 @@ describe("leased worker", () => {
   it("runs reconciliation on the injected schedule and dispatches stale cleanup through outbox", async () => {
     const now = new Date("2026-07-12T08:50:00.000Z");
     const staleId = uuidv7();
-    await new PostgresStorageObjectRepository(migration).createStaging({ id: staleId, driver: "filesystem", objectKey: createStorageKey("original", staleId), createdAt: new Date(now.getTime() - 10_000) });
+    await new PostgresStorageObjectRepository(migration).createStaging({ id: staleId, driver: "filesystem", objectKey: createStorageKey("original", staleId), createdAt: new Date(now.getTime() - 10_000), uploadExpiresAt: new Date(now.getTime() - 1) });
     const transactionRunner = <T>(callback: (executor: QueryExecutor) => Promise<T>) => withTransaction(worker, callback);
     const handler = vi.fn(async () => undefined);
     const registry = new JobRegistry([storageCleanupEventRegistration(3)], [{ jobType: "storage_object_cleanup", payloadVersion: 1, handler }]);
     const dispatcher = new OutboxDispatcher({ transactionRunner, createOutboxRepository: (executor) => new PostgresOutboxRepository(executor), createJobRepository: (executor) => new PostgresJobRepository(executor), mapEvent: registry.mapEvent, createId: uuidv7, clock: () => now });
-    const reconciler = new StorageReconciler({ transactionRunner, createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher: new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => now })), clock: () => now, stagingMaxAgeMs: 1_000, batchSize: 10 });
+    const reconciler = new StorageReconciler({ transactionRunner, createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher: new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => now })), clock: () => now, batchSize: 10 });
     const state = { nextReconcileAt: new Date(0) };
     const base = { ...deps("scheduled", now, new PostgresJobRepository(worker), registry), state, dispatcher, reconciler, reconcileIntervalMs: 60_000 };
     await runWorkerIteration(base);
@@ -186,10 +218,10 @@ describe("leased worker", () => {
   it("deduplicates concurrent reconcilers to one cleanup outbox event and one job", async () => {
     const now = new Date("2026-07-12T08:55:00.000Z");
     const staleId = uuidv7();
-    await new PostgresStorageObjectRepository(migration).createStaging({ id: staleId, driver: "filesystem", objectKey: createStorageKey("original", staleId), createdAt: new Date(now.getTime() - 10_000) });
+    await new PostgresStorageObjectRepository(migration).createStaging({ id: staleId, driver: "filesystem", objectKey: createStorageKey("original", staleId), createdAt: new Date(now.getTime() - 10_000), uploadExpiresAt: new Date(now.getTime() - 1) });
     const transactionRunner = <T>(callback: (executor: QueryExecutor) => Promise<T>) => withTransaction(worker, callback);
     const publisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => now }));
-    const createReconciler = () => new StorageReconciler({ transactionRunner, createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher, clock: () => now, stagingMaxAgeMs: 1_000, batchSize: 10 });
+    const createReconciler = () => new StorageReconciler({ transactionRunner, createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher, clock: () => now, batchSize: 10 });
     await Promise.all([createReconciler().runOnce(), createReconciler().runOnce()]);
     await expect(worker.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.outbox_events")).resolves.toMatchObject({ rows: [{ count: "1" }] });
     const registry = new JobRegistry([storageCleanupEventRegistration(3)], []);

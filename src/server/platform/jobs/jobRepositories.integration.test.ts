@@ -413,6 +413,19 @@ describe("PostgresJobRepository", () => {
     expect(succeeded).toMatchObject({ status: "succeeded", workerId: null, leaseToken: null, leaseExpiresAt: null, completedAt: expect.any(Date) });
   });
 
+  it("releases an unstarted claim immediately and fences stale release attempts", async () => {
+    const repository = new PostgresJobRepository(worker);
+    const dueAt = new Date("2026-07-12T02:05:00.000Z");
+    const input = jobInput({ maxAttempts: 3, nextRunAt: dueAt });
+    await repository.create(input);
+    const first = await repository.claim({ workerId: "release-worker", now: dueAt, leaseDurationMs: 1_000 });
+    const releasedAt = new Date(dueAt.getTime() + 1);
+    await expect(repository.release({ id: input.id, workerId: "release-worker", leaseToken: first!.leaseToken!, releasedAt }))
+      .resolves.toMatchObject({ status: "pending", attemptCount: 0, nextRunAt: releasedAt, workerId: null, startedAt: dueAt });
+    await expect(repository.release({ id: input.id, workerId: "release-worker", leaseToken: first!.leaseToken!, releasedAt }))
+      .rejects.toMatchObject({ code: "STALE_LEASE" });
+  });
+
   it("rejects success exactly at lease expiry and leaves the job reclaimable", async () => {
     const repository = new PostgresJobRepository(worker);
     const dueAt = new Date("2026-07-12T02:10:00.000Z");

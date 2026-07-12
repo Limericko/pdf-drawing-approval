@@ -13,7 +13,7 @@ export interface StorageHeadResult {
 
 export interface StorageAdapter {
   readonly driver: StorageDriver;
-  write(key: string, body: Readable, contentType: string): Promise<StorageWriteResult>;
+  write(key: string, body: Readable, contentType: string, options?: { readonly signal?: AbortSignal }): Promise<StorageWriteResult>;
   openRead(key: string): Promise<Readable>;
   head(key: string): Promise<StorageHeadResult | null>;
   delete(key: string): Promise<void>;
