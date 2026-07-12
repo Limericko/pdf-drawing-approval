@@ -11,12 +11,14 @@ export type StorageErrorCode =
 
 export class StorageError extends Error {
   readonly code: StorageErrorCode;
+  readonly commitAmbiguous: boolean;
 
-  constructor(code: StorageErrorCode, message: string, options?: ErrorOptions) {
+  constructor(code: StorageErrorCode, message: string, options?: ErrorOptions & { readonly commitAmbiguous?: boolean }) {
     const cause = sanitizeCause(options?.cause);
     super(message, cause === undefined ? undefined : { cause });
     this.name = "StorageError";
     this.code = code;
+    this.commitAmbiguous = options?.commitAmbiguous === true;
   }
 }
 

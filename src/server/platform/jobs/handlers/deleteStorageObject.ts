@@ -3,6 +3,7 @@ import type { StorageAdapter, StorageDriver } from "../../storage/storageAdapter
 import { StorageError } from "../../storage/storageErrors.ts";
 import type { StorageObjectRepository } from "../../storage/storageObjectRepository.ts";
 import { assertStorageKey } from "../../storage/storageKey.ts";
+import { createStorageTombstoneReaper } from "../../storage/storageTombstoneReaper.ts";
 import type { Job } from "../jobTypes.ts";
 import { JobHandlerError, type JobHandler } from "../jobRegistry.ts";
 
@@ -22,8 +23,6 @@ type Options = {
 
 const DEFAULT_STAGING_VERIFICATION_DELAY_MS = 1_000;
 const DEFAULT_TOMBSTONE_REAP_INTERVAL_MS = 6 * 60 * 60 * 1_000;
-const MIN_TOMBSTONE_REAP_INTERVAL_MS = 60_000;
-const MAX_TOMBSTONE_REAP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1_000;
 
 type CleanupPayload = {
   readonly idempotencyKey: string;
@@ -43,12 +42,19 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
   const verificationDelayMs = options.verificationDelayMs ?? DEFAULT_STAGING_VERIFICATION_DELAY_MS;
   const tombstoneReapIntervalMs = options.tombstoneReapIntervalMs ?? DEFAULT_TOMBSTONE_REAP_INTERVAL_MS;
   if (!Number.isSafeInteger(verificationDelayMs) || verificationDelayMs < 1 || verificationDelayMs >= 30_000 ||
-      !Number.isSafeInteger(tombstoneReapIntervalMs) || tombstoneReapIntervalMs < MIN_TOMBSTONE_REAP_INTERVAL_MS ||
-      tombstoneReapIntervalMs > MAX_TOMBSTONE_REAP_INTERVAL_MS ||
       (options.sleep !== undefined && typeof options.sleep !== "function")) {
     throw new Error("INVALID_STORAGE_CLEANUP_HANDLER_OPTIONS");
   }
   const sleep = options.sleep ?? delay;
+  const tombstoneReaper = createStorageTombstoneReaper({
+    transactionRunner,
+    createRepository,
+    adapter,
+    clock,
+    verificationDelayMs,
+    reapIntervalMs: tombstoneReapIntervalMs,
+    sleep
+  });
   return async (job: Job) => {
     const payload = ownPayload(job?.payload);
     if (payload.driver !== adapter.driver) {
@@ -66,18 +72,7 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
     if (!prepared) return;
 
     if (prepared.cleanupTombstone) {
-      const lastError = await reapTombstoneBytes(adapter, payload.objectKey, verificationDelayMs, sleep);
-      const scheduledAt = ownClock(clock());
-      const nextCleanupAt = addMilliseconds(scheduledAt, tombstoneReapIntervalMs);
-      await transactionRunner((executor) => createRepository(executor).scheduleCleanupReap({
-        id: payload.storageObjectId,
-        driver: payload.driver,
-        objectKey: payload.objectKey,
-        expectedGeneration: payload.cleanupGeneration,
-        scheduledAt,
-        nextCleanupAt,
-        lastError
-      }));
+      await tombstoneReaper.reap(prepared);
       return;
     }
 
@@ -107,32 +102,6 @@ export function createDeleteStorageObjectHandler(options: Options): JobHandler {
   };
 }
 
-async function reapTombstoneBytes(
-  adapter: StorageAdapter,
-  objectKey: string,
-  verificationDelayMs: number,
-  sleep: (milliseconds: number) => Promise<void>
-) {
-  await attemptDelete(adapter, objectKey);
-  await sleep(verificationDelayMs);
-  await attemptDelete(adapter, objectKey);
-  try {
-    const remaining = await adapter.head(objectKey);
-    return remaining === null ? null : "STORAGE_DELETE_NOT_VERIFIED";
-  } catch {
-    return "STORAGE_DELETE_VERIFY_FAILED";
-  }
-}
-
-async function attemptDelete(adapter: StorageAdapter, objectKey: string) {
-  try {
-    await deleteBytes(adapter, objectKey);
-  } catch {
-    // The durable tombstone owns another generation even when this delete fails.
-    // A final head below decides whether the current cycle can be considered clean.
-  }
-}
-
 async function deleteBytes(adapter: StorageAdapter, objectKey: string) {
   try {
     await adapter.delete(objectKey);
@@ -145,14 +114,6 @@ async function deleteBytes(adapter: StorageAdapter, objectKey: string) {
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
-}
-
-function addMilliseconds(date: Date, milliseconds: number) {
-  const value = date.getTime() + milliseconds;
-  if (!Number.isSafeInteger(value) || Math.abs(value) > 8_640_000_000_000_000) {
-    throw new JobHandlerError("transient", "INVALID_WORKER_CLOCK", "Worker clock returned an invalid timestamp");
-  }
-  return new Date(value);
 }
 
 function ownPayload(value: unknown): CleanupPayload {

@@ -103,7 +103,9 @@ export class StorageObjectService {
         } finally {
           cancelDeadline();
         }
-        await compensateFailedWrite(this.dependencies.storage, staged.objectKey, error);
+        if (isCommitAmbiguousWriteError(error)) {
+          await compensateFailedWrite(this.dependencies.storage, staged.objectKey, error);
+        }
         throw error;
       }
       try {
@@ -200,6 +202,10 @@ async function compensateFailedWrite(storage: StorageAdapter, objectKey: string,
       { cause: primaryError }
     );
   }
+}
+
+function isCommitAmbiguousWriteError(error: unknown) {
+  return error instanceof StorageError && error.commitAmbiguous;
 }
 
 function addMilliseconds(date: Date, milliseconds: number) {

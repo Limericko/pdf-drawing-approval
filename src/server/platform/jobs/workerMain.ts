@@ -17,6 +17,7 @@ import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
 import { PostgresOutboxRepository } from "./postgres/PostgresOutboxRepository.ts";
 import { createRetryPolicy } from "./retryPolicy.ts";
 import { StorageReconciler } from "../storage/storageReconciler.ts";
+import { createStorageTombstoneReaper } from "../storage/storageTombstoneReaper.ts";
 import { PostgresStorageObjectRepository } from "../storage/postgres/PostgresStorageObjectRepository.ts";
 import { WorkerHeartbeatRepository } from "./workerHeartbeatRepository.ts";
 import { runWorker } from "./worker.ts";
@@ -64,6 +65,14 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
       verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
       tombstoneReapIntervalMs: config.worker.storageCleanupReapIntervalMs
     });
+    const tombstoneReaper = createStorageTombstoneReaper({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      adapter: storage,
+      clock,
+      verificationDelayMs: Math.min(MAX_STAGING_CLEANUP_VERIFICATION_MS, Math.max(1, Math.floor(config.worker.leaseMs / 3))),
+      reapIntervalMs: config.worker.storageCleanupReapIntervalMs
+    });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts)],
       [{ jobType: "storage_object_cleanup", payloadVersion: 1, handler: cleanupHandler }]
@@ -84,6 +93,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
         transactionRunner,
         createRepository: (executor) => new PostgresStorageObjectRepository(executor),
         publisher: outboxPublisher,
+        reapTombstone: (object) => tombstoneReaper.reap(object),
         clock,
         batchSize: RECONCILE_BATCH_SIZE
       });

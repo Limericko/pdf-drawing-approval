@@ -208,7 +208,12 @@ export class S3Storage implements StorageAdapter {
       abortController.abort();
       body.destroy();
       await Promise.allSettled([bodyPromise, putPromise]);
-      throw mapWriteError(error);
+      const mapped = mapWriteError(error);
+      if (mapped.code === "OBJECT_EXISTS") throw mapped;
+      throw new StorageError("STORAGE_IO_ERROR", "Storage operation failed", {
+        cause: error,
+        commitAmbiguous: true,
+      });
     }
   }
 

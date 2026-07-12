@@ -1,10 +1,13 @@
 import { Readable } from "node:stream";
 import { execFile } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Pool } from "pg";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { runMigrations } from "../database/migrationRunner.ts";
 import type { QueryExecutor } from "../database/queryExecutor.ts";
@@ -13,7 +16,10 @@ import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testin
 import type { CleanupIntent, CleanupIntentPublisher } from "./cleanupIntentPublisher.ts";
 import type { StorageAdapter, StorageDriver } from "./storageAdapter.ts";
 import { StorageError } from "./storageErrors.ts";
+import { FilesystemStorage } from "./filesystemStorage.ts";
 import { PostgresStorageObjectRepository } from "./postgres/PostgresStorageObjectRepository.ts";
+import { S3Storage } from "./s3Storage.ts";
+import { createStorageKey } from "./storageKey.ts";
 import {
   deleteStorageObjectBytes,
   requestStorageObjectDeletion,
@@ -379,13 +385,43 @@ describe("StorageObjectService", () => {
       status: "staging", driver: "filesystem", object_key: objectKey
     });
     expect(storage.objects.has(objectKey)).toBe(false);
-    expect(storage.calls).toEqual(["write", "delete"]);
+    expect(storage.calls).toEqual(["write"]);
     expect(body.destroyed).toBe(false);
   });
 
+  it.each(["filesystem", "s3"] as const)(
+    "does not delete an existing %s object when the conditional write reports OBJECT_EXISTS",
+    async (driver) => {
+      const id = uuidv7();
+      const objectKey = createStorageKey("objects/original", id);
+      const original = Buffer.from("approved original drawing");
+      const root = driver === "filesystem" ? await mkdtemp(join(tmpdir(), "pdf-approval-service-exists-")) : undefined;
+      const storage = driver === "filesystem"
+        ? new FilesystemStorage({ root: root! })
+        : new S3Storage(readS3Config());
+      await storage.write(objectKey, Readable.from(original), "application/pdf");
+      const deleteSpy = vi.spyOn(storage, "delete");
+      try {
+        await expect(service(storage, transactionRunner, () => id).create({
+          body: Readable.from("replacement drawing"),
+          mediaType: "application/pdf"
+        })).rejects.toMatchObject({ code: "OBJECT_EXISTS" });
+
+        expect(deleteSpy).not.toHaveBeenCalled();
+        expect(await readAll(await storage.openRead(objectKey))).toEqual(original);
+        await expect(findStoredObject(id)).resolves.toMatchObject({ status: "staging", driver });
+      } finally {
+        deleteSpy.mockRestore();
+        await storage.delete(objectKey);
+        if (storage instanceof S3Storage) storage.destroy();
+        if (root) await rm(root, { recursive: true, force: true });
+      }
+    }
+  );
+
   it("reports compensation failure while retaining deadline-owned staging metadata", async () => {
     const storage = new MemoryStorage();
-    const primary = new StorageError("STORAGE_IO_ERROR", "write failed");
+    const primary = new StorageError("STORAGE_IO_ERROR", "write failed", { commitAmbiguous: true });
     const compensation = new StorageError("STORAGE_IO_ERROR", "delete failed");
     storage.writeFailure = primary;
     storage.deleteFailure = compensation;
@@ -413,7 +449,7 @@ describe("StorageObjectService", () => {
       async write(_key, _body, _contentType, options) {
         writeStarted();
         return new Promise((_resolve, reject) => options!.signal!.addEventListener("abort", () => {
-          reject(new StorageError("STORAGE_IO_ERROR", "aborted write"));
+          reject(new StorageError("STORAGE_IO_ERROR", "aborted write", { commitAmbiguous: true }));
         }, { once: true }));
       },
       async delete(key) { deleted.push(key); },
@@ -603,3 +639,21 @@ describe("StorageObjectService", () => {
     expect(transactionCalls).toBe(0);
   });
 });
+
+function readS3Config() {
+  return {
+    driver: "s3" as const,
+    endpoint: process.env.PDF_APPROVAL_STORAGE_S3_ENDPOINT!,
+    region: process.env.PDF_APPROVAL_STORAGE_S3_REGION!,
+    bucket: process.env.PDF_APPROVAL_STORAGE_S3_BUCKET!,
+    accessKey: process.env.PDF_APPROVAL_STORAGE_S3_ACCESS_KEY!,
+    secretKey: process.env.PDF_APPROVAL_STORAGE_S3_SECRET_KEY!,
+    forcePathStyle: process.env.PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE === "true"
+  };
+}
+
+async function readAll(body: Readable) {
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}

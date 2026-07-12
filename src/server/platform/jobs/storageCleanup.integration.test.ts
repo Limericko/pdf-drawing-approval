@@ -9,8 +9,15 @@ import { PostgresStorageObjectRepository } from "../storage/postgres/PostgresSto
 import { S3Storage } from "../storage/s3Storage.ts";
 import { createStorageKey } from "../storage/storageKey.ts";
 import { StorageObjectService } from "../storage/storageObjectService.ts";
+import { StorageReconciler } from "../storage/storageReconciler.ts";
+import { createStorageTombstoneReaper } from "../storage/storageTombstoneReaper.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testing/postgresHarness.ts";
+import { OutboxDispatcher } from "./dispatcher.ts";
 import { createDeleteStorageObjectHandler } from "./handlers/deleteStorageObject.ts";
+import { JobRegistry, storageCleanupEventRegistration } from "./jobRegistry.ts";
+import { CleanupIntentOutboxPublisher, PostgresOutboxPublisher } from "./outboxPublisher.ts";
+import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
+import { PostgresOutboxRepository } from "./postgres/PostgresOutboxRepository.ts";
 
 let database: PlatformTestDatabase;
 let migration: ReturnType<PlatformTestDatabase["createPool"]>;
@@ -270,6 +277,121 @@ describe("storage cleanup handler", () => {
     } finally {
       process.removeListener("unhandledRejection", onUnhandled);
       await storage.delete(key);
+      storage.destroy();
+    }
+  });
+
+  it("reaps repeated S3 tombstone generations without growing outbox or job history", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("objects/original", id);
+    const createdAt = new Date("2026-07-12T12:00:00.000Z");
+    let now = new Date(createdAt.getTime() + 1_000);
+    let transactionActive = false;
+    const transactionRunner = <T>(callback: Parameters<typeof withTransaction<T>>[1]) => withTransaction(worker, async (executor) => {
+      transactionActive = true;
+      try { return await callback(executor); }
+      finally { transactionActive = false; }
+    });
+    const storage = new S3Storage(readS3Config());
+    const originalDelete = storage.delete.bind(storage);
+    const originalHead = storage.head.bind(storage);
+    const deleteSpy = vi.spyOn(storage, "delete").mockImplementation(async (objectKey) => {
+      expect(transactionActive).toBe(false);
+      await originalDelete(objectKey);
+    });
+    const headSpy = vi.spyOn(storage, "head").mockImplementation(async (objectKey) => {
+      expect(transactionActive).toBe(false);
+      return originalHead(objectKey);
+    });
+    const repository = new PostgresStorageObjectRepository(worker);
+    const publisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => new Date(now) }));
+    const createReaper = () => createStorageTombstoneReaper({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      adapter: storage,
+      clock: () => new Date(now),
+      verificationDelayMs: 1,
+      reapIntervalMs: 60_000,
+      sleep: async () => undefined
+    });
+    const createReconciler = () => new StorageReconciler({
+      transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+      publisher,
+      reapTombstone: (object) => createReaper().reap(object),
+      clock: () => new Date(now),
+      batchSize: 10
+    });
+    try {
+      await new PostgresStorageObjectRepository(web).createStaging({
+        id,
+        driver: "s3",
+        objectKey: key,
+        createdAt,
+        uploadExpiresAt: new Date(createdAt.getTime() + 500)
+      });
+      await expect(createReconciler().runOnce()).resolves.toEqual({ published: 1 });
+
+      const registry = new JobRegistry([storageCleanupEventRegistration(5)], []);
+      const dispatcher = new OutboxDispatcher({
+        transactionRunner,
+        createOutboxRepository: (executor) => new PostgresOutboxRepository(executor),
+        createJobRepository: (executor) => new PostgresJobRepository(executor),
+        mapEvent: registry.mapEvent,
+        createId: uuidv7,
+        clock: () => new Date(now)
+      });
+      await expect(dispatcher.dispatchBatch(10)).resolves.toBe(1);
+      const jobRepository = new PostgresJobRepository(worker);
+      const job = await jobRepository.claim({ workerId: "tombstone-history", now, leaseDurationMs: 10_000 });
+      const handler = createDeleteStorageObjectHandler({
+        transactionRunner,
+        createRepository: (executor) => new PostgresStorageObjectRepository(executor),
+        adapter: storage,
+        clock: () => new Date(now),
+        verificationDelayMs: 1,
+        tombstoneReapIntervalMs: 60_000,
+        sleep: async () => undefined
+      });
+      await handler(job!);
+      await jobRepository.succeed({
+        id: job!.id,
+        workerId: "tombstone-history",
+        leaseToken: job!.leaseToken!,
+        completedAt: now
+      });
+      const initialCounts = await worker.query<{ outbox: string; jobs: string }>(
+        `SELECT (SELECT count(*) FROM platform.outbox_events)::text AS outbox,
+          (SELECT count(*) FROM platform.jobs)::text AS jobs`
+      );
+      expect(initialCounts.rows).toEqual([{ outbox: "1", jobs: "1" }]);
+
+      let state = await repository.findById(id);
+      now = new Date(state!.cleanupNotBefore!);
+      await createReconciler().runOnce();
+      state = await repository.findById(id);
+      expect(state).toMatchObject({ cleanupGeneration: 2 });
+
+      await storage.write(key, Readable.from("late remote commit"), "application/pdf");
+      await expect(originalHead(key)).resolves.toEqual({ sizeBytes: 18 });
+      now = new Date(state!.cleanupNotBefore!);
+      await createReconciler().runOnce();
+      await expect(originalHead(key)).resolves.toBeNull();
+
+      state = await repository.findById(id);
+      now = new Date(state!.cleanupNotBefore!);
+      await createReconciler().runOnce();
+      await expect(repository.findById(id)).resolves.toMatchObject({ cleanupGeneration: 4 });
+      await expect(worker.query<{ outbox: string; jobs: string }>(
+        `SELECT (SELECT count(*) FROM platform.outbox_events)::text AS outbox,
+          (SELECT count(*) FROM platform.jobs)::text AS jobs`
+      )).resolves.toMatchObject({ rows: [{ outbox: "1", jobs: "1" }] });
+      expect(deleteSpy).toHaveBeenCalled();
+      expect(headSpy).toHaveBeenCalled();
+    } finally {
+      deleteSpy.mockRestore();
+      headSpy.mockRestore();
+      await originalDelete(key);
       storage.destroy();
     }
   });

@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { v7 as uuidv7 } from "uuid";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { runMigrations } from "../database/migrationRunner.ts";
 import { withTransaction } from "../database/transaction.ts";
@@ -195,7 +195,7 @@ describe("StorageReconciler", () => {
     expect(publisher.intents.every((intent) => intent.payloadVersion === 1)).toBe(true);
   });
 
-  it("deduplicates one due tombstone generation across reconcilers and resumes after restart", async () => {
+  it("reaps due tombstones directly without new intents and resumes from the fenced generation after restart", async () => {
     const webRepository = new PostgresStorageObjectRepository(web);
     const repository = new PostgresStorageObjectRepository(worker);
     const createdAt = new Date("2026-07-12T00:10:00.000Z");
@@ -226,26 +226,51 @@ describe("StorageReconciler", () => {
       nextCleanupAt: dueAt,
       lastError: null
     });
+    let concurrentReaps = 0;
+    let releaseConcurrentReaps!: () => void;
+    const concurrentReapsEntered = new Promise<void>((resolve) => { releaseConcurrentReaps = resolve; });
+    const reapTombstone = vi.fn(async (object: Awaited<ReturnType<typeof repository.findById>>) => {
+      if (!object) throw new Error("MISSING_TOMBSTONE");
+      concurrentReaps += 1;
+      if (concurrentReaps === 2) releaseConcurrentReaps();
+      await concurrentReapsEntered;
+      const scheduledAt = object.cleanupNotBefore!;
+      await repository.scheduleCleanupReap({
+        id: object.id,
+        driver: object.driver,
+        objectKey: object.objectKey,
+        expectedGeneration: object.cleanupGeneration,
+        scheduledAt,
+        nextCleanupAt: new Date(scheduledAt.getTime() + 60_000),
+        lastError: null
+      });
+    });
     const createReconciler = (now: Date) => new StorageReconciler({
       transactionRunner: workerTransactionRunner,
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
       publisher: new DatabasePublisher(),
+      reapTombstone,
       clock: () => now,
       batchSize: 10
     });
 
     await expect(createReconciler(new Date(dueAt.getTime() - 1)).runOnce()).resolves.toEqual({ published: 0 });
     await Promise.all([createReconciler(dueAt).runOnce(), createReconciler(dueAt).runOnce()]);
-    await createReconciler(new Date(dueAt.getTime() + 1)).runOnce();
+    const restartedAt = new Date(dueAt.getTime() + 60_000);
+    await createReconciler(restartedAt).runOnce();
 
-    const intents = await web.query<{ idempotency_key: string; payload: { cleanupGeneration: number } }>(
-      "SELECT idempotency_key, payload FROM platform.test_cleanup_intents WHERE payload->>'storageObjectId' = $1",
+    const intents = await web.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM platform.test_cleanup_intents WHERE payload->>'storageObjectId' = $1",
       [id]
     );
-    expect(intents.rows).toEqual([{
-      idempotency_key: `storage-object-cleanup:${id}:delete_pending:1`,
-      payload: expect.objectContaining({ cleanupGeneration: 1 })
-    }]);
+    expect(intents.rows).toEqual([{ count: "0" }]);
+    expect(reapTombstone).toHaveBeenCalledTimes(3);
+    await expect(repository.findById(id)).resolves.toMatchObject({
+      status: "delete_pending",
+      cleanupTombstone: true,
+      cleanupGeneration: 3,
+      cleanupNotBefore: new Date(restartedAt.getTime() + 60_000)
+    });
   });
 
   it("commits reference removal, delete_pending and cleanup publication in one transaction", async () => {
