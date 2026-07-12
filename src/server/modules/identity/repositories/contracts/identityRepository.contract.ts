@@ -82,6 +82,17 @@ export function identityRepositoryContract(options: ContractOptions) {
       await expect(createUser({ email: "USÉR@EXAMPLE.COM" })).rejects.toMatchObject({ code: "23505" });
     });
 
+    it("finds users by id and exposes the same row through the transactional lock lookup", async () => {
+      const user = await createUser();
+
+      await expect(repositories().users.findById(user.id)).resolves.toEqual(user);
+      await expect(repositories().users.lockById(user.id)).resolves.toEqual(user);
+      await expect(repositories().users.findById("01890f1e-9b4a-7cc2-8f00-ffffffffffff"))
+        .resolves.toBeUndefined();
+      await expect(repositories().users.lockById("01890f1e-9b4a-7cc2-8f00-ffffffffffff"))
+        .resolves.toBeUndefined();
+    });
+
     it("generates RFC-compatible UUIDv7 identifiers in the application for every identity aggregate", async () => {
       const creator = await createUser();
       const { project, creatorMembership } = await createProject(creator.id);

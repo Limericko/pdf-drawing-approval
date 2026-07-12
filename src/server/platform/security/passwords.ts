@@ -30,6 +30,7 @@ type ParsedArgon2idPhc = {
   memoryCost: number;
   timeCost: number;
   parallelism: number;
+  outputLen: number;
 };
 
 function parseUint32(value: string): number | undefined {
@@ -69,7 +70,16 @@ function parseArgon2idPhc(encoded: string): ParsedArgon2idPhc | undefined {
     return undefined;
   }
 
-  return { memoryCost, timeCost, parallelism };
+  return { memoryCost, timeCost, parallelism, outputLen: Buffer.from(digest, "base64").length };
+}
+
+export function passwordHashMatchesOptions(encoded: string, options: Argon2idOptions): boolean {
+  const parsed = parseArgon2idPhc(encoded);
+  return Boolean(parsed &&
+    parsed.memoryCost === options.memoryCost &&
+    parsed.timeCost === options.timeCost &&
+    parsed.parallelism === options.parallelism &&
+    parsed.outputLen === options.outputLen);
 }
 
 export async function hashPassword(password: string, options: Argon2idOptions): Promise<string> {

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { Secret, TOTP } from "otpauth";
 import { z } from "zod";
 import { v7 as uuidv7 } from "uuid";
@@ -13,6 +12,7 @@ import {
   verifyInvitationToken, verifyOpaqueToken
 } from "../../platform/security/tokenHash.ts";
 import { generateTotpSecret, verifyTotp } from "../../platform/security/totp.ts";
+import { createRateLimitService } from "../../platform/security/rateLimitService.ts";
 import type { VersionedKeyring } from "../../platform/config/types.ts";
 import type { PlatformRole, ProjectMemberRole } from "./models.ts";
 import { normalizeEmail } from "./email.ts";
@@ -20,7 +20,6 @@ import { PostgresAuditRepository } from "./repositories/postgres/PostgresAuditRe
 import { PostgresInvitationRepository } from "./repositories/postgres/PostgresInvitationRepository.ts";
 import { PostgresMfaRepository } from "./repositories/postgres/PostgresMfaRepository.ts";
 import { PostgresProjectRepository } from "./repositories/postgres/PostgresProjectRepository.ts";
-import { PostgresRateLimitRepository } from "./repositories/postgres/PostgresRateLimitRepository.ts";
 import { PostgresUserRepository } from "./repositories/postgres/PostgresUserRepository.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -60,6 +59,7 @@ export function createInvitationService(options: Options) {
   const passwordHasher = options.hashPassword ?? hashPassword;
   const totpVerifier = options.verifyTotp ?? verifyTotp;
   const outbox = new PostgresOutboxPublisher({ createId: uuidv7, clock: () => new Date() });
+  const rateLimits = createRateLimitService({ pool: options.pool });
 
   return Object.freeze({
     async createInvitation(input: {
@@ -96,13 +96,13 @@ export function createInvitationService(options: Options) {
     },
 
     async prepare(input: { readonly invitationToken: string; readonly sourceIpPrefix: string }) {
-      await enforceIpRateLimit(options.pool, "invitation.prepare", input?.sourceIpPrefix);
+      await enforceIpRateLimit(rateLimits, "invitation.prepare", input?.sourceIpPrefix);
       const invitationToken = input?.invitationToken;
       const invitationId = invitationIdFromToken(invitationToken);
       if (!invitationId) throw invalid();
       const invitation = await new PostgresInvitationRepository(options.pool).findActiveById(invitationId);
       if (!invitation) throw invalid();
-      await enforceAccountRateLimit(options.pool, "invitation.prepare", invitation.tokenHash);
+      await enforceAccountRateLimit(rateLimits, "invitation.prepare", invitation.tokenHash);
       try {
         verifyInvitationToken(invitationToken, {
           invitationId: invitation.id, keyVersion: invitation.tokenKeyVersion, tokenHash: invitation.tokenHash
@@ -132,7 +132,7 @@ export function createInvitationService(options: Options) {
     },
 
     async complete(input: { readonly enrollmentToken: string; readonly sourceIpPrefix: string; readonly password: string; readonly totp: string }) {
-      await enforceIpRateLimit(options.pool, "invitation.complete", input?.sourceIpPrefix);
+      await enforceIpRateLimit(rateLimits, "invitation.complete", input?.sourceIpPrefix);
       const enrollmentToken = input?.enrollmentToken ?? "";
       const enrollmentHash = hashOpaqueToken(enrollmentToken);
       const initialMfa = new PostgresMfaRepository(options.pool);
@@ -140,7 +140,7 @@ export function createInvitationService(options: Options) {
       if (!initialEnrollment) throw invalid();
       const initialInvitation = await new PostgresInvitationRepository(options.pool).findById(initialEnrollment.invitationId);
       if (!initialInvitation) throw invalid();
-      await enforceAccountRateLimit(options.pool, "invitation.complete", initialInvitation.tokenHash);
+      await enforceAccountRateLimit(rateLimits, "invitation.complete", initialInvitation.tokenHash);
       ownPassword(input.password);
       const passwordHash = await passwordHasher(input.password, options.passwordHashOptions);
       let secret = decryptSecret({ encryptedSecret: initialEnrollment.encryptedTotpSecret, keyVersion: initialEnrollment.keyVersion }, options.keyrings.totpEncryption);
@@ -186,28 +186,26 @@ export function createInvitationService(options: Options) {
 
 type InvitationOperation = "invitation.prepare" | "invitation.complete";
 
-async function enforceIpRateLimit(pool: PlatformPool, operation: InvitationOperation, sourceIpPrefix: unknown) {
-  if (typeof sourceIpPrefix !== "string" || !sourceIpPrefix || sourceIpPrefix.length > 128 || /[\r\n\0]/.test(sourceIpPrefix)) throw invalid();
-  await enforceRateLimitBucket(pool, "ip-prefix", deriveRateLimitKey(`${operation}.ip`, sourceIpPrefix));
+type RateLimits = ReturnType<typeof createRateLimitService>;
+
+async function enforceIpRateLimit(rateLimits: RateLimits, operation: InvitationOperation, sourceIpPrefix: unknown) {
+  try {
+    const decision = await rateLimits.consumeIp({ operation, sourceIpPrefix: sourceIpPrefix as string, policy: RATE_LIMIT_POLICY });
+    if (decision.blocked) throw new InvitationServiceError("INVITATION_RATE_LIMITED");
+  } catch (error) {
+    if (error instanceof InvitationServiceError) throw error;
+    throw invalid();
+  }
 }
 
-async function enforceAccountRateLimit(pool: PlatformPool, operation: InvitationOperation, invitationTokenHash: Buffer) {
-  await enforceRateLimitBucket(pool, "account", deriveRateLimitKey(`${operation}.account`, invitationTokenHash));
-}
-
-async function enforceRateLimitBucket(
-  pool: PlatformPool,
-  bucketType: "ip-prefix" | "account",
-  bucketKey: Buffer
-) {
-  const bucket = await withTransaction(pool, (tx) => new PostgresRateLimitRepository(tx).increment({
-    bucketType, bucketKey, ...RATE_LIMIT_POLICY
-  }));
-  if (bucket.blocked) throw new InvitationServiceError("INVITATION_RATE_LIMITED");
-}
-
-function deriveRateLimitKey(domain: string, material: string | Buffer) {
-  return createHash("sha256").update(domain).update("\0").update(material).digest();
+async function enforceAccountRateLimit(rateLimits: RateLimits, operation: InvitationOperation, invitationTokenHash: Buffer) {
+  try {
+    const decision = await rateLimits.consumeAccount({ operation, accountKey: invitationTokenHash, policy: RATE_LIMIT_POLICY });
+    if (decision.blocked) throw new InvitationServiceError("INVITATION_RATE_LIMITED");
+  } catch (error) {
+    if (error instanceof InvitationServiceError) throw error;
+    throw invalid();
+  }
 }
 
 function ownCreate(input: { email: string; platformRole: PlatformRole; projectId: string; projectRole: ProjectMemberRole; invitedByUserId: string }) {

@@ -12,4 +12,6 @@ export type CreateUserInput = {
 export interface UserRepository {
   create(input: CreateUserInput): Promise<PlatformUser>;
   findByEmail(email: string): Promise<PlatformUser | undefined>;
+  findById(id: string): Promise<PlatformUser | undefined>;
+  lockById(id: string): Promise<PlatformUser | undefined>;
 }

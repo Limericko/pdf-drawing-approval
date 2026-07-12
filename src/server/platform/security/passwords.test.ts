@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   hashPassword,
+  passwordHashMatchesOptions,
   verifyPassword,
   type Argon2idOptions
 } from "./passwords.ts";
+
+const productionDummyHash = "$argon2id$v=19$m=19456,t=2,p=1$rUGf7HCiiHaKSmXoxVCJGA$y/CRugqFEn15nKRtAD1mCOQUYjNQriOuHh1kLhe+heA";
 
 const testOptions: Argon2idOptions = {
   memoryCost: 8 * 1024,
@@ -45,6 +48,17 @@ describe("password hashing", () => {
     const second = await hashPassword("same password", optionsWithFixedSalt);
 
     expect(first).not.toBe(second);
+  });
+
+  it("parses a fixed dummy hash and requires its complete cost profile to match production options", () => {
+    const production = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 };
+
+    expect(passwordHashMatchesOptions(productionDummyHash, production)).toBe(true);
+    expect(passwordHashMatchesOptions(productionDummyHash, { ...production, memoryCost: 19_455 })).toBe(false);
+    expect(passwordHashMatchesOptions(productionDummyHash, { ...production, timeCost: 3 })).toBe(false);
+    expect(passwordHashMatchesOptions(productionDummyHash, { ...production, parallelism: 2 })).toBe(false);
+    expect(passwordHashMatchesOptions(productionDummyHash, { ...production, outputLen: 31 })).toBe(false);
+    expect(passwordHashMatchesOptions("not-a-hash", production)).toBe(false);
   });
 
   it.each([

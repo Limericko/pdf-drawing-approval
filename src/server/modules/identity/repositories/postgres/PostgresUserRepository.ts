@@ -71,4 +71,20 @@ export class PostgresUserRepository implements UserRepository {
     );
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
+
+  async findById(id: string) {
+    const result = await this.executor.query<UserRow>(
+      `SELECT ${USER_COLUMNS} FROM platform.users WHERE id = $1`,
+      [id]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
+
+  async lockById(id: string) {
+    const result = await this.executor.query<UserRow>(
+      `SELECT ${USER_COLUMNS} FROM platform.users WHERE id = $1 FOR NO KEY UPDATE`,
+      [id]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
 }
