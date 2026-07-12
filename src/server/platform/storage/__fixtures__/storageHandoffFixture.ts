@@ -46,7 +46,9 @@ const repository: StorageObjectRepository = {
   async findById() { return undefined; },
   async markDeletePending() { throw new Error("UNEXPECTED_MARK_DELETE_PENDING"); },
   async listStaleStaging() { return []; },
-  async listDeletePending() { return []; }
+  async listDeletePending() { return []; },
+  async prepareCleanup() { throw new Error("UNEXPECTED_PREPARE_CLEANUP"); },
+  async completeCleanup() { throw new Error("UNEXPECTED_COMPLETE_CLEANUP"); }
 };
 
 const body = new Readable({ read() {} });

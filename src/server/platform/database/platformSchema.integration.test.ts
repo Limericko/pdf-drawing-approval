@@ -40,7 +40,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 3, verified: 0, total: 3 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 4, verified: 0, total: 4 });
     await run(database, migration);
   });
 }
@@ -125,14 +125,15 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 3, total: 3 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 4, total: 4 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
       expect(history.rows).toEqual([
         { version: 1, file_name: "0001_identity_projects.sql" },
         { version: 2, file_name: "0002_security_sessions_audit.sql" },
-        { version: 3, file_name: "0003_storage_outbox_jobs.sql" }
+        { version: 3, file_name: "0003_storage_outbox_jobs.sql" },
+        { version: 4, file_name: "0004_worker_outbox_publish.sql" }
       ]);
     });
   });
@@ -746,6 +747,10 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         rowCount: 1
       });
       await expectTransactionAllowed(worker, [
+        [
+          `INSERT INTO platform.outbox_events (id, event_type, payload_version, payload)
+           VALUES ('01890f1e-9b4a-7cc2-8f00-000000000013', 'worker.cleanup', 1, '{}'::jsonb)`
+        ],
         ["UPDATE platform.outbox_events SET dispatched_at = clock_timestamp() WHERE id = $1", [ids.outbox]],
         [
           `UPDATE platform.jobs SET status = 'running', worker_id = 'worker-test',
@@ -829,7 +834,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["worker", worker]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 3
+          rowCount: 4
         });
         await expectDenied(
           pool,

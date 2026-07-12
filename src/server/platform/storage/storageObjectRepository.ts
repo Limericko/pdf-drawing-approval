@@ -27,6 +27,18 @@ export type ReadyStorageObjectContent = {
   readonly readyAt: Date;
 };
 
+export type PrepareStorageCleanup = {
+  readonly id: string;
+  readonly expectedStatus: Extract<StorageObjectStatus, "staging" | "delete_pending">;
+  readonly driver: StorageDriver;
+  readonly objectKey: string;
+  readonly requestedAt: Date;
+};
+
+export type CompleteStorageCleanup = Pick<PrepareStorageCleanup, "id" | "driver" | "objectKey"> & {
+  readonly deletedAt: Date;
+};
+
 export interface StorageObjectRepository {
   createStaging(input: CreateStagingStorageObject): Promise<StorageObject>;
   findById(id: string): Promise<StorageObject | undefined>;
@@ -34,6 +46,8 @@ export interface StorageObjectRepository {
   markDeletePending(id: string, requestedAt: Date): Promise<StorageObject>;
   listStaleStaging(createdBefore: Date, limit: number): Promise<StorageObject[]>;
   listDeletePending(limit: number): Promise<StorageObject[]>;
+  prepareCleanup(input: PrepareStorageCleanup): Promise<StorageObject | undefined>;
+  completeCleanup(input: CompleteStorageCleanup): Promise<StorageObject | undefined>;
 }
 
 export type StorageObjectRepositoryErrorCode =

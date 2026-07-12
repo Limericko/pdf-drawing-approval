@@ -4,6 +4,8 @@ import type { StorageDriver } from "../storageAdapter.ts";
 import { assertStorageKey } from "../storageKey.ts";
 import {
   type CreateStagingStorageObject,
+  type CompleteStorageCleanup,
+  type PrepareStorageCleanup,
   type ReadyStorageObjectContent,
   type StorageObject,
   type StorageObjectRepository,
@@ -152,6 +154,56 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return result.rows.map(mapStorageObject);
   }
 
+  async prepareCleanup(input: PrepareStorageCleanup) {
+    const owned = ownCleanup(input);
+    const result = owned.expectedStatus === "staging"
+      ? await this.executor.query<StorageObjectRow>(
+        `UPDATE platform.storage_objects
+         SET status = 'delete_pending', delete_requested_at = $4, updated_at = $4
+         WHERE id = $1 AND status = 'staging' AND driver = $2 AND object_key = $3
+           AND created_at <= $4
+         RETURNING ${COLUMNS}`,
+        [owned.id, owned.driver, owned.objectKey, owned.requestedAt]
+      )
+      : await this.executor.query<StorageObjectRow>(
+        `SELECT ${COLUMNS} FROM platform.storage_objects
+         WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3`,
+        [owned.id, owned.driver, owned.objectKey]
+      );
+    return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
+  }
+
+  async completeCleanup(input: CompleteStorageCleanup) {
+    const owned = ownCompleteCleanup(input);
+    const result = await this.executor.query<StorageObjectRow>(
+      `UPDATE platform.storage_objects
+       SET status = 'deleted', deleted_at = $4, updated_at = $4
+       WHERE id = $1 AND status = 'delete_pending' AND driver = $2 AND object_key = $3
+         AND delete_requested_at <= $4
+       RETURNING ${COLUMNS}`,
+      [owned.id, owned.driver, owned.objectKey, owned.deletedAt]
+    );
+    return result.rows[0] ? mapStorageObject(result.rows[0]) : undefined;
+  }
+
+}
+
+function ownCleanup(input: PrepareStorageCleanup) {
+  if (!input || typeof input !== "object") throw invalidContent();
+  assertId(input.id);
+  assertDriver(input.driver);
+  const key = assertStorageKey(input.objectKey);
+  if (key.id !== input.id || (input.expectedStatus !== "staging" && input.expectedStatus !== "delete_pending")) throw invalidContent();
+  return { id: input.id, expectedStatus: input.expectedStatus, driver: input.driver, objectKey: input.objectKey, requestedAt: ownDate(input.requestedAt) };
+}
+
+function ownCompleteCleanup(input: CompleteStorageCleanup) {
+  if (!input || typeof input !== "object") throw invalidContent();
+  assertId(input.id);
+  assertDriver(input.driver);
+  const key = assertStorageKey(input.objectKey);
+  if (key.id !== input.id) throw invalidContent();
+  return { id: input.id, driver: input.driver, objectKey: input.objectKey, deletedAt: ownDate(input.deletedAt) };
 }
 
 function transitionResult(row: TransitionRow, expectedStatus: StorageObjectStatus): StorageObject {
