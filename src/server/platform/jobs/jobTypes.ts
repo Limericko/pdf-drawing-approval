@@ -72,7 +72,8 @@ export type OutboxRepositoryErrorCode =
   | "INVALID_OUTBOX_LIMIT"
   | "INVALID_OUTBOX_ROW"
   | "OUTBOX_EVENT_NOT_FOUND"
-  | "OUTBOX_EVENT_STATE_CONFLICT";
+  | "OUTBOX_EVENT_STATE_CONFLICT"
+  | "OUTBOX_IDEMPOTENCY_CONFLICT";
 
 export class OutboxRepositoryError extends Error {
   constructor(readonly code: OutboxRepositoryErrorCode, message: string) {

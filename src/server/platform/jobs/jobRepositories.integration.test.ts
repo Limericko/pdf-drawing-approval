@@ -164,6 +164,54 @@ describe("PostgreSQL outbox", () => {
       .rejects.toMatchObject({ code: "INVALID_OUTBOX_EVENT" });
   });
 
+  it("publishes one canonical event for the same idempotency key and rejects conflicting content", async () => {
+    const key = `cleanup:${uuidv7()}`;
+    const ids = [uuidv7(), uuidv7(), uuidv7(), uuidv7()];
+    const publisher = new PostgresOutboxPublisher({ createId: () => ids.shift()!, clock: () => new Date("2026-07-12T00:30:00.000Z") });
+    const first = await publisher.publishIdempotent(worker, { eventType: "cleanup", payloadVersion: 1, payload: { nested: { a: 1, b: 2 } } }, key);
+    const repeated = await publisher.publishIdempotent(worker, { eventType: "cleanup", payloadVersion: 1, payload: { nested: { b: 2, a: 1 } } }, key);
+    expect(repeated).toEqual(first);
+    await expect(publisher.publishIdempotent(worker, { eventType: "cleanup", payloadVersion: 1, payload: { nested: { a: 2, b: 1 } } }, key))
+      .rejects.toMatchObject({ code: "OUTBOX_IDEMPOTENCY_CONFLICT" });
+    const rows = await worker.query<{ idempotency_key: string | null }>("SELECT idempotency_key FROM platform.outbox_events WHERE idempotency_key = $1", [key]);
+    expect(rows.rows).toEqual([{ idempotency_key: key }]);
+    const ordinary = await publisher.publish(worker, { eventType: "ordinary", payloadVersion: 1, payload: {} });
+    await expect(worker.query<{ idempotency_key: string | null }>("SELECT idempotency_key FROM platform.outbox_events WHERE id = $1", [ordinary.id]))
+      .resolves.toMatchObject({ rows: [{ idempotency_key: null }] });
+  });
+
+  it("observes the committed idempotent outbox winner from a second statement on another connection", async () => {
+    const key = `concurrent-cleanup:${uuidv7()}`;
+    const winnerId = uuidv7();
+    const loserId = uuidv7();
+    const winner = await worker.connect();
+    const loser = await worker.connect();
+    let winnerOpen = false;
+    let loserOpen = false;
+    let loserPublish: ReturnType<PostgresOutboxPublisher["publishIdempotent"]> | undefined;
+    try {
+      await winner.query("BEGIN"); winnerOpen = true;
+      await loser.query("BEGIN"); loserOpen = true;
+      const loserPid = await loser.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      const event = { eventType: "cleanup", payloadVersion: 1, payload: { stable: true } } as const;
+      const created = await new PostgresOutboxPublisher({ createId: () => winnerId, clock: () => new Date() }).publishIdempotent(winner, event, key);
+      loserPublish = new PostgresOutboxPublisher({ createId: () => loserId, clock: () => new Date() }).publishIdempotent(loser, event, key);
+      await waitForTransactionIdLock(loserPid.rows[0]!.pid);
+      await winner.query("COMMIT"); winnerOpen = false;
+      const observed = await loserPublish;
+      await loser.query("COMMIT"); loserOpen = false;
+      expect(created.id).toBe(winnerId);
+      expect(observed.id).toBe(winnerId);
+      await expect(worker.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.outbox_events WHERE idempotency_key = $1", [key]))
+        .resolves.toMatchObject({ rows: [{ count: "1" }] });
+    } finally {
+      if (winnerOpen) await winner.query("ROLLBACK");
+      if (loserPublish) await Promise.allSettled([loserPublish]);
+      if (loserOpen) await loser.query("ROLLBACK");
+      winner.release(); loser.release();
+    }
+  });
+
   it("rejects malformed text at the outbox row-mapping boundary", async () => {
     await migration.query(
       `INSERT INTO platform.outbox_events (id, event_type, payload_version, payload)

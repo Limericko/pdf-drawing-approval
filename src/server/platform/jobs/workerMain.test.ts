@@ -5,14 +5,29 @@ describe("worker process resource lifecycle", () => {
   it("closes storage and pool once when the schema gate fails and never starts loops", async () => {
     const pool = { end: vi.fn(async () => undefined) };
     const storage = { destroy: vi.fn() };
+    const createStorage = vi.fn(() => storage);
     const run = vi.fn();
     await expect(runWorkerResourceLifecycle({
       createPool: () => pool,
-      createStorage: () => storage,
+      createStorage,
       assertReady: async () => { throw new Error("SCHEMA_GATE_FAILED"); },
       run
     })).rejects.toThrow("SCHEMA_GATE_FAILED");
     expect(run).not.toHaveBeenCalled();
+    expect(createStorage).not.toHaveBeenCalled();
+    expect(storage.destroy).not.toHaveBeenCalled();
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroys storage and closes the pool once when a started run fails", async () => {
+    const pool = { end: vi.fn(async () => undefined) };
+    const storage = { destroy: vi.fn() };
+    await expect(runWorkerResourceLifecycle({
+      createPool: () => pool,
+      createStorage: () => storage,
+      assertReady: async () => undefined,
+      run: async () => { throw new Error("RUN_FAILED"); }
+    })).rejects.toThrow("RUN_FAILED");
     expect(storage.destroy).toHaveBeenCalledTimes(1);
     expect(pool.end).toHaveBeenCalledTimes(1);
   });

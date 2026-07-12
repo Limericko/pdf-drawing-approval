@@ -123,8 +123,8 @@ export async function runWorkerResourceLifecycle<TPool extends ClosablePool, TSt
   let storage: TStorage | undefined;
   let primaryError: unknown;
   try {
-    storage = options.createStorage();
     await options.assertReady(pool);
+    storage = options.createStorage();
     await options.run(pool, storage);
   } catch (error) {
     primaryError = error;

@@ -171,7 +171,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
                ('sessions', 'token_hash'), ('storage_objects', 'sha256'),
                ('invitations', 'token_key_version'), ('totp_credentials', 'key_version'),
                ('recovery_codes', 'key_version'), ('mfa_enrollments', 'key_version'),
-               ('outbox_events', 'payload'), ('jobs', 'payload'),
+               ('outbox_events', 'payload'), ('outbox_events', 'idempotency_key'), ('jobs', 'payload'),
                ('users', 'created_at'), ('jobs', 'lease_expires_at')
              ))`
       );
@@ -194,6 +194,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         expect(byColumn.get(key)?.data_type, `${key} type`).toBe("bytea");
       }
       expect(byColumn.get("outbox_events.payload")?.data_type).toBe("jsonb");
+      expect(byColumn.get("outbox_events.idempotency_key")?.data_type).toBe("text");
       expect(byColumn.get("jobs.payload")?.data_type).toBe("jsonb");
       expect(byColumn.get("users.created_at")?.data_type).toBe("timestamp with time zone");
       expect(byColumn.get("jobs.lease_expires_at")?.data_type).toBe("timestamp with time zone");
@@ -323,6 +324,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
       expect(predicates.get("mfa_enrollments_active_invitation_uidx")).toContain("completed_at IS NULL");
       expect(predicates.get("sessions_active_idx")).toContain("revoked_at IS NULL");
       expect(predicates.get("outbox_events_undispatched_idx")).toContain("dispatched_at IS NULL");
+      expect(predicates.get("outbox_events_idempotency_key_uidx")).toContain("idempotency_key IS NOT NULL");
       expect(predicates.get("jobs_pending_idx")).toBe("(status = 'pending'::text)");
       expect(predicates.get("jobs_running_lease_idx")).toBe("(status = 'running'::text)");
       expect(predicates.get("jobs_dead_idx")).toBe("(status = 'dead'::text)");
@@ -784,6 +786,10 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         await expectDenied(worker, statement);
       }
       await expectDenied(worker, "DELETE FROM platform.audit_events");
+      await expectDenied(worker, `INSERT INTO platform.outbox_events
+        (id, event_type, payload_version, payload, created_at, dispatched_at)
+        VALUES ('01890f1e-9b4a-7cc2-8f00-000000000015', 'forbidden', 1, '{}'::jsonb,
+          clock_timestamp(), clock_timestamp())`);
       await expectDenied(worker, "UPDATE platform.outbox_events SET payload = '{\"tampered\":true}'::jsonb");
       await expectDenied(worker, "UPDATE platform.jobs SET payload = '{\"tampered\":true}'::jsonb");
       await expectDenied(worker, "UPDATE platform.storage_objects SET object_key = 'tampered/object.pdf'");

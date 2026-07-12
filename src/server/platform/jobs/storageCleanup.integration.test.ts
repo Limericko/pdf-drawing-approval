@@ -4,6 +4,7 @@ import { runMigrations } from "../database/migrationRunner.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { withTransaction } from "../database/transaction.ts";
 import type { StorageAdapter } from "../storage/storageAdapter.ts";
+import { StorageError } from "../storage/storageErrors.ts";
 import { PostgresStorageObjectRepository } from "../storage/postgres/PostgresStorageObjectRepository.ts";
 import { createStorageKey } from "../storage/storageKey.ts";
 import { createPlatformTestDatabase, type PlatformTestDatabase } from "../testing/postgresHarness.ts";
@@ -57,6 +58,50 @@ describe("storage cleanup handler", () => {
     await handler({ payload: { idempotencyKey: `storage-object-cleanup:${id}:staging`, storageObjectId: id, expectedStatus: "staging", driver: "filesystem", objectKey: key } } as never);
     expect(adapter.delete).not.toHaveBeenCalled();
     await expect(repository.findById(id)).resolves.toMatchObject({ status: "ready" });
+  });
+
+  it("treats an object missing on the first delete as success and completes metadata", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("original", id);
+    const createdAt = new Date("2026-07-12T09:15:00.000Z");
+    await new PostgresStorageObjectRepository(migration).createStaging({ id, driver: "filesystem", objectKey: key, createdAt });
+    const adapter = fakeAdapter("filesystem");
+    adapter.delete = vi.fn(async () => { throw new StorageError("OBJECT_NOT_FOUND", "Object does not exist"); });
+    const handler = createDeleteStorageObjectHandler({ transactionRunner: (callback) => withTransaction(worker, callback), createRepository: (executor) => new PostgresStorageObjectRepository(executor), adapter, clock: () => new Date(createdAt.getTime() + 1) });
+    await handler({ payload: { idempotencyKey: `storage-object-cleanup:${id}:staging`, storageObjectId: id, expectedStatus: "staging", driver: "filesystem", objectKey: key } } as never);
+    expect(adapter.delete).toHaveBeenCalledTimes(1);
+    await expect(new PostgresStorageObjectRepository(worker).findById(id)).resolves.toMatchObject({ status: "deleted" });
+  });
+
+  it("leaves delete_pending after final DB failure and completes on a missing-object retry", async () => {
+    const id = uuidv7();
+    const key = createStorageKey("original", id);
+    const createdAt = new Date("2026-07-12T09:17:00.000Z");
+    await new PostgresStorageObjectRepository(migration).createStaging({ id, driver: "filesystem", objectKey: key, createdAt });
+    const adapter = fakeAdapter("filesystem");
+    let failComplete = true;
+    const handler = createDeleteStorageObjectHandler({
+      transactionRunner: (callback) => withTransaction(worker, callback),
+      createRepository: (executor) => {
+        const repository = new PostgresStorageObjectRepository(executor);
+        return new Proxy(repository, {
+          get(target, property, receiver) {
+            if (property === "completeCleanup" && failComplete) return async () => { throw new Error("FINAL_DB_FAILED"); };
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          }
+        });
+      },
+      adapter,
+      clock: () => new Date(createdAt.getTime() + 1)
+    });
+    const payload = { idempotencyKey: `storage-object-cleanup:${id}:staging`, storageObjectId: id, expectedStatus: "staging", driver: "filesystem", objectKey: key } as const;
+    await expect(handler({ payload } as never)).rejects.toThrow("FINAL_DB_FAILED");
+    await expect(new PostgresStorageObjectRepository(worker).findById(id)).resolves.toMatchObject({ status: "delete_pending" });
+    failComplete = false;
+    adapter.delete = vi.fn(async () => { throw new StorageError("OBJECT_NOT_FOUND", "Object does not exist"); });
+    await handler({ payload: { ...payload, idempotencyKey: `storage-object-cleanup:${id}:delete_pending`, expectedStatus: "delete_pending" } } as never);
+    await expect(new PostgresStorageObjectRepository(worker).findById(id)).resolves.toMatchObject({ status: "deleted" });
   });
 
   it("rejects driver or key mismatch without touching storage", async () => {

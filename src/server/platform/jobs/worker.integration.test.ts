@@ -183,6 +183,21 @@ describe("leased worker", () => {
     await expect(worker.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.outbox_events WHERE dispatched_at IS NULL")).resolves.toMatchObject({ rows: [{ count: "0" }] });
   });
 
+  it("deduplicates concurrent reconcilers to one cleanup outbox event and one job", async () => {
+    const now = new Date("2026-07-12T08:55:00.000Z");
+    const staleId = uuidv7();
+    await new PostgresStorageObjectRepository(migration).createStaging({ id: staleId, driver: "filesystem", objectKey: createStorageKey("original", staleId), createdAt: new Date(now.getTime() - 10_000) });
+    const transactionRunner = <T>(callback: (executor: QueryExecutor) => Promise<T>) => withTransaction(worker, callback);
+    const publisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock: () => now }));
+    const createReconciler = () => new StorageReconciler({ transactionRunner, createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher, clock: () => now, stagingMaxAgeMs: 1_000, batchSize: 10 });
+    await Promise.all([createReconciler().runOnce(), createReconciler().runOnce()]);
+    await expect(worker.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.outbox_events")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+    const registry = new JobRegistry([storageCleanupEventRegistration(3)], []);
+    const dispatcher = new OutboxDispatcher({ transactionRunner, createOutboxRepository: (executor) => new PostgresOutboxRepository(executor), createJobRepository: (executor) => new PostgresJobRepository(executor), mapEvent: registry.mapEvent, createId: uuidv7, clock: () => now });
+    await expect(dispatcher.dispatchBatch(10)).resolves.toBe(1);
+    await expect(worker.query<{ count: string }>("SELECT count(*)::text AS count FROM platform.jobs")).resolves.toMatchObject({ rows: [{ count: "1" }] });
+  });
+
   it("keeps heartbeat start stable and diagnostics retry one dead job once with an audit", async () => {
     const startedAt = new Date("2026-07-12T09:00:00.000Z");
     const heartbeats = new WorkerHeartbeatRepository(worker);
