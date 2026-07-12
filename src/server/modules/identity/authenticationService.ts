@@ -62,12 +62,13 @@ type Options = {
   readonly verifyTotp?: typeof verifyTotp;
   readonly decryptSecret?: typeof decryptSecret;
   readonly generateOpaqueToken?: () => string;
-  readonly logger?: SecurityLogger;
+  readonly logger: SecurityLogger;
 };
 
 export function createAuthenticationService(options: Options) {
   const dummyPasswordHash = options?.dummyPasswordHash ?? AUTHENTICATION_DUMMY_PASSWORD_HASH;
   if (!options?.pool || !options.keyrings || !options.passwordHashOptions ||
+      !options.logger || typeof options.logger !== "object" || typeof options.logger.error !== "function" ||
       !passwordHashMatchesOptions(dummyPasswordHash, options.passwordHashOptions)) {
     throw new AuthenticationServiceError("AUTHENTICATION_INPUT_INVALID");
   }
@@ -75,7 +76,7 @@ export function createAuthenticationService(options: Options) {
   const totpVerifier = options.verifyTotp ?? verifyTotp;
   const decryptTotpSecret = options.decryptSecret ?? decryptSecret;
   const makeToken = options.generateOpaqueToken ?? generateOpaqueToken;
-  const logger = options.logger ?? { error() {} };
+  const logger = options.logger;
   const rateLimits = createRateLimitService({ pool: options.pool });
   const sessions = createSessionService({ pool: options.pool, passwordHashOptions: options.passwordHashOptions });
 

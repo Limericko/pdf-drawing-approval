@@ -93,6 +93,36 @@ export function identityRepositoryContract(options: ContractOptions) {
         .resolves.toBeUndefined();
     });
 
+    it("owns, deduplicates and sorts user ids while holding every selected row lock", async () => {
+      const first = await createUser();
+      const second = await createUser({ email: uniqueEmail("lock-second") });
+      const input = [second.id, first.id, second.id];
+      const expectedInput = [...input];
+      const expectedIds = [first.id, second.id].sort();
+
+      const lockedUsers = await repositories().users.lockByIds(input);
+      expect(lockedUsers.map(({ id }) => id)).toEqual(expectedIds);
+      expect(input).toEqual(expectedInput);
+
+      type ContractClient = QueryExecutor & { release(): void };
+      type ContractPool = QueryExecutor & { connect(): Promise<ContractClient> };
+      const context = options.getContext();
+      const holder = await (context.concurrentA as ContractPool).connect();
+      const contender = await (context.concurrentB as ContractPool).connect();
+      try {
+        await holder.query("BEGIN");
+        await options.createRepositories(holder).users.lockByIds(input);
+        await contender.query("BEGIN");
+        await contender.query("SELECT set_config('lock_timeout','100ms',true)");
+        await expect(options.createRepositories(contender).users.updatePasswordHash(first.id, "$argon2id$blocked"))
+          .rejects.toMatchObject({ code: "55P03" });
+      } finally {
+        await Promise.allSettled([holder.query("ROLLBACK"), contender.query("ROLLBACK")]);
+        holder.release();
+        contender.release();
+      }
+    });
+
     it("updates passwords and disables only active users with database-owned timestamps", async () => {
       const passwordUser = await createUser();
       const disabledUser = await createUser({ email: "disabled-update@example.test" });

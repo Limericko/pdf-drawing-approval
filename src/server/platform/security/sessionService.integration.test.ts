@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { Pool } from "pg";
 import { runMigrations } from "../database/migrationRunner.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { hashOpaqueToken } from "./tokenHash.ts";
@@ -10,15 +11,22 @@ import { createSessionService } from "./sessionService.ts";
 const passwordHashOptions = { memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 } as const;
 const validNewPasswordHash =
   "$argon2id$v=19$m=19456,t=2,p=1$rUGf7HCiiHaKSmXoxVCJGA$y/CRugqFEn15nKRtAD1mCOQUYjNQriOuHh1kLhe+heA";
+const actorMutations = [
+  { label: "role", sql: "UPDATE platform.users SET platform_role='member' WHERE id=$1" },
+  { label: "status", sql: `UPDATE platform.users SET status='disabled',
+    updated_at=GREATEST(updated_at,clock_timestamp()) WHERE id=$1` }
+] as const;
 
 let database: PlatformTestDatabase;
 let migration: ReturnType<PlatformTestDatabase["createPool"]>;
 let web: PlatformPool;
 let concurrentA: PlatformPool;
 let concurrentB: PlatformPool;
+let admin: Pool;
 
 beforeAll(async () => {
   database = await createPlatformTestDatabase();
+  admin = new Pool({ connectionString: database.urls.admin, max: 1 });
   migration = database.createPool("migration");
   await runMigrations(migration);
   const config = { connectionString: database.urls.web, poolMax: 4, connectTimeoutMs: 2_000,
@@ -29,6 +37,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await admin?.end();
   await concurrentB?.end();
   await concurrentA?.end();
   await web?.end();
@@ -162,7 +171,7 @@ describe("SessionService", () => {
   });
 
   it("disables the target user, revokes sessions and audits the supplied actor", async () => {
-    const actor = await createUser("disable-actor@example.test");
+    const actor = await createUser("disable-actor@example.test", "active", "admin");
     const target = await createUser("disable-target@example.test");
     await createSession(target.id, "disable-target-token");
 
@@ -174,7 +183,7 @@ describe("SessionService", () => {
   });
 
   it("rolls back user disabling and session revocations when the audit fails", async () => {
-    const actor = await createUser("disable-rollback-actor@example.test");
+    const actor = await createUser("disable-rollback-actor@example.test", "active", "admin");
     const target = await createUser("disable-rollback-target@example.test");
     const session = await createSession(target.id, "disable-rollback-token");
     await installAuditFailure("session.revoke_all");
@@ -202,7 +211,7 @@ describe("SessionService", () => {
   });
 
   it("serializes concurrent disable operations so only one state change and audit succeeds", async () => {
-    const actor = await createUser("disable-concurrent-actor@example.test");
+    const actor = await createUser("disable-concurrent-actor@example.test", "active", "admin");
     const target = await createUser("disable-concurrent-target@example.test");
     await createSession(target.id, "disable-concurrent-token");
     const input = { targetUserId: target.id, actorUserId: actor.id, requestId: "disable-concurrent" };
@@ -221,6 +230,98 @@ describe("SessionService", () => {
     });
   });
 
+  it("rejects member, disabled, missing and ordinary self actors without changing target security state", async () => {
+    const member = await createUser("disable-member-actor@example.test");
+    const disabledAdmin = await createUser("disable-disabled-actor@example.test", "disabled", "admin");
+    const cases = [
+      { label: "member", actorUserId: member.id },
+      { label: "disabled-admin", actorUserId: disabledAdmin.id },
+      { label: "missing", actorUserId: "01890f1e-9b4a-7cc2-8f00-ffffffffffff" }
+    ];
+    for (const item of cases) {
+      const target = await createUser(`disable-${item.label}-target@example.test`);
+      const token = `disable-${item.label}-token`;
+      await createSession(target.id, token);
+      await expect(sessionService().disableUserAndRevokeAll({ targetUserId: target.id,
+        actorUserId: item.actorUserId, requestId: `disable-${item.label}` }))
+        .rejects.toMatchObject({ code: "SESSION_INVALID" });
+      await expect(unchangedSecurityState(target.id, token)).resolves.toEqual({
+        status: "active", activeSession: 1, audits: 0
+      });
+    }
+
+    const ordinarySelf = await createUser("disable-member-self@example.test");
+    await createSession(ordinarySelf.id, "disable-member-self-token");
+    await expect(sessionService().disableUserAndRevokeAll({ targetUserId: ordinarySelf.id,
+      actorUserId: ordinarySelf.id, requestId: "disable-member-self" }))
+      .rejects.toMatchObject({ code: "SESSION_INVALID" });
+    await expect(unchangedSecurityState(ordinarySelf.id, "disable-member-self-token")).resolves.toEqual({
+      status: "active", activeSession: 1, audits: 0
+    });
+  });
+
+  it("allows one active admin to disable itself with an internally consistent audit", async () => {
+    const admin = await createUser("disable-admin-self@example.test", "active", "admin");
+    await createSession(admin.id, "disable-admin-self-token");
+
+    await expect(sessionService().disableUserAndRevokeAll({ targetUserId: admin.id,
+      actorUserId: admin.id, requestId: "disable-admin-self" })).resolves.toEqual({ revokedCount: 1 });
+    await expect(securityChangeState(admin.id)).resolves.toMatchObject({ status: "disabled",
+      activeSessions: 0, audits: 1, actorUserId: admin.id, targetUserId: admin.id });
+  });
+
+  it.each(actorMutations)("waits for an actor $label mutation and rejects using the locked committed row", async (mutation) => {
+    const actor = await createUser(`disable-mutating-${mutation.label}-actor@example.test`, "active", "admin");
+    const target = await createUser(`disable-mutating-${mutation.label}-target@example.test`);
+    const token = `disable-mutating-${mutation.label}-token`;
+    await createSession(target.id, token);
+    const backend = await concurrentA.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+    const backendPid = backend.rows[0]!.pid;
+    const blocker = await migration.connect();
+    let blockerReleased = false;
+    let disabling: ReturnType<ReturnType<typeof sessionService>["disableUserAndRevokeAll"]> | undefined;
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query(mutation.sql, [actor.id]);
+      disabling = sessionService(concurrentA).disableUserAndRevokeAll({ targetUserId: target.id,
+        actorUserId: actor.id, requestId: `disable-mutating-${mutation.label}-actor` });
+      await waitForBackendLock(backendPid);
+      await blocker.query("COMMIT");
+      blockerReleased = true;
+
+      await expect(disabling).rejects.toMatchObject({ code: "SESSION_INVALID" });
+      await expect(unchangedSecurityState(target.id, token)).resolves.toEqual({
+        status: "active", activeSession: 1, audits: 0
+      });
+    } finally {
+      if (!blockerReleased) await blocker.query("ROLLBACK");
+      blocker.release();
+      if (disabling) await Promise.allSettled([disabling]);
+    }
+  });
+
+  it("locks two active admins in deterministic order so mutual disables have one valid winner", async () => {
+    const first = await createUser("disable-mutual-first@example.test", "active", "admin");
+    const second = await createUser("disable-mutual-second@example.test", "active", "admin");
+    await createSession(first.id, "disable-mutual-first-token");
+    await createSession(second.id, "disable-mutual-second-token");
+
+    const outcomes = await Promise.allSettled([
+      sessionService(concurrentA).disableUserAndRevokeAll({ targetUserId: second.id,
+        actorUserId: first.id, requestId: "disable-mutual-first" }),
+      sessionService(concurrentB).disableUserAndRevokeAll({ targetUserId: first.id,
+        actorUserId: second.id, requestId: "disable-mutual-second" })
+    ]);
+    expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    expect(outcomes.find(({ status }) => status === "rejected"))
+      .toMatchObject({ reason: { code: "SESSION_INVALID" } });
+    await expect(mutualDisableState(first.id, second.id)).resolves.toEqual({
+      activeUsers: 1, disabledUsers: 1, activeSessions: 1, audits: 1,
+      auditActorActive: true, auditTargetDisabled: true
+    });
+  });
+
   it("sanitizes session lookup dependency failures", async () => {
     const service = sessionService(failingPool("session database secret must not leak"));
 
@@ -233,9 +334,10 @@ describe("SessionService", () => {
   });
 });
 
-function createUser(email: string, status: "active" | "disabled" = "active") {
+function createUser(email: string, status: "active" | "disabled" = "active",
+  platformRole: "admin" | "member" = "member") {
   return new PostgresUserRepository(migration).create({ email, displayName: email.split("@")[0]!,
-    passwordHash: "$argon2id$seed", platformRole: "member", status, mfaEnabledAt: new Date() });
+    passwordHash: "$argon2id$seed", platformRole, status, mfaEnabledAt: new Date() });
 }
 
 function createSession(userId: string, rawToken: string) {
@@ -271,6 +373,49 @@ async function auditCount() {
   const result = await migration.query<{ count: number }>(
     "SELECT count(*)::int AS count FROM platform.audit_events WHERE action='session.revoke_all'");
   return result.rows[0]!.count;
+}
+
+async function unchangedSecurityState(userId: string, rawToken: string) {
+  const result = await migration.query<{ status: "active" | "disabled"; active_session: number; audits: number }>(`SELECT
+    u.status,
+    (SELECT count(*) FROM platform.sessions WHERE token_hash=$2 AND revoked_at IS NULL)::int AS active_session,
+    (SELECT count(*) FROM platform.audit_events WHERE action='session.revoke_all' AND target_id=u.id)::int AS audits
+    FROM platform.users u WHERE u.id=$1`, [userId, hashOpaqueToken(rawToken)]);
+  const row = result.rows[0]!;
+  return { status: row.status, activeSession: row.active_session, audits: row.audits };
+}
+
+async function mutualDisableState(firstId: string, secondId: string) {
+  const result = await migration.query<{ active_users: number; disabled_users: number; active_sessions: number;
+    audits: number; audit_actor_active: boolean; audit_target_disabled: boolean }>(`SELECT
+    (SELECT count(*) FROM platform.users WHERE id=ANY($1::uuid[]) AND status='active')::int AS active_users,
+    (SELECT count(*) FROM platform.users WHERE id=ANY($1::uuid[]) AND status='disabled')::int AS disabled_users,
+    (SELECT count(*) FROM platform.sessions WHERE user_id=ANY($1::uuid[]) AND revoked_at IS NULL)::int AS active_sessions,
+    (SELECT count(*) FROM platform.audit_events WHERE action='session.revoke_all'
+      AND target_id=ANY($1::uuid[]))::int AS audits,
+    EXISTS(SELECT 1 FROM platform.audit_events a JOIN platform.users u ON u.id=a.actor_user_id
+      WHERE a.action='session.revoke_all' AND a.target_id=ANY($1::uuid[]) AND u.status='active') AS audit_actor_active,
+    EXISTS(SELECT 1 FROM platform.audit_events a JOIN platform.users u ON u.id=a.target_id
+      WHERE a.action='session.revoke_all' AND a.target_id=ANY($1::uuid[]) AND u.status='disabled') AS audit_target_disabled`,
+  [[firstId, secondId]]);
+  const row = result.rows[0]!;
+  return { activeUsers: row.active_users, disabledUsers: row.disabled_users,
+    activeSessions: row.active_sessions, audits: row.audits, auditActorActive: row.audit_actor_active,
+    auditTargetDisabled: row.audit_target_disabled };
+}
+
+async function waitForBackendLock(pid: number) {
+  const observed = new Set<string>();
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const activity = await admin.query<{ state: string; wait_event_type: string | null;
+      wait_event: string | null; application_name: string }>(`SELECT state,wait_event_type,wait_event,application_name
+      FROM pg_stat_activity WHERE pid=$1`, [pid]);
+    const row = activity.rows[0];
+    observed.add(`${row?.application_name ?? "missing"}:${row?.state ?? "missing"}:${row?.wait_event_type ?? "none"}:${row?.wait_event ?? "none"}`);
+    if (row?.state === "active" && row.wait_event_type === "Lock") return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`BACKEND_DID_NOT_WAIT_FOR_LOCK:${pid}:${[...observed].join(",")}`);
 }
 
 async function sessionTimes(id: string) {

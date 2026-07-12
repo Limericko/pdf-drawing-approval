@@ -88,6 +88,17 @@ export class PostgresUserRepository implements UserRepository {
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
 
+  async lockByIds(ids: readonly string[]) {
+    const ownedIds = [...new Set(ids)].sort();
+    if (ownedIds.length === 0) return [];
+    const result = await this.executor.query<UserRow>(
+      `SELECT ${USER_COLUMNS} FROM platform.users
+       WHERE id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`,
+      [ownedIds]
+    );
+    return result.rows.map(mapUser);
+  }
+
   async updatePasswordHash(id: string, passwordHash: string) {
     const result = await this.executor.query<UserRow>(
       `UPDATE platform.users SET password_hash = $2, updated_at = GREATEST(updated_at, clock_timestamp())

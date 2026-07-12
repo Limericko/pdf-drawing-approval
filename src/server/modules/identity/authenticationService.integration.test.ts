@@ -58,6 +58,13 @@ beforeEach(async () => {
 });
 
 describe("AuthenticationService password login", () => {
+  it("requires a structured security logger at construction", () => {
+    for (const logger of [undefined, null, {}, { error: "not-a-function" }]) {
+      expect(() => createAuthenticationService({ ...authenticationOptions(), logger } as never))
+        .toThrow(expect.objectContaining({ code: "AUTHENTICATION_INPUT_INVALID" }));
+    }
+  });
+
   it("verifies known-wrong and unknown users exactly once with indistinguishable external failures", async () => {
     const user = await createUser("known@example.test");
     const verifier = vi.fn(async (_encoded: string, _password: string) => false);
@@ -118,6 +125,7 @@ describe("AuthenticationService password login", () => {
         .rejects.toMatchObject({ code: "AUTHENTICATION_SECURITY_DEPENDENCY_UNAVAILABLE" });
       expect(logger.error).toHaveBeenCalledWith({ requestId: "login-audit-failure",
         code: "AUTHENTICATION_FAILURE_AUDIT_UNAVAILABLE" });
+      expect(logger.error).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(logger.error.mock.calls)).not.toContain("unknown@example.test");
       expect(JSON.stringify(logger.error.mock.calls)).not.toContain("wrong password");
     } finally {
@@ -127,11 +135,15 @@ describe("AuthenticationService password login", () => {
 
   it("rolls back a successful password challenge when its success audit fails", async () => {
     await createUser("password-audit@example.test");
+    const logger = { error: vi.fn() };
     await installAuditFailure("authentication.password", "success");
     try {
-      await expect(makeService({ verifyPassword: async () => true }).login(
+      await expect(makeService({ verifyPassword: async () => true, logger }).login(
         loginInput("password-audit@example.test", correctPassword, "password-success-audit")))
         .rejects.toMatchObject({ code: "AUTHENTICATION_SECURITY_DEPENDENCY_UNAVAILABLE" });
+      expect(logger.error).toHaveBeenCalledTimes(1);
+      expect(logger.error).toHaveBeenCalledWith({ requestId: "password-success-audit",
+        userId: expect.any(String), code: "AUTHENTICATION_LOGIN_TRANSACTION_UNAVAILABLE" });
       await expect(migration.query("SELECT count(*)::int AS count FROM platform.mfa_challenges"))
         .resolves.toMatchObject({ rows: [{ count: 0 }] });
     } finally {
@@ -149,9 +161,26 @@ describe("AuthenticationService password login", () => {
     expect(error).toMatchObject({ code: "AUTHENTICATION_SECURITY_DEPENDENCY_UNAVAILABLE" });
     expect(logger.error).toHaveBeenCalledWith({ requestId: "login-dependency",
       code: "AUTHENTICATION_RATE_LIMIT_UNAVAILABLE" });
+    expect(logger.error).toHaveBeenCalledTimes(1);
     expect(JSON.stringify([error, logger.error.mock.calls])).not.toContain("database credential");
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain("dependency@example.test");
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain("secret password");
+  });
+
+  it("keeps dependency and logger failures internal when the required logger throws", async () => {
+    const logger = { error: vi.fn(() => { throw new Error("logger credential must not leak"); }) };
+    const service = makeService({ pool: failingPool("database credential must not leak"), logger });
+
+    const error = await service.login(loginInput("logger-throw@example.test", "secret password", "logger-throw"))
+      .then(() => undefined, (failure: unknown) => failure) as Error & { code: string; cause?: unknown };
+
+    expect(error).toMatchObject({ code: "AUTHENTICATION_SECURITY_DEPENDENCY_UNAVAILABLE",
+      message: "AUTHENTICATION_SECURITY_DEPENDENCY_UNAVAILABLE" });
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    expect(Object.keys(error)).not.toContain("cause");
+    expect(JSON.stringify(error)).not.toContain("database credential");
+    expect(JSON.stringify(error)).not.toContain("logger credential");
   });
 });
 
@@ -300,9 +329,13 @@ describe("AuthenticationService MFA completion", () => {
   });
 });
 
+function authenticationOptions(overrides: Record<string, unknown> = {}) {
+  return { pool: web, keyrings, passwordHashOptions: passwordOptions,
+    dummyPasswordHash: AUTHENTICATION_DUMMY_PASSWORD_HASH, logger: { error: vi.fn() }, ...overrides };
+}
+
 function makeService(overrides: Record<string, unknown> = {}) {
-  return createAuthenticationService({ pool: web, keyrings, passwordHashOptions: passwordOptions,
-    dummyPasswordHash: AUTHENTICATION_DUMMY_PASSWORD_HASH, ...overrides });
+  return createAuthenticationService(authenticationOptions(overrides));
 }
 
 async function createUser(email: string, options: { status?: "active" | "disabled"; mfaEnabled?: boolean } = {}) {

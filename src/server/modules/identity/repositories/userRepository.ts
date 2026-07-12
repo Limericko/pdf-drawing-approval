@@ -14,6 +14,7 @@ export interface UserRepository {
   findByEmail(email: string): Promise<PlatformUser | undefined>;
   findById(id: string): Promise<PlatformUser | undefined>;
   lockById(id: string): Promise<PlatformUser | undefined>;
+  lockByIds(ids: readonly string[]): Promise<readonly PlatformUser[]>;
   updatePasswordHash(id: string, passwordHash: string): Promise<PlatformUser | undefined>;
   disable(id: string): Promise<PlatformUser | undefined>;
 }

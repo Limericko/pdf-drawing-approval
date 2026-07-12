@@ -152,8 +152,11 @@ export function createSessionService(options: {
       try {
         return await withTransaction(options.pool, async (transaction) => {
           const users = new PostgresUserRepository(transaction);
-          const target = await users.lockById(targetUserId);
-          if (!target || target.status !== "active") throw invalid();
+          const lockedUsers = await users.lockByIds([actorUserId, targetUserId]);
+          const actor = lockedUsers.find(({ id }) => id === actorUserId);
+          const target = lockedUsers.find(({ id }) => id === targetUserId);
+          if (!actor || actor.status !== "active" || actor.platformRole !== "admin" ||
+              !target || target.status !== "active") throw invalid();
           if (!await users.disable(targetUserId)) throw invalid();
           const revokedCount = await new PostgresSessionRepository(transaction).revokeAllForUser(targetUserId);
           await new PostgresAuditRepository(transaction).append({
