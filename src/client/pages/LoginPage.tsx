@@ -3,6 +3,9 @@ import { apiCompatVersion } from "../../shared/appVersion.ts";
 import { clearToken, checkServerHealth, confirmPasswordReset, login, registerDesigner, requestPasswordReset, type PublicServerHealth, type User } from "../api.ts";
 import { getServerBaseUrl, isDesktopClient, persistServerBaseUrl } from "../clientConfig.ts";
 import { analyzeServerAddress, isApiCompatible, type AddressAdvice } from "../connectionCheck.ts";
+import { Button, ButtonGroup } from "../ui/actions/index.tsx";
+import { PasswordInput, TextInput } from "../ui/forms/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
 
 export const quickLoginPresets = [
   { label: "管理员", username: "admin" },
@@ -288,185 +291,101 @@ export function LoginPage({ onLogin, resetToken }: { onLogin: (user: User) => vo
           <p>登录后处理提交、审核、签名和归档。</p>
         </div>
         <form className="login-panel" onSubmit={onSubmit}>
-          <div className="login-mode-switch" role="group" aria-label="登录方式">
-            <button type="button" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>
+          <ButtonGroup className="login-mode-switch" aria-label="登录方式">
+            <Button variant="ghost" size="sm" className={mode === "login" ? "active" : ""} onClick={() => switchMode("login")}>
               登录
-            </button>
-            <button type="button" className={mode === "register" ? "active" : ""} onClick={() => switchMode("register")}>
+            </Button>
+            <Button variant="ghost" size="sm" className={mode === "register" ? "active" : ""} onClick={() => switchMode("register")}>
               设计师注册
-            </button>
-          </div>
+            </Button>
+          </ButtonGroup>
           <h2>{panelTitle()}</h2>
           {mode === "login" ? (
             <>
-              <label>
-                账号
-                <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
-              </label>
-              <label>
-                密码
-                <input
-                  ref={passwordInputRef}
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </label>
+              <TextInput id="login-username" label="账号" autoComplete="username" value={username}
+                onChange={(event) => setUsername(event.target.value)} />
+              <PasswordInput id="login-password" label="密码" inputRef={passwordInputRef}
+                autoComplete="current-password" value={password}
+                onChange={(event) => setPassword(event.target.value)} />
             </>
           ) : mode === "forgot" ? (
             <>
               <p className="hint login-register-hint">输入账号和已登记邮箱，系统会发送一次性密码重置链接。</p>
-              <label>
-                账号
-                <input
-                  autoComplete="username"
-                  value={resetForm.username}
-                  onChange={(event) => updateResetForm("username", event.target.value)}
-                  placeholder="designer01"
-                />
-              </label>
-              <label>
-                邮箱
-                <input
-                  autoComplete="email"
-                  value={resetForm.email}
-                  onChange={(event) => updateResetForm("email", event.target.value)}
-                  placeholder="designer@example.com"
-                />
-              </label>
+              <TextInput id="reset-username" label="账号" autoComplete="username" value={resetForm.username}
+                onChange={(event) => updateResetForm("username", event.target.value)} placeholder="designer01" />
+              <TextInput id="reset-email" label="邮箱" autoComplete="email" value={resetForm.email}
+                onChange={(event) => updateResetForm("email", event.target.value)} placeholder="designer@example.com" />
             </>
           ) : mode === "reset" ? (
             <>
               <p className="hint login-register-hint">请设置新密码。重置链接 30 分钟内有效，使用后自动失效。</p>
-              <input type="hidden" value={resetForm.token} readOnly aria-label="resetToken" />
-              <label>
-                新密码
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={resetForm.password}
-                  onChange={(event) => updateResetForm("password", event.target.value)}
-                />
-              </label>
-              <label>
-                确认新密码
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={resetForm.confirmPassword}
-                  onChange={(event) => updateResetForm("confirmPassword", event.target.value)}
-                />
-              </label>
+              <PasswordInput id="reset-password" label="新密码" autoComplete="new-password"
+                value={resetForm.password} onChange={(event) => updateResetForm("password", event.target.value)} />
+              <PasswordInput id="reset-password-confirmation" label="确认新密码" autoComplete="new-password"
+                value={resetForm.confirmPassword}
+                onChange={(event) => updateResetForm("confirmPassword", event.target.value)} />
             </>
           ) : (
             <>
               <p className="hint login-register-hint">注册后将以设计师身份进入工作台，首次使用需要先添加手写签名。</p>
-              <label>
-                账号
-                <input
-                  autoComplete="username"
-                  value={registerForm.username}
-                  onChange={(event) => updateRegisterForm("username", event.target.value)}
-                  placeholder="designer01"
-                />
-              </label>
-              <label>
-                姓名
-                <input
-                  autoComplete="name"
-                  value={registerForm.displayName}
-                  onChange={(event) => updateRegisterForm("displayName", event.target.value)}
-                  placeholder="设计师姓名"
-                />
-              </label>
-              <label>
-                邮箱（选填）
-                <input
-                  autoComplete="email"
-                  value={registerForm.email}
-                  onChange={(event) => updateRegisterForm("email", event.target.value)}
-                  placeholder="designer@example.com"
-                />
-              </label>
-              <label>
-                密码
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={registerForm.password}
-                  onChange={(event) => updateRegisterForm("password", event.target.value)}
-                />
-              </label>
-              <label>
-                确认密码
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={registerForm.confirmPassword}
-                  onChange={(event) => updateRegisterForm("confirmPassword", event.target.value)}
-                />
-              </label>
+              <TextInput id="register-username" label="账号" autoComplete="username" value={registerForm.username}
+                onChange={(event) => updateRegisterForm("username", event.target.value)} placeholder="designer01" />
+              <TextInput id="register-display-name" label="姓名" autoComplete="name" value={registerForm.displayName}
+                onChange={(event) => updateRegisterForm("displayName", event.target.value)} placeholder="设计师姓名" />
+              <TextInput id="register-email" label="邮箱（选填）" autoComplete="email" value={registerForm.email}
+                onChange={(event) => updateRegisterForm("email", event.target.value)} placeholder="designer@example.com" />
+              <PasswordInput id="register-password" label="密码" autoComplete="new-password"
+                value={registerForm.password} onChange={(event) => updateRegisterForm("password", event.target.value)} />
+              <PasswordInput id="register-password-confirmation" label="确认密码" autoComplete="new-password"
+                value={registerForm.confirmPassword}
+                onChange={(event) => updateRegisterForm("confirmPassword", event.target.value)} />
             </>
           )}
-          {error && <div className="error">{error}</div>}
-          {resetMessage && <div className="success-message">{resetMessage}</div>}
+          {error && <InlineAlert tone="danger">{error}</InlineAlert>}
+          {resetMessage && <InlineAlert tone="success">{resetMessage}</InlineAlert>}
           {desktopClient && (
             <div className="desktop-server-box">
-              <label>
-                审批服务器
-                <input
-                  autoComplete="url"
-                  value={serverUrl}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setServerUrl(value);
-                    setServerAdvice(analyzeServerAddress(value));
-                    setServerHealth(null);
-                  }}
-                  placeholder="http://192.168.1.20:8080"
-                />
-              </label>
-              <button type="button" className="secondary-button" onClick={runDesktopConnectionCheck} disabled={serverSaving || !serverUrl.trim()}>
+              <TextInput id="desktop-server-url" label="审批服务器" autoComplete="url" value={serverUrl}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setServerUrl(value);
+                  setServerAdvice(analyzeServerAddress(value));
+                  setServerHealth(null);
+                }} placeholder="http://192.168.1.20:8080" />
+              <Button variant="secondary" size="sm" onClick={runDesktopConnectionCheck} disabled={serverSaving || !serverUrl.trim()}>
                 连接自检
-              </button>
-              <button type="button" className="secondary-button" onClick={saveDesktopServerUrl} disabled={serverSaving || !serverUrl.trim()}>
-                {serverSaving ? "检查中" : "保存服务器"}
-              </button>
-              {serverAdvice && <span className={`connection-check ${serverAdvice.level}`}>{serverAdvice.message}</span>}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={saveDesktopServerUrl}
+                disabled={!serverUrl.trim()} loading={serverSaving} loadingLabel="检查中">保存服务器</Button>
+              {serverAdvice && <InlineAlert tone={serverAdvice.level === "error" ? "danger" : "info"}>{serverAdvice.message}</InlineAlert>}
               {serverHealth && (
-                <span className={`connection-check ${isApiCompatible({ clientApiCompatVersion: apiCompatVersion, serverApiCompatVersion: serverHealth.apiCompatVersion }) ? "ok" : "error"}`}>
+                <InlineAlert tone={isApiCompatible({ clientApiCompatVersion: apiCompatVersion, serverApiCompatVersion: serverHealth.apiCompatVersion }) ? "success" : "danger"}>
                   服务端 {serverHealth.version}，{isApiCompatible({ clientApiCompatVersion: apiCompatVersion, serverApiCompatVersion: serverHealth.apiCompatVersion }) ? "版本兼容" : "版本不兼容"}
-                </span>
+                </InlineAlert>
               )}
-              {serverMessage && <span>{serverMessage}</span>}
+              {serverMessage && <InlineAlert>{serverMessage}</InlineAlert>}
             </div>
           )}
-          <button type="submit" disabled={registering || resetSubmitting}>{submitLabel()}</button>
+          <Button type="submit" loading={registering || resetSubmitting} loadingLabel={submitLabel()}>{submitLabel()}</Button>
           {mode === "login" && (
             <>
-              <button type="button" className="link-button" onClick={() => switchMode("forgot")}>
+              <Button variant="ghost" size="sm" className="link-button" onClick={() => switchMode("forgot")}>
                 忘记密码
-              </button>
-              <div className="quick-login-panel" aria-label="快捷填入账号">
+              </Button>
+              <ButtonGroup className="quick-login-panel" aria-label="快捷填入账号">
                 {quickLoginPresets.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => fillUsername(preset)}
-                  >
+                  <Button key={preset.label} variant="secondary" size="sm" onClick={() => fillUsername(preset)}>
                     {preset.label}
-                  </button>
+                  </Button>
                 ))}
-              </div>
+              </ButtonGroup>
               <p className="hint">快捷按钮只填入账号，仍需输入对应密码。</p>
             </>
           )}
           {(mode === "forgot" || mode === "reset") && (
-            <button type="button" className="link-button" onClick={() => switchMode("login")}>
+            <Button variant="ghost" size="sm" className="link-button" onClick={() => switchMode("login")}>
               返回登录
-            </button>
+            </Button>
           )}
         </form>
       </div>

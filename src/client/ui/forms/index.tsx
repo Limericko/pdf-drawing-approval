@@ -1,4 +1,4 @@
-import { useState, type FieldsetHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode,
+import { useState, type FieldsetHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode, type Ref,
   type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import styles from "./Forms.module.css";
 
@@ -30,18 +30,20 @@ export function Field({ id, label, description, error, required, className, chil
   </div>;
 }
 
-type TextInputProps = FieldBase & Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "required">;
+type TextInputProps = FieldBase & Omit<InputHTMLAttributes<HTMLInputElement>, "id" | "required"> & {
+  readonly inputRef?: Ref<HTMLInputElement>;
+};
 
-export function TextInput({ id, label, description, error, required, className, ...props }: TextInputProps) {
+export function TextInput({ id, label, description, error, required, className, inputRef, ...props }: TextInputProps) {
   return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
-    <input {...props} {...aria} id={id} required={required} className={styles.control} />}</Field>;
+    <input {...props} {...aria} ref={inputRef} id={id} required={required} className={styles.control} />}</Field>;
 }
 
-export function PasswordInput({ id, label, description, error, required, className, ...props }: TextInputProps) {
+export function PasswordInput({ id, label, description, error, required, className, inputRef, ...props }: TextInputProps) {
   const [visible, setVisible] = useState(false);
   return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
     <div className={styles.passwordControl}>
-      <input {...props} {...aria} id={id} required={required} type={visible ? "text" : "password"} className={styles.control} />
+      <input {...props} {...aria} ref={inputRef} id={id} required={required} type={visible ? "text" : "password"} className={styles.control} />
       <button type="button" aria-label={visible ? "隐藏输入内容" : "显示输入内容"}
         title={`${visible ? "隐藏" : "显示"}${label}`} aria-pressed={visible}
         onClick={() => setVisible((value) => !value)}>{visible ? "隐藏" : "显示"}</button>

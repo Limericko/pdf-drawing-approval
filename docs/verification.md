@@ -4332,3 +4332,11 @@ Gallery 生命周期修复：
 
 - Phase 2 尚未完成；本切片只收口 DS2 公共组件中的 Actions、Forms、Feedback 以及 Platform Identity 调用点。
 - 下一切片继续迁移 legacy Login/Profile/Submit，然后实现 Overlays、DS3 AppShell 和 DS4 数据组件及业务页面迁移。
+
+### DS2 legacy Login / Profile / Submit 调用点迁移
+
+- legacy 登录、个人资料和提交图纸已改用共享 Actions、Forms、Feedback；页面源码不再自建 input/select/textarea，也不再使用 `.secondary-button`、`.error`、`.success` 或 `.success-message` 表达公共语义。
+- 批量文件选择行保留领域专用按钮 DOM，避免公共 Button 的内容包装破坏文件名、状态和错误信息网格；页面级提交、重置、模板、快捷账号和资料动作均已迁移。
+- 聚焦迁移与既有布局测试：5 个文件、`24/24` 通过；全量 client 更新为 47 个文件、`392/392` 通过。生产构建通过，只保留既有 PDF.js `531.35 kB` 警告。
+- legacy Playwright 登录/角色入口在 desktop/mobile 共 `10/10` 通过，覆盖管理员、主管、工艺、设计师落点和登录页 critical axe 门禁；退出后 `14173/18080` 监听均为 `0`。
+- 使用真实浏览器人工检查 desktop 登录、提交、个人资料和 `390×844` mobile 登录；控件无溢出，字段可访问名称、密码显示按钮、空状态和禁用原因均正确暴露。

@@ -228,7 +228,7 @@ describe("submit drawing page layout structure", () => {
     ];
 
     expect(source).toContain("submit-checklist");
-    expect(source).toContain("submit-disabled-reason");
+    expect(source).toContain('<InlineAlert tone="warning">{submitReason}</InlineAlert>');
     expect(submitDisabledReason).toBeTypeOf("function");
     expect(submitDisabledReason!("", [])).toBe("请选择 PDF 文件");
     expect(submitDisabledReason!("", [{ status: "uploaded", partName: "支架", version: "a0A0", placements }])).toBe("请填写项目名称");

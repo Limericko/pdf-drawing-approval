@@ -8,6 +8,9 @@ import {
   type Profile,
   type User
 } from "../api.ts";
+import { Button } from "../ui/actions/index.tsx";
+import { Checkbox, FormActions, TextInput } from "../ui/forms/index.tsx";
+import { InlineAlert, Skeleton } from "../ui/feedback/index.tsx";
 
 export function ProfilePage({ onUserUpdated }: { onUserUpdated: (user: User) => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -100,14 +103,14 @@ export function ProfilePage({ onUserUpdated }: { onUserUpdated: (user: User) => 
           <h1>我的资料</h1>
           <p>{profileIntroText(profile?.user.role)}</p>
         </div>
-        <button type="button" onClick={() => void save()} disabled={busy === "save" || !displayName.trim()}>
-          {busy === "save" ? "保存中" : "保存资料"}
-        </button>
+        <Button onClick={() => void save()} disabled={!displayName.trim()} loading={busy === "save"} loadingLabel="保存中">
+          保存资料
+        </Button>
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {message && <div className="success">{message}</div>}
-      {busy === "load" && <div className="empty">正在读取个人资料...</div>}
+      {error && <InlineAlert tone="danger">{error}</InlineAlert>}
+      {message && <InlineAlert tone="success">{message}</InlineAlert>}
+      {busy === "load" && <Skeleton lines={4} label="正在读取个人资料" />}
 
       {profile && (
         <div className="profile-page-grid">
@@ -119,28 +122,17 @@ export function ProfilePage({ onUserUpdated }: { onUserUpdated: (user: User) => 
               </div>
             </div>
             <div className="profile-form-grid">
-              <label>
-                用户名
-                <input value={profile.user.username} readOnly />
-              </label>
-              <label>
-                角色
-                <input value={roleLabel(profile.user.role)} readOnly />
-              </label>
-              <label>
-                显示名
-                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-              </label>
-              <label>
-                邮箱
-                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
-              </label>
+              <TextInput id="profile-username" label="用户名" value={profile.user.username} readOnly />
+              <TextInput id="profile-role" label="角色" value={roleLabel(profile.user.role)} readOnly />
+              <TextInput id="profile-display-name" label="显示名" value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)} />
+              <TextInput id="profile-email" label="邮箱" value={email}
+                onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
             </div>
-            <div className="form-actions">
-              <button type="button" className="secondary-button" onClick={() => void sendTestEmail()} disabled={!profile.user.email || busy === "test-email"}>
-                {busy === "test-email" ? "发送中" : "给自己发送测试邮件"}
-              </button>
-            </div>
+            <FormActions>
+              <Button variant="secondary" onClick={() => void sendTestEmail()} disabled={!profile.user.email}
+                loading={busy === "test-email"} loadingLabel="发送中">给自己发送测试邮件</Button>
+            </FormActions>
           </section>
 
           {showCommonProjects && (
@@ -152,8 +144,7 @@ export function ProfilePage({ onUserUpdated }: { onUserUpdated: (user: User) => 
                 </div>
               </div>
               <div className="profile-inline-form">
-                <input
-                  value={projectInput}
+                <TextInput id="profile-common-project" label="添加常用项目" value={projectInput}
                   onChange={(event) => setProjectInput(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
@@ -163,23 +154,24 @@ export function ProfilePage({ onUserUpdated }: { onUserUpdated: (user: User) => 
                   }}
                   placeholder="输入项目名称"
                 />
-                <button type="button" className="secondary-button" onClick={addProject} disabled={!projectInput.trim()}>
+                <Button variant="secondary" onClick={addProject} disabled={!projectInput.trim()}>
                   添加
-                </button>
+                </Button>
               </div>
               <div className="profile-chip-list">
                 {commonProjects.length === 0 && <span className="hint">暂无常用项目。</span>}
                 {commonProjects.map((project) => (
-                  <button
+                  <Button
                     key={project}
-                    type="button"
+                    variant="ghost"
+                    size="sm"
                     className="profile-chip"
                     onClick={() => setCommonProjects((current) => removeCommonProject(current, project))}
                     title="点击移除"
                   >
                     {project}
                     <span aria-hidden="true">×</span>
-                  </button>
+                  </Button>
                 ))}
               </div>
             </section>
@@ -217,13 +209,9 @@ function NotificationPreferenceRow(props: {
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="notification-preference-row">
-      <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.target.checked)} />
-      <span>
-        <strong>{props.event.label}</strong>
-        <em>{props.event.description}</em>
-      </span>
-    </label>
+    <Checkbox id={`notification-${props.event.key}`} className="notification-preference-row"
+      label={props.event.label} description={props.event.description} checked={props.checked}
+      onChange={(event) => props.onChange(event.target.checked)} />
   );
 }
 

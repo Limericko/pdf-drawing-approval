@@ -15,6 +15,9 @@ import {
   type SubmissionUploadResult
 } from "../api.ts";
 import { defaultSignaturePlacements } from "../widgets/SignaturePlacementEditor.tsx";
+import { Button } from "../ui/actions/index.tsx";
+import { FileDropzone, Select, TextInput } from "../ui/forms/index.tsx";
+import { EmptyState, InlineAlert, Skeleton } from "../ui/feedback/index.tsx";
 
 type PlacementState = "missing" | "template" | "manual";
 type BatchItemStatus = "ready" | "invalid" | "uploaded" | "submitting" | "completed" | "failed";
@@ -286,86 +289,60 @@ export function SubmitDrawingPage() {
           <h1>上传并提交图纸</h1>
           <p>逐张确认零件、版本和三处签名框后提交审批。</p>
         </div>
-        <button type="button" className="secondary-button" onClick={resetSelectedPlacements} disabled={!selectedItem}>
+        <Button variant="secondary" onClick={resetSelectedPlacements} disabled={!selectedItem}>
           重置签名框
-        </button>
+        </Button>
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {message && <div className="success">{message}</div>}
+      {error && <InlineAlert tone="danger">{error}</InlineAlert>}
+      {message && <InlineAlert tone="success">{message}</InlineAlert>}
 
       <div className="submit-layout">
         <aside className="submit-panel">
-          <label>
-            PDF 文件
-            <input
-              type="file"
-              accept="application/pdf,.pdf"
-              multiple
-              onChange={(event) => void chooseFiles(event.target.files)}
-            />
-          </label>
+          <FileDropzone id="submission-pdf-files" label="PDF 文件" accept="application/pdf,.pdf" multiple
+            onChange={(event) => void chooseFiles(event.target.files)} />
           <div className="submit-form-grid">
-            <label>
-              项目
-              <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="例如 项目A" />
-            </label>
+            <TextInput id="submission-project" label="项目" value={projectName}
+              onChange={(event) => setProjectName(event.target.value)} placeholder="例如 项目A" />
             {commonProjects.length > 0 && (
               <div className="common-projects" aria-label="常用项目">
                 <span>常用项目</span>
                 <div>
                   {commonProjects.map((project) => (
-                    <button
-                      key={project}
-                      type="button"
-                      className="common-project-chip"
-                      onClick={() => setProjectName(applyCommonProject(projectName, project))}
-                    >
+                    <Button key={project} variant="ghost" size="sm" className="common-project-chip"
+                      onClick={() => setProjectName(applyCommonProject(projectName, project))}>
                       {project}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
             )}
             {selectedItem && (
               <>
-                <label>
-                  零件
-                  <input value={selectedItem.partName} onChange={(event) => updateSelectedItem({ partName: event.target.value })} placeholder="零件名" />
-                </label>
-                <label>
-                  版本
-                  <input value={selectedItem.version} onChange={(event) => updateSelectedItem({ version: event.target.value })} placeholder="a0A0" />
-                </label>
+                <TextInput id="submission-part" label="零件" value={selectedItem.partName}
+                  onChange={(event) => updateSelectedItem({ partName: event.target.value })} placeholder="零件名" />
+                <TextInput id="submission-version" label="版本" value={selectedItem.version}
+                  onChange={(event) => updateSelectedItem({ version: event.target.value })} placeholder="a0A0" />
               </>
             )}
           </div>
           {selectedVersionWarning && (
-            <div className="version-trace-warning">
-              <strong>版本提醒</strong>
-              <span>{selectedVersionWarning}</span>
-            </div>
+            <InlineAlert tone="warning" title="版本提醒">{selectedVersionWarning}</InlineAlert>
           )}
           <div className="template-selector">
-            <label>
-              签名模板
-              <select value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)}>
-                <option value="">不使用模板</option>
-                {signatureTemplates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}{template.projectName ? ` · ${template.projectName}` : " · 通用"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="secondary-button" onClick={applySelectedTemplate} disabled={!selectedTemplateId || !selectedItem}>
+            <Select id="submission-signature-template" label="签名模板" value={selectedTemplateId}
+              onChange={(event) => setSelectedTemplateId(event.target.value)}
+              options={[{ value: "", label: "不使用模板" }, ...signatureTemplates.map((template) => ({
+                value: String(template.id), label: `${template.name}${template.projectName ? ` · ${template.projectName}` : " · 通用"}`
+              }))]} />
+            <Button variant="secondary" onClick={applySelectedTemplate} disabled={!selectedTemplateId || !selectedItem}>
               套用模板
-            </button>
+            </Button>
           </div>
           {multiFileMode && (
-            <button type="button" className="secondary-button" onClick={applyTemplateToAllItems} disabled={!selectedTemplateId}>
+            <Button variant="secondary" onClick={applyTemplateToAllItems} disabled={!selectedTemplateId}>
               批量套用模板
-            </button>
+            </Button>
           )}
           <div className="submit-checklist" aria-label="提交前检查">
             <SubmitCheckItem label="PDF" value={items.length > 0 ? `已选择 ${items.length} 个` : "未选择"} complete={items.length > 0 && uploadableCount > 0} />
@@ -409,27 +386,24 @@ export function SubmitDrawingPage() {
             ))}
           </div>
           {batchResult && (
-            <div className="batch-result-summary">
-              <strong>{batchStatusLabel(batchResult.status)}</strong>
-              <span>成功 {batchResult.successCount} · 失败 {batchResult.failedCount}</span>
-            </div>
+            <InlineAlert tone={batchResult.failedCount > 0 ? "warning" : "success"}
+              title={batchStatusLabel(batchResult.status)}>
+              成功 {batchResult.successCount} · 失败 {batchResult.failedCount}
+            </InlineAlert>
           )}
-          {submitReason && <div className="submit-disabled-reason">{submitReason}</div>}
-          <button type="button" onClick={submit} disabled={!canSubmit || busy === "submit"}>
-            {busy === "submit" ? "提交中" : multiFileMode ? "批量提交审批" : "提交审批"}
-          </button>
+          {submitReason && <InlineAlert tone="warning">{submitReason}</InlineAlert>}
+          <Button onClick={submit} disabled={!canSubmit} loading={busy === "submit"} loadingLabel="提交中">
+            {multiFileMode ? "批量提交审批" : "提交审批"}
+          </Button>
         </aside>
 
         <div className="placement-workspace">
           {previewUrl ? (
-            <Suspense fallback={<div className="empty empty-state">正在加载 PDF 定位工具...</div>}>
+            <Suspense fallback={<Skeleton lines={6} label="正在加载 PDF 定位工具" />}>
               <PdfSignaturePlacementWorkspace pdfUrl={previewUrl} placements={placements} onChange={setPlacements} />
             </Suspense>
           ) : (
-            <div className="empty empty-state">
-              <strong>选择 PDF 后开始定位</strong>
-              <span>左侧上传后，在 PDF 预览上拖动并缩放三处签名框。</span>
-            </div>
+            <EmptyState title="选择 PDF 后开始定位">左侧上传后，在 PDF 预览上拖动并缩放三处签名框。</EmptyState>
           )}
         </div>
       </div>
