@@ -3,9 +3,11 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { createPlatformHealthRouter } from "./health.ts";
 
-function createApp(checks: Parameters<typeof createPlatformHealthRouter>[0]) {
+type HealthTestOptions = Omit<Parameters<typeof createPlatformHealthRouter>[0], "basePath"> & { readonly basePath?: string };
+
+function createApp(checks: HealthTestOptions) {
   const app = express();
-  app.use(createPlatformHealthRouter(checks));
+  app.use(createPlatformHealthRouter({ basePath: "/", ...checks } as Parameters<typeof createPlatformHealthRouter>[0]));
   return app;
 }
 
@@ -16,7 +18,7 @@ describe("platform health", () => {
       schema: vi.fn(async () => undefined),
       storage: vi.fn(async () => undefined)
     };
-    const app = createApp({ core: probes });
+    const app = createApp({ core: probes, basePath: "/nested/app/" });
 
     const health = await request(app).get("/health").expect(200);
     expect(health.body).toEqual({
@@ -24,7 +26,8 @@ describe("platform health", () => {
       runtimeMode: "platform",
       appName: "PDF图纸审批",
       version: expect.stringMatching(/^\d+\.\d+\.\d+$/),
-      apiCompatVersion: 1
+      apiCompatVersion: 1,
+      basePath: "/nested/app/"
     });
     expect(JSON.stringify(health.body)).not.toMatch(/postgres|storage|smtp|worker|credential|topology/i);
 
@@ -33,6 +36,17 @@ describe("platform health", () => {
     expect(probes.schema).not.toHaveBeenCalled();
     expect(probes.storage).not.toHaveBeenCalled();
   });
+
+  it.each(["nested", "/missing-trailing-slash", "//double/"]) (
+    "rejects a non-canonical public base path: %s",
+    (basePath) => {
+      expect(() => createPlatformHealthRouter({ basePath, core: {
+        postgres: async () => undefined,
+        schema: async () => undefined,
+        storage: async () => undefined
+      } } as Parameters<typeof createPlatformHealthRouter>[0])).toThrow("PLATFORM_HEALTH_BASE_PATH_INVALID");
+    }
+  );
 
   it("gates readiness on PostgreSQL, expected schema, and the selected storage only", async () => {
     const app = createApp({

@@ -16,6 +16,7 @@ import { createStorage } from "./storage/createStorage.ts";
 import type { StorageAdapter } from "./storage/storageAdapter.ts";
 import { createPlatformEmergencySink, createPlatformSecurityLogger, createPlatformServer,
   type CreatePlatformServerOptions } from "./server.ts";
+import { publicBasePath } from "./health.ts";
 
 const passwordHashOptions = Object.freeze({ memoryCost: 19_456, timeCost: 2, parallelism: 1, outputLen: 32 });
 const STARTUP_GATE_TIMEOUT_MS = 2_000;
@@ -104,6 +105,7 @@ export async function startPlatformWebServer(
       emergencySink,
       clientDist: options.clientDist,
       health: {
+        basePath: publicBasePath(config.publicBaseUrl),
         core: {
           postgres: async () => { await pool.query("SELECT 1"); },
           schema: () => dependencies.assertSchema(pool, migrations, {

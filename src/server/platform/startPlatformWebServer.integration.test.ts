@@ -23,10 +23,16 @@ describe("startPlatformWebServer", () => {
     await withPlatformTestDatabase(async (database) => {
       await runMigrations(database.createPool("migration"));
       const storageRoot = await temporaryDirectory("platform-web-storage-");
+      const env = platformEnv(database.urls.web, storageRoot);
+      env.PDF_APPROVAL_PUBLIC_BASE_URL = "http://127.0.0.1/nested/app";
       const server = await startPlatformWebServer({
-        env: platformEnv(database.urls.web, storageRoot), host: "127.0.0.1", port: 0
+        env, host: "127.0.0.1", port: 0
       });
 
+      await request(server).get("/health").expect(200).expect((response) => {
+        expect(response.body.basePath).toBe("/nested/app/");
+        expect(JSON.stringify(response.body)).not.toContain("127.0.0.1");
+      });
       await request(server).get("/health/live").expect(200, { ok: true });
       await request(server).get("/health/ready").expect(200);
       await close(server);

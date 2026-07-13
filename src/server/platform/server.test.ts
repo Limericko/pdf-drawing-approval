@@ -39,6 +39,7 @@ function createApp(options: { trustedProxy?: WebPlatformConfig["trustedProxy"]; 
       config: { ...config, trustedProxy: options.trustedProxy ?? false },
       services: identity as never,
       health: options.health ?? {
+        basePath: "/",
         core: { postgres: async () => undefined, schema: async () => undefined, storage: async () => undefined }
       },
       logger: options.logger ?? { error: vi.fn() },
@@ -108,6 +109,7 @@ describe("platform server", () => {
     const { app } = createApp({
       logger,
       health: {
+        basePath: "/",
         core: { postgres: async () => undefined, schema: async () => undefined, storage: async () => undefined },
         cache: { timeoutMs: 20, ttlMs: 20 }
       }
