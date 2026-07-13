@@ -4264,3 +4264,37 @@ git diff --check
 
 - Phase 1 Task 22 的真实依赖、浏览器、Worker、数据库、对象存储、邮件与清理生命周期门禁全部通过。
 - Phase 1 验收范围已闭环；已知 PDF.js chunk 警告保持 Phase 0 基线，不阻断本阶段完成。
+
+## 2026-07-13 Phase 2 Task 1–2：DS0/DS1 启动切片
+
+范围：
+
+- 新建 `codex/phase-2-ui-design-system`，以已验收的 Phase 1 提交为基础；详细计划写入 `docs/plans/2026-07-13-phase-2-ui-design-system-app-shell.md`。
+- 将基础视觉来源从 `src/client/styles.css` 的单一 `:root` 拆为 `styles/tokens.css`、`reset.css`、`globals.css` 和 `motion.css`。未迁移页面通过只指向新令牌的兼容别名继续工作；本切片不迁移审批、PDM 或 PDF 业务 DOM。
+- 视觉方向采用精密工业：冷中性工作面、深色工具表面、单一青绿色主操作；取消旧 body 装饰渐变，不引入 UI 框架或运行时字体。
+- 新增开发专用 `/__ui-gallery`。入口同时要求 `import.meta.env.DEV`，生产构建扫描 `UI 设计系统基线` 与 `Phase 2 · DS0 / DS1` 均为 0 个匹配，生产导航没有 Gallery 入口。
+- 新增独立 `playwright.ui.config.ts` 和 `npm run e2e:ui`，固定覆盖 `1440×900`、`1280×800`、`1024×768`、`768×1024`、`390×844` 五个视口，不连接 legacy/platform API。
+
+TDD 与浏览器校准：
+
+- 初始 foundation 测试按预期 RED：4 个令牌/入口断言失败，Gallery 因实现文件不存在而无法收集。
+- 最小实现后，foundation、Gallery 和既有样式聚焦测试共 `21/21` 通过。
+- UI Gallery 首轮五视口真实浏览器得到有效 RED：次要文字 `#627278` 在工作面 `#e7ecee` 上只有 `4.20:1`，低于 WCAG AA `4.5:1`。将令牌校准为 `#5b6b70` 后对比度达到 `4.66:1`，未降低 axe 门禁。
+- 五视口均验证：无横向溢出、键盘 `:focus-visible` 可见、reduced-motion 将滚动恢复为 `auto`、控制台 0 个 error、axe 0 个 serious/critical；截图已人工检查桌面和手机布局。
+- UI Gallery 截图大小：desktop `134587`、compact `132139`、landscape `133534`、portrait `134805`、mobile `129969` bytes。
+
+回归结果：
+
+- 全量 client：42 个文件、`381/381` 通过。
+- `npm run e2e:typecheck`：通过。
+- `npm run build`：通过；只保留既有 PDF.js `531.35 kB` chunk 警告。
+- Electron：3 个文件、`12/12` 通过。
+- UI Gallery：五视口 `5/5` 通过，非更新模式复测稳定。
+- Phase 0 legacy Playwright：先得到 16 个行为测试通过、4 个预期视觉差异；人工检查新的 desktop/mobile 管理台和 PDF 工作台后更新四张基线，完整非更新模式复测 `20/20` 通过。
+- Phase 1 Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- Platform 退出后：测试数据库 `0`、MinIO 测试对象 `0`、Mailpit 测试邮件 `0`、state 文件不存在，`14173/18080/24173/28080/34173/58026` 监听 `0`。
+
+当前边界：
+
+- Phase 2 已开始，但尚未完成；本切片只完成详细计划、DS0 和 DS1。
+- 下一切片是 Task 3 Actions：Button、IconButton、ButtonLink 和 ButtonGroup，并从 platform identity 开始迁移调用点。

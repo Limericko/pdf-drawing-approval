@@ -6,7 +6,7 @@ const webUrl = "http://127.0.0.1:14173";
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
-  testIgnore: "platform/**/*.spec.ts",
+  testIgnore: ["platform/**/*.spec.ts", "ui-gallery/**/*.spec.ts"],
   outputDir: ".cache/e2e/test-results",
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}-{projectName}{ext}",
   fullyParallel: false,

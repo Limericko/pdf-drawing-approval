@@ -2,7 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const styles = fs.readFileSync(path.resolve("src/client/styles.css"), "utf8");
+const styles = [
+  "styles/tokens.css",
+  "styles/reset.css",
+  "styles/globals.css",
+  "styles/motion.css",
+  "styles.css"
+].map((file) => fs.readFileSync(path.resolve("src/client", file), "utf8")).join("\n");
 
 function ruleFor(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -41,13 +47,14 @@ function ruleForIn(block: string, selector: string) {
 
 describe("approval detail PDF placement styles", () => {
   it("keeps the redesigned workbench accessible and data-scannable", () => {
-    const body = ruleFor("body");
+    const body = rulesFor("body");
     const focusStyles = rulesFor("button:focus-visible");
     const root = ruleFor(":root");
 
     expect(body).toContain("font-variant-numeric: tabular-nums");
     expect(focusStyles).toContain("box-shadow: var(--focus)");
-    expect(root).toContain("--radius-panel: 8px");
+    expect(root).toContain("--radius-panel: var(--radius-lg)");
+    expect(root).toContain("--radius-lg: 0.5rem");
     expect(styles).not.toContain("border-radius: 999px");
   });
 

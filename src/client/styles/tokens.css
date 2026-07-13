@@ -1,0 +1,147 @@
+:root {
+  color-scheme: light;
+
+  /* Raw palette: the only fixed colors allowed in new Phase 2 UI code. */
+  --palette-chrome-900: #222c30;
+  --palette-chrome-800: #303c40;
+  --palette-neutral-25: #f4f8f8;
+  --palette-neutral-50: #f8faf9;
+  --palette-neutral-100: #f3f6f6;
+  --palette-neutral-200: #e7ecee;
+  --palette-neutral-350: #c5d0d3;
+  --palette-neutral-450: #aebdc1;
+  --palette-neutral-600: #5b6b70;
+  --palette-neutral-900: #172326;
+  --palette-white: #ffffff;
+  --palette-primary-100: #dcefeb;
+  --palette-primary-500: #0d6f67;
+  --palette-primary-600: #095b55;
+  --palette-primary-700: #074a46;
+  --palette-danger-100: #fff0ee;
+  --palette-danger-500: #bd382e;
+  --palette-warning-100: #fff8e8;
+  --palette-warning-500: #b17a16;
+  --palette-success-100: #eaf6ef;
+  --palette-success-500: #1f7a4d;
+  --palette-info-100: #edf4f8;
+  --palette-info-500: #376f95;
+
+  /* Semantic colors. */
+  --color-chrome: var(--palette-chrome-900);
+  --color-chrome-hover: var(--palette-chrome-800);
+  --color-workspace: var(--palette-neutral-200);
+  --color-surface: var(--palette-white);
+  --color-surface-subtle: var(--palette-neutral-100);
+  --color-surface-raised: var(--palette-neutral-50);
+  --color-text: var(--palette-neutral-900);
+  --color-text-muted: var(--palette-neutral-600);
+  --color-text-on-dark: var(--palette-neutral-25);
+  --color-border: var(--palette-neutral-350);
+  --color-border-strong: var(--palette-neutral-450);
+  --color-primary: var(--palette-primary-500);
+  --color-primary-hover: var(--palette-primary-600);
+  --color-primary-active: var(--palette-primary-700);
+  --color-primary-soft: var(--palette-primary-100);
+  --color-danger: var(--palette-danger-500);
+  --color-danger-soft: var(--palette-danger-100);
+  --color-warning: var(--palette-warning-500);
+  --color-warning-soft: var(--palette-warning-100);
+  --color-success: var(--palette-success-500);
+  --color-success-soft: var(--palette-success-100);
+  --color-info: var(--palette-info-500);
+  --color-info-soft: var(--palette-info-100);
+
+  /* Typography. */
+  --font-family-sans: "Segoe UI Variable", "Microsoft YaHei UI", "PingFang SC",
+    "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-family-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-size-caption: 0.75rem;
+  --font-size-body-sm: 0.8125rem;
+  --font-size-body: 0.875rem;
+  --font-size-title-sm: 1rem;
+  --font-size-title: 1.25rem;
+  --font-size-page-title: 1.5rem;
+  --font-size-login-display: 2.25rem;
+  --line-height-caption: 1.125rem;
+  --line-height-body-sm: 1.25rem;
+  --line-height-body: 1.375rem;
+  --line-height-title-sm: 1.5rem;
+  --line-height-title: 1.75rem;
+  --line-height-page-title: 2rem;
+  --line-height-login-display: 2.75rem;
+
+  /* Spacing and stable dimensions. */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 2.5rem;
+  --space-8: 3rem;
+  --control-height-sm: 1.75rem;
+  --control-height-md: 2.25rem;
+  --control-height-touch: 2.75rem;
+  --icon-button-sm: 1.75rem;
+  --icon-button-md: 2.25rem;
+  --nav-width-expanded: 14.5rem;
+  --nav-width-collapsed: 4rem;
+  --pdf-thumbnails-width: 7rem;
+  --pdf-inspector-width: 20rem;
+  --content-max: 100rem;
+
+  /* Shape, elevation and layering. */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --shadow-floating: 0 0.5rem 1.5rem rgba(20, 39, 42, 0.16);
+  --shadow-dialog: 0 1.5rem 4rem rgba(20, 39, 42, 0.22);
+  --shadow-document: 0 0.125rem 0.625rem rgba(20, 39, 42, 0.14);
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-popover: 20;
+  --z-drawer: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+  --z-skip-link: 60;
+  --focus-ring: 0 0 0 0.1875rem rgba(13, 111, 103, 0.28);
+
+  /* Motion. */
+  --duration-fast: 120ms;
+  --duration-default: 180ms;
+  --duration-overlay: 240ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Temporary aliases for pages not yet migrated from styles.css. */
+  --bg: var(--color-workspace);
+  --bg-strong: var(--color-border);
+  --surface: var(--color-surface-raised);
+  --surface-raised: var(--color-surface);
+  --surface-soft: var(--color-surface-subtle);
+  --surface-hover: var(--color-primary-soft);
+  --surface-ink: var(--color-chrome);
+  --surface-ink-2: var(--color-chrome-hover);
+  --line: var(--color-border);
+  --line-strong: var(--color-border-strong);
+  --text: var(--color-text);
+  --text-strong: var(--color-chrome);
+  --muted: var(--color-text-muted);
+  --primary: var(--color-primary);
+  --primary-dark: var(--color-primary-hover);
+  --primary-strong: var(--color-primary-active);
+  --primary-soft: var(--color-primary-soft);
+  --primary-line: var(--color-border-strong);
+  --danger: var(--color-danger);
+  --danger-soft: var(--color-danger-soft);
+  --success: var(--color-success);
+  --success-soft: var(--color-success-soft);
+  --warning: var(--color-warning);
+  --warning-soft: var(--color-warning-soft);
+  --shadow-soft: var(--shadow-document);
+  --shadow-raised: var(--shadow-dialog);
+  --focus: var(--focus-ring);
+  --radius-panel: var(--radius-lg);
+  --radius-control: var(--radius-md);
+  --z-floating: var(--z-popover);
+}
