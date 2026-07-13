@@ -15,6 +15,8 @@ describe("UiGallery", () => {
     expect(markup).toContain("操作组件");
     expect(markup).toContain("表单组件");
     expect(markup).toContain("反馈与状态");
+    expect(markup).toContain("浮层与确认");
+    expect(markup).toContain("页面壳层模式");
     expect(markup).not.toContain("Lorem ipsum");
   });
 
@@ -24,6 +26,6 @@ describe("UiGallery", () => {
     expect(markup).toContain("<header");
     expect(markup).toContain("<main");
     expect(markup).toContain("<section");
-    expect(markup).toContain("Phase 2 · DS0–DS2");
+    expect(markup).toContain("Phase 2 · DS0–DS3");
   });
 });

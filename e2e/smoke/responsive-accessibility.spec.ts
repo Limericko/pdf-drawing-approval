@@ -30,6 +30,18 @@ test("admin surface has no critical accessibility violations", async ({ page }) 
   });
 });
 
+test("desktop shell collapses to the 64px navigation contract", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "mobile-chromium", "mobile uses the compact horizontal task flow");
+  await loginAs(page, "admin");
+  const toggle = page.getByRole("button", { name: "收起侧边栏" });
+  await toggle.click();
+  const shell = page.locator('[data-collapsed="true"]').first();
+  await expect(shell).toBeVisible();
+  await expect.poll(() => shell.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ")[0])).toBe("64px");
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("link", { name: "系统管理" })).toBeVisible();
+  await page.getByRole("button", { name: "展开侧边栏" }).click();
+});
+
 test("authenticated shell visual baseline", async ({ page }) => {
   await loginAs(page, "admin");
   await waitForAdminSurface(page);

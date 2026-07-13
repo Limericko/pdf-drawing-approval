@@ -9,6 +9,8 @@ const styles = [
   "styles/motion.css",
   "styles.css"
 ].map((file) => fs.readFileSync(path.resolve("src/client", file), "utf8")).join("\n");
+const appShellStyles = fs.readFileSync(path.resolve("src/client/patterns/AppShell/AppShell.module.css"), "utf8");
+const navigationStyles = fs.readFileSync(path.resolve("src/client/ui/navigation/Navigation.module.css"), "utf8");
 
 function ruleFor(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -89,63 +91,26 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("supports a compact collapsible sidebar rail", () => {
-    const collapsedLayout = ruleFor(".app-layout--sidebar-collapsed");
-    const toggle = ruleFor(".sidebar-toggle");
-    const navLink = ruleFor(".side-nav a");
-    const navIcon = ruleFor(".side-nav__icon");
-    const collapsedSidebar = ruleFor(".app-layout--sidebar-collapsed .sidebar");
-    const collapsedBrand = ruleFor(".app-layout--sidebar-collapsed .brand");
-    const collapsedToggle = ruleFor(".app-layout--sidebar-collapsed .sidebar-toggle");
-    const collapsedNav = ruleFor(".app-layout--sidebar-collapsed .side-nav");
-    const collapsedNavLink = ruleFor(".app-layout--sidebar-collapsed .side-nav a");
-    const collapsedFullLabel = ruleFor(".app-layout--sidebar-collapsed .side-nav__full-label");
-    const collapsedIcon = ruleFor(".app-layout--sidebar-collapsed .side-nav__icon");
-    const collapsedUserPanel = ruleFor(".app-layout--sidebar-collapsed .user-panel");
-    const collapsedGhostButton = ruleFor(".app-layout--sidebar-collapsed .ghost-button");
-
-    expect(collapsedLayout).toContain("grid-template-columns: 72px minmax(0, 1fr)");
-    expect(toggle).toContain("width: 100%");
-    expect(navLink).toContain("grid-template-columns: 34px minmax(0, 1fr)");
-    expect(navIcon).toContain("width: 34px");
-    expect(collapsedSidebar).toContain("align-items: center");
-    expect(collapsedSidebar).toContain("padding: 18px 12px");
-    expect(collapsedBrand).toContain("width: 48px");
-    expect(collapsedBrand).toContain("justify-self: center");
-    expect(collapsedToggle).toContain("width: 48px");
-    expect(collapsedToggle).toContain("justify-self: center");
-    expect(collapsedNav).toContain("width: 48px");
-    expect(collapsedNav).toContain("justify-items: center");
-    expect(collapsedNavLink).toContain("width: 48px");
-    expect(collapsedNavLink).toContain("grid-template-columns: 1fr");
-    expect(collapsedNavLink).toContain("justify-items: center");
-    expect(collapsedFullLabel).toContain("display: none");
-    expect(collapsedIcon).toContain("width: 40px");
-    expect(collapsedUserPanel).toContain("width: 48px");
-    expect(collapsedUserPanel).toContain("justify-items: center");
-    expect(collapsedGhostButton).toContain("width: 34px");
+    expect(appShellStyles).toContain('grid-template-columns: var(--nav-width-collapsed) minmax(0, 1fr)');
+    expect(appShellStyles).toContain('.shell[data-collapsed="true"] .brand { justify-content: center; }');
+    expect(appShellStyles).toContain('.shell[data-collapsed="true"] .compactRole');
+    expect(navigationStyles).toContain('.navigation[data-collapsed="true"] .link');
+    expect(navigationStyles).toContain('grid-template-columns: 1fr');
+    expect(navigationStyles).toContain('.navigation[data-collapsed="true"] .label { display: none; }');
   });
 
   it("adapts the app shell and core work surfaces for phone widths", () => {
     const mobile = mediaBlockFor("(max-width: 520px)");
-    const shell = ruleForIn(mobile, ".app-shell");
-    const sidebar = ruleForIn(mobile, ".sidebar");
-    const sideNav = ruleForIn(mobile, ".side-nav");
-    const navLink = ruleForIn(mobile, ".side-nav a");
-    const userPanel = ruleForIn(mobile, ".user-panel");
     const approvalRow = ruleForIn(mobile, ".approval-table tbody tr");
     const approvalCell = ruleForIn(mobile, ".approval-table td");
     const approvalCellBefore = ruleForIn(mobile, ".approval-table td::before");
     const pdfStage = ruleForIn(mobile, ".detail-pdf-stage");
     const tableActionBar = ruleForIn(mobile, ".table-action-bar");
 
-    expect(mobile).toContain(".app-layout--sidebar-collapsed");
-    expect(shell).toContain("padding: 12px");
-    expect(sidebar).toContain("position: sticky");
-    expect(sidebar).toContain("height: auto");
-    expect(sideNav).toContain("display: flex");
-    expect(sideNav).toContain("overflow-x: auto");
-    expect(navLink).toContain("flex: 0 0 auto");
-    expect(userPanel).toContain("display: flex");
+    expect(appShellStyles).toContain("@media (max-width: 32.5rem)");
+    expect(appShellStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(navigationStyles).toContain("overflow-x: auto");
+    expect(navigationStyles).toContain("flex: 0 0 auto");
     expect(approvalRow).toContain("display: grid");
     expect(approvalCell).toContain("grid-template-columns:");
     expect(approvalCellBefore).toContain("content: attr(data-label)");

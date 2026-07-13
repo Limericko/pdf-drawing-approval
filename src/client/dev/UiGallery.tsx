@@ -4,6 +4,9 @@ import { Button, ButtonGroup, IconButton } from "../ui/actions/index.tsx";
 import { Checkbox, FormActions, PasswordInput, RadioGroup, Select, Switch, TextArea, TextInput } from "../ui/forms/index.tsx";
 import { EmptyState, ErrorState, InlineAlert, SaveIndicator, Skeleton } from "../ui/feedback/index.tsx";
 import { Dialog, Drawer, Popover, Tooltip } from "../ui/overlays/index.tsx";
+import { Breadcrumbs, SegmentedControl, Tabs } from "../ui/navigation/index.tsx";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { FilterBar } from "../patterns/FilterBar/index.tsx";
 import styles from "./UiGallery.module.css";
 
 const semanticColors = [
@@ -28,6 +31,8 @@ export function UiGallery() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [taskView, setTaskView] = useState("mine");
+  const [density, setDensity] = useState("dense");
   return <div className={styles.galleryShell}>
     <header className={styles.masthead}>
       <div className={styles.productMark} aria-hidden="true">P2</div>
@@ -36,7 +41,7 @@ export function UiGallery() {
         <h1>UI 设计系统基线</h1>
       </div>
       <div className={styles.phaseStamp}>
-        <span>Phase 2 · DS0–DS2</span>
+        <span>Phase 2 · DS0–DS3</span>
         <strong>精密工业</strong>
       </div>
     </header>
@@ -177,6 +182,27 @@ export function UiGallery() {
             </Popover>
             <Tooltip content="复制当前图纸的 SHA-256"><Button variant="ghost">哈希说明</Button></Tooltip>
           </ButtonGroup>
+        </div>
+      </section>
+
+      <section className={styles.gallerySection} aria-labelledby="shell-patterns">
+        <SectionHeading index="09" id="shell-patterns" title="页面壳层模式" description="统一标题、导航上下文、视图切换和高密度筛选。" />
+        <div className={styles.componentSurface}>
+          <PageHeader title="我的任务" eyebrow="TASKS" description="集中处理待审图纸和需要补充的信息。"
+            breadcrumbs={<Breadcrumbs items={[{ label: "工作台", href: "#/" }, { label: "我的任务" }]} />}
+            actions={<Button>处理下一项</Button>} metadata={<><span>主管审阅</span><span>更新于 09:42</span></>} />
+          <Tabs label="任务视图" activeId={taskView} onChange={setTaskView} items={[
+            { id: "mine", label: "待我处理 12" }, { id: "blocked", label: "已阻断 3" }, { id: "done", label: "今日完成 8" }
+          ]} />
+          <FilterBar summary="当前显示 12 项 · 按更新时间降序" actions={<Button variant="secondary">清除筛选</Button>}>
+            <TextInput id="gallery-filter-project" label="项目" placeholder="输入项目名称" />
+            <Select id="gallery-filter-status" label="状态" defaultValue="pending" options={[
+              { value: "pending", label: "待处理" }, { value: "all", label: "全部状态" }
+            ]} />
+          </FilterBar>
+          <SegmentedControl label="列表密度" activeId={density} onChange={setDensity} items={[
+            { id: "dense", label: "紧凑" }, { id: "comfortable", label: "舒适" }
+          ]} />
         </div>
       </section>
     </main>

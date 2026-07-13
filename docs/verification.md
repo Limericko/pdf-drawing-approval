@@ -4348,3 +4348,14 @@ Gallery 生命周期修复：
 - 旧 `.desktop-update-*` 容器、`.signature-required-*`、`.print-settings-backdrop/dialog/header/check/actions` 在生产调用点零引用后删除；更新下载进度和打印表单的领域布局样式保留。
 - Overlay 与迁移聚焦回归：7 个文件、`44/44` 通过；全量 client 更新为 49 个文件、`396/396` 通过，`e2e:typecheck` 和生产构建通过。
 - Gallery 五视口交互验证 Dialog/Drawer 初始焦点、Escape 关闭、焦点回归和 Popover Escape；更新基线后非更新模式 `5/5` 通过，`34173` 监听为 `0`。桌面与手机截图已人工检查；当前大小为 desktop `245403`、compact `240070`、landscape `238445`、portrait `241343`、mobile `228479` bytes。
+
+### DS3 AppShell、导航与页面模式
+
+- `App.tsx` 不再拥有 sidebar/nav/user DOM；新 `AppShell` 只接收品牌、已过滤导航、用户显示信息和内容，`AppNavigation` 不认识角色权限，权限仍由 `roleAccess` 先行过滤。
+- 当前页统一使用 `aria-current="page"`；桌面展开宽度 `232px`、收起宽度 `64px`，平板/手机切换为顶部横向任务流。管理员、主管、工艺和设计师原有落点不变；主管/工艺入口文案由“待我审核”统一为“我的任务”。
+- 新增 `PageHeader`、`Breadcrumbs`、`Tabs`、`SegmentedControl` 和 `FilterBar`；MyTasks 首个迁移为“我的任务”页面标题与统一错误反馈。Gallery 增加 DS3 页面壳层样例。
+- AppShell 迁移后，全局 `styles.css` 中旧 `.app-layout/.sidebar/.brand/.side-nav/.user-panel/.ghost-button/.content-area/.app-shell/.skip-link` 及其响应式规则共删除 522 行；新实现只使用 CSS Modules 和语义令牌。
+- 聚焦 DS3 组件测试 `16/16` 通过；全量 client 更新为 52 个文件、`400/400` 通过，`e2e:typecheck`、生产构建和 `git diff --check` 通过。
+- legacy Playwright 完整非更新模式：desktop/mobile 共 22 项，`21` 通过，mobile-only 的 desktop 64px 契约用例按设计跳过 `1`；desktop 断言动画稳定后精确为 `64px`。退出后 `14173/18080` 监听均为 `0`。
+- 四份 AppShell/PDF 工作台视觉基线已在真实浏览器人工复核并更新；desktop admin `125186`、mobile admin `117602`、desktop workbench `120741`、mobile workbench `148104` bytes。
+- Gallery DS0–DS3 更新后非更新模式五视口 `5/5` 通过，截图已人工复核；当前大小为 desktop `281878`、compact `275865`、landscape `273396`、portrait `275733`、mobile `261986` bytes。

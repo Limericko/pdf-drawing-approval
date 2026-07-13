@@ -23,8 +23,8 @@ describe("role access", () => {
     const supervisorLabels = navigationForRole(user("supervisor")).map((item) => item.label);
     const processLabels = navigationForRole(user("process")).map((item) => item.label);
 
-    expect(supervisorLabels).toEqual(["待我审核", "全部图纸", "零件库", "我的签名", "我的资料"]);
-    expect(processLabels).toEqual(["待我审核", "全部图纸", "零件库", "我的签名", "我的资料"]);
+    expect(supervisorLabels).toEqual(["我的任务", "全部图纸", "零件库", "我的签名", "我的资料"]);
+    expect(processLabels).toEqual(["我的任务", "全部图纸", "零件库", "我的签名", "我的资料"]);
     expect(routeAllowedForRole(user("supervisor"), "submit")).toBe(false);
     expect(routeAllowedForRole(user("supervisor"), "pdm")).toBe(true);
     expect(routeAllowedForRole(user("supervisor"), "pdmPending")).toBe(false);

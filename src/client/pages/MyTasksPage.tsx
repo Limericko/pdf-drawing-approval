@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { listApprovals, type Approval, type User } from "../api.ts";
 import { ApprovalTable } from "../widgets/ApprovalTable.tsx";
 import { newTaskNotificationIds, readNotifiedTaskIds, writeNotifiedTaskIds } from "../notifications.ts";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
 
 const notifiedTaskKey = "pdf_approval_notified_task_ids";
 
@@ -26,24 +28,12 @@ export function MyTasksPage({ user }: { user: User }) {
 
   return (
     <section>
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">REVIEW QUEUE</span>
-          <h1>我的待审图纸</h1>
-          <p>{user.role === "supervisor" || user.role === "process" ? "按提交时间处理待审核 PDF，打开图纸后给出通过或驳回意见。" : "当前角色没有固定审核任务。"}</p>
-        </div>
-        <div className="metric-row">
-          <div className="metric">
-            <strong>{items.length}</strong>
-            <span>待处理</span>
-          </div>
-          <div className="metric metric--quiet">
-            <strong>{items.filter((item) => item.status === "pending").length}</strong>
-            <span>审批中</span>
-          </div>
-        </div>
-      </div>
-      {error && <div className="error">{error}</div>}
+      <PageHeader title="我的任务" eyebrow="REVIEW QUEUE"
+        description={user.role === "supervisor" || user.role === "process"
+          ? "按提交时间处理待审核 PDF，打开图纸后给出通过或驳回意见。" : "当前角色没有固定审核任务。"}
+        metadata={<><span><strong>{items.length}</strong> 待处理</span>
+          <span><strong>{items.filter((item) => item.status === "pending").length}</strong> 审批中</span></>} />
+      {error && <InlineAlert tone="danger">{error}</InlineAlert>}
       <ApprovalTable approvals={items} emptyText="暂无待审图纸" />
     </section>
   );

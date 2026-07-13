@@ -9,7 +9,7 @@ export async function loginAs(page: Page, role: E2eRole) {
   await page.getByLabel("账号", { exact: true }).fill(account.username);
   await page.getByLabel("密码").fill(account.password);
   await page.getByRole("button", { name: "进入工作台" }).click();
-  await expect(page.locator(".app-layout")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
   const expectedUrl = account.landingPath === "/"
     ? new URL("/", page.url()).toString()
     : new RegExp(`#${account.landingPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);

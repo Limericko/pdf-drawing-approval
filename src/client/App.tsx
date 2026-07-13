@@ -3,10 +3,7 @@ import {
   ClipboardCheck,
   Download,
   FileText,
-  LogOut,
   PackageSearch,
-  PanelLeftClose,
-  PanelLeftOpen,
   PenLine,
   Settings as SettingsIcon,
   UploadCloud,
@@ -32,6 +29,8 @@ import { defaultRouteForRole, navigationForRole, routeAllowedForRole, routePath,
 import { RoleFlowGuide } from "./widgets/RoleFlowGuide.tsx";
 import { Button } from "./ui/actions/index.tsx";
 import { Dialog } from "./ui/overlays/index.tsx";
+import { AppShell } from "./patterns/AppShell/index.tsx";
+import { AppNavigation } from "./ui/navigation/index.tsx";
 
 type Route =
   | { name: "tasks" }
@@ -375,75 +374,15 @@ export function App() {
 
   const showSignatureRequiredDialog = signatureSetupRequired(user) && signatureConfigured === false && signaturePromptOpen;
   const routeAllowed = routeAllowedForRole(user, route.name);
-  const SidebarToggleIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
-
   return (
-    <div className={sidebarCollapsed ? "app-layout app-layout--sidebar-collapsed" : "app-layout"}>
-      <a className="skip-link" href="#main-content">跳到主要内容</a>
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand__mark">
-            <img className="brand__logo" src="/app-icon.png" alt="PDF 图纸审批" />
-          </span>
-          <div className="brand__text">
-            <strong>PDF 图纸审批</strong>
-            <span>局域网审批工作台</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="sidebar-toggle"
-          aria-pressed={sidebarCollapsed}
-          aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-          onClick={toggleSidebar}
-        >
-          <SidebarToggleIcon className="sidebar-toggle__icon" size={18} strokeWidth={2} aria-hidden="true" />
-          <span className="sidebar-toggle__text">{sidebarCollapsed ? "展开侧栏" : "收起侧栏"}</span>
-        </button>
-        <nav className="side-nav" aria-label="主导航">
-          {nav.map((item) => {
-            const Icon = navIconForRoute(item.route);
-            return (
-              <a
-                key={item.href}
-                className={route.name === item.route ? "active" : ""}
-                href={item.href}
-                title={item.label}
-                aria-label={item.label}
-                onMouseEnter={() => preloadRoute(item.route)}
-                onFocus={() => preloadRoute(item.route)}
-              >
-                <span className="side-nav__icon" aria-hidden="true">
-                  <Icon size={18} strokeWidth={2} />
-                </span>
-                <span className="side-nav__full-label">{item.label}</span>
-              </a>
-            );
-          })}
-        </nav>
-        <div className="user-panel">
-          <div>
-            <strong>{user.displayName}</strong>
-            <span>{roleLabel(user.role)}</span>
-            <span className="user-panel__compact" aria-hidden="true">{roleCompactLabel(user.role)}</span>
-          </div>
-          <button
-            type="button"
-            className="ghost-button"
-            aria-label="退出登录"
-            title="退出登录"
-            onClick={() => {
-              clearToken();
-              setUser(null);
-            }}
-          >
-            <LogOut className="ghost-button__icon" size={16} strokeWidth={2} aria-hidden="true" />
-            <span className="user-panel__logout-text">退出</span>
-          </button>
-        </div>
-      </aside>
-      <div className="content-area">
-        <main id="main-content" className="app-shell">
+    <>
+      <AppShell collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar}
+        brand={{ name: "工程图纸协同", subtitle: "PDF 审阅与审批", logoSrc: "/app-icon.png" }}
+        navigation={<AppNavigation collapsed={sidebarCollapsed} currentId={route.name}
+          items={nav.map((item) => ({ ...item, id: item.route, icon: navIconForRoute(item.route) }))}
+          onIntent={(id) => preloadRoute(id as AppRouteName)} />}
+        user={{ displayName: user.displayName, roleLabel: roleLabel(user.role), compactRoleLabel: roleCompactLabel(user.role) }}
+        onLogout={() => { clearToken(); setUser(null); }}>
           {desktopUpdateDialog}
           {clientUpdateInfo && (
             <ClientUpdateBanner
@@ -470,8 +409,7 @@ export function App() {
             {routeAllowed && route.name === "profile" && <ProfilePage onUserUpdated={setUser} />}
             {routeAllowed && route.name === "settings" && <SettingsPage />}
           </Suspense>
-        </main>
-      </div>
+      </AppShell>
       {showSignatureRequiredDialog && (
         <SignatureRequiredDialog
           onGoSignature={() => {
@@ -480,7 +418,7 @@ export function App() {
           }}
         />
       )}
-    </div>
+    </>
   );
 }
 
