@@ -200,7 +200,8 @@ describe("settings diagnostics view model", () => {
     expect(combinedSource).toContain("校验备份目录");
     expect(combinedSource).toContain("saveMaintenanceSettings");
     expect(combinedSource).toContain("validateBackupDirectory");
-    expect(combinedSource).toContain("operation-log-panel");
+    expect(combinedSource).toContain('ariaLabel="操作日志"');
+    expect(combinedSource).toContain("DataTable");
     expect(combinedSource).toContain("最近 100 条");
     expect(combinedSource).toContain("版本更新");
     expect(combinedSource).toContain("服务端当前版本");

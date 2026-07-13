@@ -54,6 +54,12 @@ import { apiUrl } from "../clientConfig.ts";
 import { statusLabel } from "../widgets/status.ts";
 import { OperationsTab } from "./settings/OperationsTab.tsx";
 import { ConfirmDialog } from "../ui/overlays/index.tsx";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { Button } from "../ui/actions/index.tsx";
+import { DataTable, TableFrame, type DataTableColumn } from "../ui/data/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
+import { Checkbox, Select, TextInput } from "../ui/forms/index.tsx";
+import { Tabs } from "../ui/navigation/index.tsx";
 export {
   batchSubmissionStatusLabel,
   buildMaintenanceRunSummary,
@@ -131,6 +137,8 @@ export function SettingsPage() {
   const [newUser, setNewUser] = useState({ username: "", password: "", displayName: "", email: "", role: "designer" as User["role"] });
   const [reportFilters, setReportFilters] = useState({ projectName: "", status: "", from: "", to: "" });
   const [dangerConfirmation, setDangerConfirmation] = useState<"cleanup" | "pdm-backfill" | null>(null);
+  const [pendingTemplateDelete, setPendingTemplateDelete] = useState<SignatureTemplate | null>(null);
+  const [deletingTemplate, setDeletingTemplate] = useState(false);
 
   useEffect(() => {
     refreshSettings();
@@ -584,20 +592,56 @@ export function SettingsPage() {
     await refreshSignatureTemplates();
   }
 
-  async function removeTemplate(template: SignatureTemplate) {
-    if (!window.confirm(`确认删除签名模板“${template.name}”？`)) return;
-    await deleteSignatureTemplate(template.id);
-    setMessage("签名模板已删除。");
-    await refreshSignatureTemplates();
+  function removeTemplate(template: SignatureTemplate) {
+    setPendingTemplateDelete(template);
   }
+
+  async function confirmRemoveTemplate() {
+    const template = pendingTemplateDelete;
+    if (!template) return;
+    setDeletingTemplate(true);
+    try {
+      await deleteSignatureTemplate(template.id);
+      setMessage("签名模板已删除。");
+      setPendingTemplateDelete(null);
+      await refreshSignatureTemplates();
+    } finally {
+      setDeletingTemplate(false);
+    }
+  }
+
+  const userColumns: readonly DataTableColumn<User>[] = [
+    { id: "username", header: "账号", cell: (user) => <strong>{user.username}</strong> },
+    { id: "displayName", header: "姓名", cell: (user) => <TextInput id={`user-name-${user.id}`} label={`${user.username} 姓名`} hideLabel
+      value={user.displayName} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, displayName: event.target.value } : item))} /> },
+    { id: "email", header: "邮箱", mobileHidden: true, cell: (user) => <TextInput id={`user-email-${user.id}`} label={`${user.username} 邮箱`} hideLabel
+      value={user.email ?? ""} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, email: event.target.value } : item))} /> },
+    { id: "role", header: "角色", cell: (user) => <Select id={`user-role-${user.id}`} label={`${user.username} 角色`} hideLabel
+      value={user.role} options={roles} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role: event.target.value as User["role"] } : item))} /> },
+    { id: "active", header: "状态", cell: (user) => <Checkbox id={`user-active-${user.id}`} label="启用" checked={user.active ?? true}
+      onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, active: event.target.checked } : item))} /> },
+    { id: "actions", header: "操作", cell: (user) => <div className="actions">
+      <Button size="sm" variant="secondary" onClick={() => { void saveUser(user); }}>保存</Button>
+      <Button size="sm" variant="ghost" onClick={() => { void resetPassword(user); }}>重置密码</Button>
+    </div> }
+  ];
+
+  const templateColumns: readonly DataTableColumn<SignatureTemplate>[] = [
+    { id: "name", header: "模板名称", cell: (template) => <TextInput id={`template-name-${template.id}`} label={`${template.name} 模板名称`} hideLabel
+      value={templateDrafts[template.id]?.name ?? template.name} onChange={(event) => updateTemplateDraft(template.id, "name", event.target.value)} /> },
+    { id: "project", header: "适用项目", cell: (template) => <TextInput id={`template-project-${template.id}`} label={`${template.name} 适用项目`} hideLabel
+      value={templateDrafts[template.id]?.projectName ?? template.projectName ?? ""} onChange={(event) => updateTemplateDraft(template.id, "projectName", event.target.value)} placeholder="留空为通用" /> },
+    { id: "placements", header: "位置", align: "center", cell: (template) => `${template.placements.length} 个签名框` },
+    { id: "updatedAt", header: "更新时间", mobileHidden: true, cell: (template) => formatTime(template.updatedAt) },
+    { id: "actions", header: "操作", cell: (template) => <div className="actions">
+      <Button size="sm" variant="secondary" onClick={() => { void saveTemplate(template); }}>保存</Button>
+      <Button size="sm" variant="danger" onClick={() => removeTemplate(template)}>删除</Button>
+    </div> }
+  ];
 
   return (
     <section>
-      <div className="section-title">
-        <span className="eyebrow">ADMIN CONSOLE</span>
-        <h1>系统运维控制台</h1>
-        <p>配置目录、用户、签名模板、日志和追溯报表。</p>
-      </div>
+      <PageHeader title="系统运维控制台" eyebrow="ADMIN CONSOLE" description="配置目录、用户、签名模板、日志和追溯报表。" />
 
       <div className="admin-status-grid">
         <StatusTile label="监听根目录" value={status?.watchRoot ?? "未配置"} tone={status?.rootExists ? "ok" : "warn"} />
@@ -605,15 +649,12 @@ export function SettingsPage() {
         <StatusTile label="配置生效" value="重启后生效" tone="neutral" />
       </div>
 
-      <div className="admin-tabs">
-        <button type="button" className={tab === "settings" ? "active" : ""} onClick={() => switchTab("settings")}>目录与通知</button>
-        <button type="button" className={tab === "users" ? "active" : ""} onClick={() => switchTab("users")}>用户管理</button>
-        <button type="button" className={tab === "templates" ? "active" : ""} onClick={() => switchTab("templates")}>签名模板</button>
-        <button type="button" className={tab === "operations" ? "active" : ""} onClick={() => switchTab("operations")}>运维追溯</button>
-        <button type="button" className={tab === "logs" ? "active" : ""} onClick={() => switchTab("logs")}>服务日志</button>
-      </div>
+      <Tabs label="系统运维功能" activeId={tab} onChange={(value) => switchTab(value as Tab)} items={[
+        { id: "settings", label: "目录与通知" }, { id: "users", label: "用户管理" },
+        { id: "templates", label: "签名模板" }, { id: "operations", label: "运维追溯" }, { id: "logs", label: "服务日志" }
+      ]} />
 
-      {message && <div className="success">{message}</div>}
+      {message ? <InlineAlert tone="success">{message}</InlineAlert> : null}
 
       {tab === "settings" && (
         <>
@@ -725,44 +766,9 @@ export function SettingsPage() {
             </select>
             <button type="submit">新增用户</button>
           </form>
-          <div className="table-surface">
-            <table className="data-table user-table">
-              <thead>
-                <tr>
-                  <th>账号</th>
-                  <th>姓名</th>
-                  <th>邮箱</th>
-                  <th>角色</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => (
-                  <tr key={user.id}>
-                    <td>{user.username}</td>
-                    <td><input value={user.displayName} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, displayName: event.target.value } : item))} /></td>
-                    <td><input value={user.email ?? ""} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, email: event.target.value } : item))} /></td>
-                    <td>
-                      <select value={user.role} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, role: event.target.value as User["role"] } : item))}>
-                        {roles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
-                      </select>
-                    </td>
-                    <td>
-                      <label className="inline-check">
-                        <input type="checkbox" checked={user.active ?? true} onChange={(event) => setUsers((current) => current.map((item) => item.id === user.id ? { ...item, active: event.target.checked } : item))} />
-                        启用
-                      </label>
-                    </td>
-                    <td className="actions">
-                      <button type="button" className="secondary-button" onClick={() => saveUser(user)}>保存</button>
-                      <button type="button" className="ghost-light-button" onClick={() => resetPassword(user)}>重置密码</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TableFrame title="用户列表" description="修改用户资料、角色和启用状态。">
+            <DataTable ariaLabel="用户列表" columns={userColumns} rows={users} getRowKey={(user) => user.id} emptyTitle="暂无用户" stickyHeader />
+          </TableFrame>
         </div>
       )}
 
@@ -788,62 +794,11 @@ export function SettingsPage() {
       {tab === "templates" && (
         <div className="admin-panel">
           <section className="management-panel">
-            <div className="panel-heading">
-              <div>
-                <h2>签名模板</h2>
-                <span>维护提交页可套用的设计、主管、工艺签名框位置</span>
-              </div>
-              <button type="button" className="secondary-button" onClick={refreshSignatureTemplates}>
-                刷新
-              </button>
-            </div>
-            <div className="table-surface">
-              <table className="data-table template-table">
-                <thead>
-                  <tr>
-                    <th>模板名称</th>
-                    <th>适用项目</th>
-                    <th>位置</th>
-                    <th>更新时间</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {signatureTemplates.map((template) => (
-                    <tr key={template.id}>
-                      <td>
-                        <input
-                          value={templateDrafts[template.id]?.name ?? template.name}
-                          onChange={(event) => updateTemplateDraft(template.id, "name", event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          value={templateDrafts[template.id]?.projectName ?? template.projectName ?? ""}
-                          onChange={(event) => updateTemplateDraft(template.id, "projectName", event.target.value)}
-                          placeholder="留空为通用"
-                        />
-                      </td>
-                      <td>{template.placements.length} 个签名框</td>
-                      <td>{formatTime(template.updatedAt)}</td>
-                      <td className="actions">
-                        <button type="button" className="secondary-button" onClick={() => saveTemplate(template)}>
-                          保存
-                        </button>
-                        <button type="button" className="ghost-light-button" onClick={() => removeTemplate(template)}>
-                          删除
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {signatureTemplates.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="empty-cell">暂无签名模板</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TableFrame title="签名模板" description="维护提交页可套用的设计、主管、工艺签名框位置"
+              actions={<Button variant="secondary" onClick={() => { void refreshSignatureTemplates(); }}>刷新</Button>}>
+              <DataTable ariaLabel="签名模板" columns={templateColumns} rows={signatureTemplates} getRowKey={(template) => template.id}
+                emptyTitle="暂无签名模板" stickyHeader />
+            </TableFrame>
           </section>
         </div>
       )}
@@ -894,6 +849,10 @@ export function SettingsPage() {
         description="系统会扫描已通过或已归档图纸，并把标准文件名的记录发布到 PDM 零件库。"
         confirmLabel="确认回填" danger busy={backfillingPdm} onConfirm={() => void executePdmBackfill()}
         onClose={() => setDangerConfirmation(null)} />
+      <ConfirmDialog open={Boolean(pendingTemplateDelete)} title="删除签名模板"
+        description={pendingTemplateDelete ? `确认删除签名模板“${pendingTemplateDelete.name}”？` : ""}
+        confirmLabel="确认删除" danger busy={deletingTemplate} onConfirm={() => { void confirmRemoveTemplate(); }}
+        onClose={() => setPendingTemplateDelete(null)} />
     </section>
   );
 }

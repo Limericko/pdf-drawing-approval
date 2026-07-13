@@ -5,6 +5,7 @@ import { Checkbox, FormActions, PasswordInput, RadioGroup, Select, Switch, TextA
 import { EmptyState, ErrorState, InlineAlert, SaveIndicator, Skeleton } from "../ui/feedback/index.tsx";
 import { Dialog, Drawer, Popover, Tooltip } from "../ui/overlays/index.tsx";
 import { Breadcrumbs, SegmentedControl, Tabs } from "../ui/navigation/index.tsx";
+import { Badge, BatchActionBar, DataTable, Pagination, StatusChip, TableFrame, type DataTableColumn } from "../ui/data/index.tsx";
 import { PageHeader } from "../patterns/PageHeader/index.tsx";
 import { FilterBar } from "../patterns/FilterBar/index.tsx";
 import styles from "./UiGallery.module.css";
@@ -27,12 +28,39 @@ const typeSamples = [
 
 const spacingTokens = ["1 · 4", "2 · 8", "3 · 12", "4 · 16", "5 · 24", "6 · 32", "7 · 40", "8 · 48"];
 
+type GalleryDrawing = {
+  readonly id: number;
+  readonly drawing: string;
+  readonly version: string;
+  readonly owner: string;
+  readonly status: "review" | "blocked" | "published";
+};
+
+const galleryDrawings: readonly GalleryDrawing[] = [
+  { id: 18, drawing: "GX-240713-018 · 减速器壳体", version: "A03", owner: "林工", status: "review" },
+  { id: 22, drawing: "GX-240713-022 · 轴承压盖", version: "A01", owner: "周工", status: "blocked" },
+  { id: 31, drawing: "GX-240713-031 · 传动端盖", version: "B02", owner: "陈工", status: "published" }
+];
+
+const galleryDrawingColumns: readonly DataTableColumn<GalleryDrawing>[] = [
+  { id: "drawing", header: "图号 / 名称", cell: (row) => <strong>{row.drawing}</strong> },
+  { id: "version", header: "版本", cell: (row) => row.version, align: "center" },
+  { id: "owner", header: "负责人", cell: (row) => row.owner, mobileHidden: true },
+  { id: "status", header: "状态", cell: (row) => {
+    const presentation = row.status === "review" ? { label: "等待工艺确认", tone: "warning" as const }
+      : row.status === "blocked" ? { label: "存在阻断问题", tone: "danger" as const }
+        : { label: "已发布", tone: "success" as const };
+    return <StatusChip tone={presentation.tone}>{presentation.label}</StatusChip>;
+  } }
+];
+
 export function UiGallery() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [taskView, setTaskView] = useState("mine");
   const [density, setDensity] = useState("dense");
+  const [selectedDrawings, setSelectedDrawings] = useState<ReadonlySet<number>>(new Set([18]));
   return <div className={styles.galleryShell}>
     <header className={styles.masthead}>
       <div className={styles.productMark} aria-hidden="true">P2</div>
@@ -41,7 +69,7 @@ export function UiGallery() {
         <h1>UI 设计系统基线</h1>
       </div>
       <div className={styles.phaseStamp}>
-        <span>Phase 2 · DS0–DS3</span>
+        <span>Phase 2 · DS0–DS4</span>
         <strong>精密工业</strong>
       </div>
     </header>
@@ -203,6 +231,35 @@ export function UiGallery() {
           <SegmentedControl label="列表密度" activeId={density} onChange={setDensity} items={[
             { id: "dense", label: "紧凑" }, { id: "comfortable", label: "舒适" }
           ]} />
+        </div>
+      </section>
+
+      <section className={styles.gallerySection} aria-labelledby="data-components">
+        <SectionHeading index="10" id="data-components" title="数据展示与批量操作" description="公共层只负责结构与行为，业务层决定字段、状态文案和颜色语义。" />
+        <div className={styles.componentSurface}>
+          <div className={styles.dataToneRow} aria-label="状态与数量样例">
+            <StatusChip>草稿</StatusChip><StatusChip tone="info">处理中</StatusChip>
+            <StatusChip tone="success">已发布</StatusChip><StatusChip tone="warning">待确认</StatusChip>
+            <StatusChip tone="danger">已阻断</StatusChip><Badge tone="primary">12 项</Badge>
+          </div>
+          {selectedDrawings.size > 0 ? <BatchActionBar selectedCount={selectedDrawings.size}
+            onClearSelection={() => setSelectedDrawings(new Set())}>
+            <Button size="sm">打印归档</Button><Button size="sm" variant="danger">删除记录</Button>
+          </BatchActionBar> : null}
+          <TableFrame title="图纸版本" description="表头固定；手机只保留领域页指定的关键字段。"
+            footer={<Pagination page={2} pageCount={7} totalItems={126} onPageChange={() => undefined} />}>
+            <DataTable ariaLabel="图纸版本" columns={galleryDrawingColumns} rows={galleryDrawings}
+              getRowKey={(row) => row.id} getRowLabel={(row) => row.drawing} selectedKeys={selectedDrawings}
+              onSelectionChange={(keys) => setSelectedDrawings(new Set([...keys].map(Number)))} stickyHeader />
+          </TableFrame>
+          <div className={styles.dataStateGrid}>
+            <TableFrame title="加载状态"><DataTable ariaLabel="待处理任务" columns={galleryDrawingColumns} rows={[]}
+              getRowKey={(row) => row.id} loading /></TableFrame>
+            <TableFrame title="空状态"><DataTable ariaLabel="已发布版本" columns={galleryDrawingColumns} rows={[]}
+              getRowKey={(row) => row.id} emptyTitle="暂无已发布版本" emptyDescription="版本发布后将在此显示。" /></TableFrame>
+            <TableFrame title="错误状态"><DataTable ariaLabel="同步记录" columns={galleryDrawingColumns} rows={[]}
+              getRowKey={(row) => row.id} error="无法读取同步记录，请检查连接。" onRetry={() => undefined} /></TableFrame>
+          </div>
         </div>
       </section>
     </main>

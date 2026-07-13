@@ -1,7 +1,7 @@
 # Phase 2 UI Design System and App Shell Implementation Plan
 
 - 日期：2026-07-13
-- 状态：执行中
+- 状态：已完成
 - 分支：`codex/phase-2-ui-design-system`
 - 前置门禁：Phase 0、Phase 1 已完成并通过真实浏览器验收
 - 视觉方向：精密工业、文档优先、高密度、安静、可扫描
@@ -198,6 +198,6 @@ git diff --check
 - DS0 至 DS4 调用点完成迁移；旧实现只有零引用后才能删除。
 - `docs/verification.md` 写入真实命令、数量、警告和未完成边界。
 
-## 当前执行切片
+## 完成状态
 
-本轮先完成 Task 1 和 Task 2。Task 3 只有在 DS0/DS1 的浏览器基线稳定后开始。
+DS0 至 DS4 已全部落地并通过最终门禁。PDF Studio 三栏画布、问题状态机和专用审阅工具仍按边界留在 Phase 3；WebDAV 同步中心的深度交互仍留在 Phase 5。

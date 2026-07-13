@@ -78,11 +78,11 @@ describe("PDM part library page layout", () => {
 
   it("uses a PDM workbench shell with scan-friendly summary and issue queue", () => {
     expect(listSource).toContain("PDM 工作台");
-    expect(listSource).toContain("pdm-ledger-shell");
-    expect(listSource).toContain("pdm-overview-grid");
-    expect(listSource).toContain("pdm-filter-section");
-    expect(listSource).toContain("pdm-ledger-section");
-    expect(listSource).toContain("pdm-risk-queue");
+    expect(listSource).toContain("PageHeader");
+    expect(listSource).toContain("KeyValueList");
+    expect(listSource).toContain("FilterBar");
+    expect(listSource).toContain("DataTable");
+    expect(listSource).toContain("riskQueue");
     expect(listSource).toContain("进入待补录");
     expect(listSource).toContain("#/pdm/pending-metadata");
 
@@ -98,8 +98,9 @@ describe("PDM part library page layout", () => {
 describe("PDM pending metadata page layout", () => {
   it("renders a dedicated repair queue instead of sending users to the full approval ledger", () => {
     expect(pendingSource).toContain("PDM 待补录清单");
-    expect(pendingSource).toContain("pdm-pending-page");
-    expect(pendingSource).toContain("pdm-pending-summary");
+    expect(pendingSource).toContain("PageHeader");
+    expect(pendingSource).toContain("KeyValueList");
+    expect(pendingSource).toContain("DataTable");
     expect(pendingSource).toContain("listPendingPdmMetadata");
     expect(pendingSource).toContain("返回零件库");
     expect(pendingSource).toContain("打开审批详情");
@@ -110,7 +111,7 @@ describe("PDM pending metadata page layout", () => {
   it("supports inline metadata repair and publish retry from the queue", () => {
     expect(pendingSource).toContain("repairApprovalPdmMetadata");
     expect(pendingSource).toContain("publishApprovalToPdm");
-    expect(pendingSource).toContain("pdm-inline-repair");
+    expect(pendingSource).toContain("<Drawer");
     expect(pendingSource).toContain("快速补录");
     expect(pendingSource).toContain("保存补录");
     expect(pendingSource).toContain("发布到 PDM");
@@ -119,11 +120,11 @@ describe("PDM pending metadata page layout", () => {
 
 describe("PDM part detail page layout", () => {
   it("shows current revision, revision history, usage projects, and trace links", () => {
-    expect(detailSource).toContain("pdm-detail-shell");
-    expect(detailSource).toContain("pdm-master-card");
-    expect(detailSource).toContain("pdm-current-version-pin");
-    expect(detailSource).toContain("pdm-relation-tabs");
-    expect(detailSource).toContain("pdm-hash-grid");
+    expect(detailSource).toContain("PageHeader");
+    expect(detailSource).toContain("KeyValueList");
+    expect(detailSource).toContain("<Tabs");
+    expect(detailSource).toContain("DataTable");
+    expect(detailSource).toContain("HashValue");
     expect(detailSource).toContain("零件主档案");
     expect(detailSource).toContain("当前有效版本");
     expect(detailSource).toContain("历史版本");

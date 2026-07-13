@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-test("DS0–DS3 foundation is stable, accessible and responsive", async ({ page }) => {
+test("DS0–DS4 foundation is stable, accessible and responsive", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -9,7 +9,7 @@ test("DS0–DS3 foundation is stable, accessible and responsive", async ({ page 
 
   await page.goto("/__ui-gallery");
   await expect(page.getByRole("heading", { level: 1, name: "UI 设计系统基线" })).toBeVisible();
-  await expect(page.getByText("Phase 2 · DS0–DS3")).toBeVisible();
+  await expect(page.getByText("Phase 2 · DS0–DS4")).toBeVisible();
 
   const overflow = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,
@@ -39,6 +39,34 @@ test("DS0–DS3 foundation is stable, accessible and responsive", async ({ page 
   await expect(page.getByRole("dialog", { name: "版本筛选" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "版本筛选" })).toHaveCount(0);
+
+  const drawingTable = page.getByRole("table", { name: "图纸版本" });
+  await expect(drawingTable).toHaveAttribute("data-sticky-header", "true");
+  const mobileTable = (page.viewportSize()?.width ?? 0) <= 768;
+  const firstDrawing = page.getByRole("checkbox", { name: "选择 GX-240713-018 · 减速器壳体" });
+  if (mobileTable) {
+    await expect(firstDrawing).toBeChecked();
+    await firstDrawing.uncheck();
+    await expect(page.getByText("已选择 1 项")).toHaveCount(0);
+    await firstDrawing.check();
+  } else {
+    const selectAll = page.getByRole("checkbox", { name: "选择全部图纸版本" });
+    await selectAll.check();
+    await expect(page.getByText("已选择 3 项")).toBeVisible();
+    await page.getByRole("button", { name: "清除选择" }).click();
+    await expect(page.getByText("已选择 3 项")).toHaveCount(0);
+    await firstDrawing.check();
+  }
+  await expect(page.getByText("已选择 1 项")).toBeVisible();
+
+  await expect(page.getByLabel("正在加载待处理任务")).toBeVisible();
+  await expect(page.getByText("暂无已发布版本")).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "无法读取同步记录" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "分页" })).toContainText("第 2 / 7 页");
+
+  const ownerCell = drawingTable.locator('td[data-label="负责人"]').first();
+  if (mobileTable) await expect(ownerCell).toBeHidden();
+  else await expect(ownerCell).toBeVisible();
 
   const axe = await new AxeBuilder({ page }).analyze();
   const blocking = axe.violations.filter(({ impact }) => impact === "serious" || impact === "critical");

@@ -1,0 +1,2 @@
+.time, .target { color: var(--color-text-muted); font-family: var(--font-family-mono); font-size: var(--font-size-caption); white-space: nowrap; }
+.message { overflow-wrap: anywhere; }

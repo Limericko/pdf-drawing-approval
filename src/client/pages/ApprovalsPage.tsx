@@ -12,21 +12,31 @@ import { ApprovalTable } from "../widgets/ApprovalTable.tsx";
 import {
   approvalIdsEligibleForBatchPrintArchive,
   approvalIdsEligibleForBatchSignedPdf,
-  approvalIds,
   approvalListEmptyText,
   applyBatchApprovalActionResults,
   batchActionAvailabilityText,
   normalizeSearchKeyword,
   reconcileSelectedApprovals,
   removeDeletedApprovals,
-  replaceAllSelections,
   signatureStatusFilterFromHash,
   shouldResetPageForLedgerFilters,
-  statusFilterFromHash,
-  toggleApprovalSelection
+  statusFilterFromHash
 } from "./approvalListLogic.ts";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { FilterBar } from "../patterns/FilterBar/index.tsx";
+import { Button } from "../ui/actions/index.tsx";
+import { BatchActionBar, Pagination } from "../ui/data/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
+import { Select, TextInput } from "../ui/forms/index.tsx";
+import { ConfirmDialog } from "../ui/overlays/index.tsx";
+import styles from "./ApprovalsPage.module.css";
 
 const approvalPageSize = 20;
+
+type PendingConfirmation =
+  | { readonly kind: "delete"; readonly ids: readonly number[]; readonly description: string }
+  | { readonly kind: "archive"; readonly ids: readonly number[]; readonly description: string }
+  | null;
 
 export function ApprovalsPage({ user }: { user: User }) {
   const [items, setItems] = useState<Approval[]>([]);
@@ -43,6 +53,7 @@ export function ApprovalsPage({ user }: { user: User }) {
   const [deleting, setDeleting] = useState(false);
   const [batchBusy, setBatchBusy] = useState<"sign" | "archive" | "">("");
   const [batchResult, setBatchResult] = useState<BatchApprovalActionResult | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation>(null);
   const deferredKeywordDraft = useDeferredValue(keywordDraft);
   const normalizedDraftKeyword = normalizeSearchKeyword(keywordDraft);
   const keywordPending = normalizedDraftKeyword !== committedKeyword;
@@ -102,19 +113,15 @@ export function ApprovalsPage({ user }: { user: User }) {
     setSelectedIds((current) => reconcileSelectedApprovals(current, items));
   }, [items]);
 
-  async function deleteOne(approval: Approval) {
-    const confirmed = window.confirm(`确认删除图纸 ${approval.projectName} / ${approval.partName} ${approval.version}？此操作会删除审批记录和服务器上的受管 PDF 文件。`);
-    if (!confirmed) return;
-
-    await deleteApprovals([approval.id]);
+  function deleteOne(approval: Approval) {
+    setPendingConfirmation({ kind: "delete", ids: [approval.id],
+      description: `确认删除图纸 ${approval.projectName} / ${approval.partName} ${approval.version}？此操作会删除审批记录和服务器上的受管 PDF 文件。` });
   }
 
-  async function deleteSelected() {
+  function deleteSelected() {
     if (selectedIds.size === 0) return;
-    const confirmed = window.confirm(`确认删除选中的 ${selectedIds.size} 张图纸？此操作会删除审批记录和服务器上的受管 PDF 文件。`);
-    if (!confirmed) return;
-
-    await deleteApprovals([...selectedIds]);
+    setPendingConfirmation({ kind: "delete", ids: [...selectedIds],
+      description: `确认删除选中的 ${selectedIds.size} 张图纸？此操作会删除审批记录和服务器上的受管 PDF 文件。` });
   }
 
   async function deleteApprovals(ids: number[]) {
@@ -159,17 +166,26 @@ export function ApprovalsPage({ user }: { user: User }) {
     }
   }
 
-  async function runBatchPrintArchive() {
+  function runBatchPrintArchive() {
     if (selectedPrintArchiveIds.length === 0) return;
-    const confirmed = window.confirm(`确认将 ${selectedPrintArchiveIds.length} 张图纸标记为已打印归档？`);
-    if (!confirmed) return;
+    setPendingConfirmation({ kind: "archive", ids: selectedPrintArchiveIds,
+      description: `确认将 ${selectedPrintArchiveIds.length} 张图纸标记为已打印归档？` });
+  }
 
+  async function confirmPendingAction() {
+    const pending = pendingConfirmation;
+    if (!pending) return;
+    setPendingConfirmation(null);
+    if (pending.kind === "delete") {
+      await deleteApprovals([...pending.ids]);
+      return;
+    }
     setError("");
     setMessage("");
     setBatchResult(null);
     setBatchBusy("archive");
     try {
-      const result = await batchMarkPrinted(selectedPrintArchiveIds);
+      const result = await batchMarkPrinted([...pending.ids]);
       applyBatchResult(result, `批量打印归档：成功 ${result.success}，失败 ${result.failed}。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "批量打印归档失败");
@@ -205,65 +221,28 @@ export function ApprovalsPage({ user }: { user: User }) {
 
   return (
     <section>
-      <div className="page-heading row">
-        <div>
-          <span className="eyebrow">DRAWING INDEX</span>
-          <h1>全量图纸台账</h1>
-          <p>{approvalLedgerDescription(user.role)}</p>
-        </div>
-        <div className="toolbar">
-          <label>
-            关键词
-            <input
-              value={keywordDraft}
-              onChange={(event) => {
-                setKeywordDraft(event.target.value);
-              }}
-              placeholder="项目、零件、版本"
-            />
-          </label>
-          <label>
-            状态
-            <select
-              value={status}
-              onChange={(event) => {
-                updateStatusFilter(event.target.value);
-              }}
-            >
-              <option value="">全部状态</option>
-              <optgroup label="流程状态">
-                <option value="pending">审批中</option>
-                <option value="rejected">已驳回</option>
-                <option value="approved_for_print">已通过待打印</option>
-                <option value="printed_archived">已打印归档</option>
-              </optgroup>
-              <optgroup label="异常处理">
-                <option value="invalid_pdf">PDF 无效</option>
-                <option value="file_missing">文件丢失</option>
-                <option value="filename_invalid">文件名异常</option>
-                <option value="voided">已作废</option>
-              </optgroup>
-            </select>
-          </label>
-          {hasActiveFilters && (
-            <button type="button" className="secondary-button clear-filter-button" onClick={clearFilters}>
-              清空筛选
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="table-filter-summary">
-        <span>当前页 {items.length} 张 / 共 {total} 张</span>
-        <span>第 {page} / {pageCount} 页</span>
-        {signatureStatus && <span>签审筛选：{signatureStatus}</span>}
-        {normalizedDraftKeyword && <span>关键词：{normalizedDraftKeyword}</span>}
-        {keywordPending && <span className="muted-inline">输入完成后自动刷新</span>}
-      </div>
-      {error && <div className="error">{error}</div>}
-      {message && <div className="success">{message}</div>}
-      {loading && <div className="empty compact-empty">{keywordPending ? "正在等待输入完成..." : "正在刷新当前筛选结果..."}</div>}
+      <PageHeader title="全量图纸台账" eyebrow="DRAWING INDEX" description={approvalLedgerDescription(user.role)}
+        metadata={<><span>当前页 <strong>{items.length}</strong> 张</span><span>共 <strong>{total}</strong> 张</span></>} />
+      <FilterBar summary={<><span>第 {page} / {pageCount} 页</span>
+        {signatureStatus ? <span>签审筛选：{signatureStatus}</span> : null}
+        {normalizedDraftKeyword ? <span>关键词：{normalizedDraftKeyword}</span> : null}
+        {keywordPending ? <span>输入完成后自动刷新</span> : null}</>}
+        actions={hasActiveFilters ? <Button variant="secondary" onClick={clearFilters}>清空筛选</Button> : undefined}>
+        <TextInput id="approval-keyword" label="关键词" value={keywordDraft}
+          onChange={(event) => setKeywordDraft(event.target.value)} placeholder="项目、零件、版本" />
+        <Select id="approval-status" label="状态" value={status} onChange={(event) => updateStatusFilter(event.target.value)} options={[
+          { value: "", label: "全部状态" }, { value: "pending", label: "审批中" },
+          { value: "rejected", label: "已驳回" }, { value: "approved_for_print", label: "已通过待打印" },
+          { value: "printed_archived", label: "已打印归档" }, { value: "invalid_pdf", label: "PDF 无效" },
+          { value: "file_missing", label: "文件丢失" }, { value: "filename_invalid", label: "文件名异常" },
+          { value: "voided", label: "已作废" }
+        ]} />
+      </FilterBar>
+      {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
+      {message ? <InlineAlert tone="success">{message}</InlineAlert> : null}
+      {loading ? <InlineAlert tone="info">{keywordPending ? "正在等待输入完成..." : "正在刷新当前筛选结果..."}</InlineAlert> : null}
       {batchResult && (
-        <div className="batch-action-result">
+        <InlineAlert tone={batchResult.failed > 0 ? "warning" : "success"}>
           <strong>批量处理结果：成功 {batchResult.success}，失败 {batchResult.failed}</strong>
           {batchResult.failed > 0 && (
             <ul>
@@ -276,50 +255,39 @@ export function ApprovalsPage({ user }: { user: User }) {
                 ))}
             </ul>
           )}
-        </div>
+        </InlineAlert>
       )}
-      {selectable && items.length > 0 && (
-        <div className="table-action-bar">
-          <span>{approvalSelectionSummary(user.role, selectedCount, selectedSignedPdfIds.length, selectedPrintArchiveIds.length)}</span>
+      {selectable && selectedCount > 0 && (
+        <BatchActionBar selectedCount={selectedCount} onClearSelection={() => setSelectedIds(new Set())}>
+          <span className={styles.selectionSummary}>{approvalSelectionSummary(user.role, selectedCount, selectedSignedPdfIds.length, selectedPrintArchiveIds.length)}</span>
           {canBatchProcess && (
             <>
-              <button type="button" onClick={runBatchSignedPdf} disabled={selectedSignedPdfIds.length === 0 || Boolean(batchBusy)}>
-                {batchBusy === "sign" ? "生成中" : "批量重新生成签后 PDF"}
-              </button>
-              <button type="button" onClick={runBatchPrintArchive} disabled={selectedPrintArchiveIds.length === 0 || Boolean(batchBusy)}>
-                {batchBusy === "archive" ? "归档中" : "批量标记打印归档"}
-              </button>
+              <Button size="sm" onClick={runBatchSignedPdf} disabled={selectedSignedPdfIds.length === 0 || Boolean(batchBusy)}
+                loading={batchBusy === "sign"} loadingLabel="生成中">批量重新生成签后 PDF</Button>
+              <Button size="sm" onClick={runBatchPrintArchive} disabled={selectedPrintArchiveIds.length === 0 || Boolean(batchBusy)}
+                loading={batchBusy === "archive"} loadingLabel="归档中">批量标记打印归档</Button>
             </>
           )}
           {canDelete && (
-            <button
-              type="button"
-              className="danger"
-              onClick={deleteSelected}
-              disabled={selectedCount === 0 || deleting || Boolean(batchBusy)}
-            >
-              {deleting ? "删除中" : "删除所选"}
-            </button>
+            <Button size="sm" variant="danger" onClick={deleteSelected} disabled={deleting || Boolean(batchBusy)}
+              loading={deleting} loadingLabel="删除中">删除所选</Button>
           )}
-        </div>
+        </BatchActionBar>
       )}
       <ApprovalTable
         approvals={items}
         emptyText={approvalListEmptyText(hasActiveFilters)}
+        loading={loading}
         selectedIds={selectable ? selectedIds : undefined}
-        onToggleSelection={selectable ? (approvalId) => setSelectedIds((current) => toggleApprovalSelection(current, approvalId)) : undefined}
-        onToggleAll={selectable ? (selected) => setSelectedIds(replaceAllSelections(approvalIds(items), selected)) : undefined}
+        onSelectionChange={selectable ? (keys) => setSelectedIds(new Set(keys)) : undefined}
         onDelete={canDelete ? deleteOne : undefined}
+        footer={<Pagination page={page} pageCount={pageCount} totalItems={total} disabled={loading}
+          onPageChange={setPage} />}
       />
-      <div className="pagination-bar">
-        <button type="button" className="secondary-button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1 || loading}>
-          上一页
-        </button>
-        <span>第 {page} / {pageCount} 页</span>
-        <button type="button" className="secondary-button" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={page >= pageCount || loading}>
-          下一页
-        </button>
-      </div>
+      <ConfirmDialog open={Boolean(pendingConfirmation)} title={pendingConfirmation?.kind === "archive" ? "确认打印归档" : "确认删除图纸"}
+        description={pendingConfirmation?.description ?? ""} danger={pendingConfirmation?.kind === "delete"}
+        confirmLabel={pendingConfirmation?.kind === "archive" ? "确认归档" : "确认删除"}
+        busy={deleting || batchBusy === "archive"} onClose={() => setPendingConfirmation(null)} onConfirm={() => { void confirmPendingAction(); }} />
     </section>
   );
 }

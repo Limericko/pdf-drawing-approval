@@ -4359,3 +4359,37 @@ Gallery 生命周期修复：
 - legacy Playwright 完整非更新模式：desktop/mobile 共 22 项，`21` 通过，mobile-only 的 desktop 64px 契约用例按设计跳过 `1`；desktop 断言动画稳定后精确为 `64px`。退出后 `14173/18080` 监听均为 `0`。
 - 四份 AppShell/PDF 工作台视觉基线已在真实浏览器人工复核并更新；desktop admin `125186`、mobile admin `117602`、desktop workbench `120741`、mobile workbench `148104` bytes。
 - Gallery DS0–DS3 更新后非更新模式五视口 `5/5` 通过，截图已人工复核；当前大小为 desktop `281878`、compact `275865`、landscape `273396`、portrait `275733`、mobile `261986` bytes。
+
+## 2026-07-14 Phase 2 Task 9–12：DS4 数据页与阶段验收（完成）
+
+实现范围：
+
+- 新增业务无关的 `StatusChip`、`Badge`、`KeyValueList`、`TableFrame`、`DataTable`、`Pagination`、`Timeline`、`FileLink`、`HashValue` 和 `BatchActionBar`。`DataTable` 不请求数据；审批和 PDM 状态均在页面或领域适配层映射为 `label/tone`。
+- `DataTable` 覆盖固定表头、受控选择、全选/部分选择、行键盘进入、loading/empty/error、重试、手机卡片字段和 `mobileHidden` 领域配置；手机批量操作栏固定在可触达位置。
+- MyTasks、Approvals 和共享 ApprovalTable 已迁移。审批台账继续保留延迟关键词请求、筛选、分页、批量签后 PDF、打印归档、管理员删除和行进入；单删、批删、打印归档均改用 `ConfirmDialog`。
+- PDM Parts、Pending Metadata、Part Detail 已迁移。零件库保留风险队列、查询、分页和详情入口；待补录使用 Drawer 快速补录；详情页使用 DataTable、FileLink、HashValue 和 Timeline，并把版本作废改为 `ConfirmDialog`。
+- Settings 使用统一 PageHeader/Tabs；用户、签名模板和 Operations 操作日志迁移到 DataTable。模板删除改用 `ConfirmDialog`；表格内字段使用带隐藏视觉标签的公共表单控件。
+- 删除零引用的 `.data-table`、`.approval-table`、`.pdm-table`、`.table-action-bar`、`.pagination-bar`、`.user-table`、`.template-table`、`.operation-table` 和 `.operation-log-panel` 公共实现及其响应式分支。
+
+TDD 与静态门禁：
+
+- DS4 初始测试先因 `src/client/ui/data/index.tsx` 不存在得到预期 RED；最小实现后数据组件 `4/4` 通过。
+- 迁移聚焦回归：审批切片 `22/22`，PDM 与数据组件 `14/14`，Settings/Forms/Overlay 聚焦 `15/15`。
+- 全量 client：53 个测试文件、`405/405` 通过。
+- `npm run e2e:typecheck`：通过。
+- `npm run build`：通过；仍只有既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告。
+- 新 DS4 CSS/组件扫描：硬编码颜色 `0`、任意 z-index `0`、公共组件中的审批/PDM/WebDAV 业务词 `0`；旧表格选择器生产引用 `0`；`git diff --check` 通过。
+
+真实浏览器与运行时验收：
+
+- Gallery E2E 已升级为 DS0–DS4：先因旧阶段标识得到五视口有效 RED；新增表格选择、状态、分页和手机字段断言后，1440×900、1280×800、1024×768、768×1024、390×844 非更新模式 `5/5` 通过。
+- Gallery 每个视口均验证无横向溢出、axe serious/critical `0`、控制台 error `0`、reduced motion、Dialog/Drawer/Popover 焦点契约，以及桌面全选和移动端逐行选择。五张截图已人工检查；大小依次为 desktop `345429`、compact `338019`、landscape `334355`、portrait `346498`、mobile `329493` bytes。
+- Electron：3 个测试文件、`12/12` 通过。
+- legacy Playwright：22 项，`21 passed / 1 skipped`；跳过项仅为 mobile 项目不适用 desktop 64px 契约。系统管理桌面/手机实际截图人工检查后更新，完整非更新模式复测稳定。
+- Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- 最终退出后 `14173/18080/24173/28080/34173/58026` 监听均为 `0`，Platform state 文件不存在。
+
+Phase 2 结论：
+
+- DS0–DS4、统一 AppShell、公共 Actions/Forms/Feedback/Overlays/Navigation/Data 组件及计划内业务页迁移全部完成。
+- Phase 2 验收闭环；PDF Studio 专用三栏工作台继续进入 Phase 3，未在本阶段越界修改。

@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useState } from "react";
-import { AlertTriangle, Database, ExternalLink, FileText, Layers, ListChecks, RefreshCw, Search } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   listPdmParts,
   listPendingPdmMetadata,
@@ -9,13 +9,33 @@ import {
   type PdmPendingMetadataApproval,
   type User
 } from "../api.ts";
+import { FilterBar } from "../patterns/FilterBar/index.tsx";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { Button, ButtonLink } from "../ui/actions/index.tsx";
+import { DataTable, KeyValueList, Pagination, StatusChip, TableFrame, type DataTableColumn, type DataTone } from "../ui/data/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
+import { Select, TextInput } from "../ui/forms/index.tsx";
+import styles from "./PdmPages.module.css";
 
 const pdmPageSize = 20;
-const emptyPdmStats: PdmPartListStats = {
-  totalParts: 0,
-  currentRevisionCount: 0,
-  commonPartCount: 0
-};
+const emptyPdmStats: PdmPartListStats = { totalParts: 0, currentRevisionCount: 0, commonPartCount: 0 };
+
+const pdmPartColumns: readonly DataTableColumn<PdmPartListItem>[] = [
+  { id: "materialCode", header: "管家婆物料号", cell: (item) => <ButtonLink variant="ghost" size="sm" href={`#/pdm/parts/${item.id}`}>{item.materialCode}</ButtonLink> },
+  { id: "name", header: "图纸名称", cell: (item) => <strong>{item.name}</strong> },
+  { id: "version", header: "当前有效版本", align: "center", cell: (item) => item.currentVersion ?? <span className={styles.muted}>待发布</span> },
+  { id: "documentCode", header: "体系文件号", mobileHidden: true, cell: (item) => item.currentDocumentCode ?? <span className={styles.muted}>待补</span> },
+  { id: "projects", header: "项目复用", mobileHidden: true, cell: pdmUsageProjectsText },
+  { id: "status", header: "状态", cell: (item) => {
+    const presentation = pdmPartStatusPresentation(item);
+    return <StatusChip tone={presentation.tone}>{presentation.label}</StatusChip>;
+  } },
+  { id: "releasedAt", header: "最近发布", mobileHidden: true, cell: (item) => <time className={styles.time}>{formatPdmDateTime(item.currentReleasedAt)}</time> },
+  { id: "actions", header: "操作", cell: (item) => <div className={styles.rowActions} onClick={(event) => event.stopPropagation()}>
+    <ButtonLink variant="secondary" size="sm" href={`#/pdm/parts/${item.id}`}>详情</ButtonLink>
+    {item.currentApprovalId ? <ButtonLink variant="ghost" size="sm" href={`#/approvals/${item.currentApprovalId}`}>审批记录</ButtonLink> : null}
+  </div> }
+];
 
 export function PdmPartsPage({ user }: { user: User }) {
   const [items, setItems] = useState<PdmPartListItem[]>([]);
@@ -52,268 +72,83 @@ export function PdmPartsPage({ user }: { user: User }) {
     return () => window.clearTimeout(timer);
   }, [deferredKeywordDraft]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [hasCurrentRevision, isCommon, projectName]);
+  useEffect(() => { setPage(1); }, [hasCurrentRevision, isCommon, projectName]);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
-    listPdmParts({
-      page,
-      pageSize: pdmPageSize,
-      keyword: committedKeyword || undefined,
-      projectName: projectName.trim() || undefined,
-      isCommon: booleanFilterValue(isCommon),
-      hasCurrentRevision: booleanFilterValue(hasCurrentRevision)
-    })
+    listPdmParts({ page, pageSize: pdmPageSize, keyword: committedKeyword || undefined,
+      projectName: projectName.trim() || undefined, isCommon: booleanFilterValue(isCommon),
+      hasCurrentRevision: booleanFilterValue(hasCurrentRevision) })
       .then((result) => {
         if (!active) return;
-        setItems(result.items);
-        setTotal(result.total);
-        setStats(result.stats);
+        setItems(result.items); setTotal(result.total); setStats(result.stats);
       })
-      .catch((err) => {
-        if (!active) return;
-        setError(err instanceof Error ? err.message : "PDM_PART_LIST_FAILED");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "PDM_PART_LIST_FAILED"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [committedKeyword, hasCurrentRevision, isCommon, page, projectName, refreshSeq]);
 
   useEffect(() => {
-    if (!canSeePendingMetadata) {
-      setPendingMetadata([]);
-      setPendingError("");
-      return;
-    }
+    if (!canSeePendingMetadata) { setPendingMetadata([]); setPendingError(""); return; }
     let active = true;
     setPendingError("");
     listPendingPdmMetadata()
-      .then((result) => {
-        if (active) setPendingMetadata(result.items);
-      })
-      .catch((err) => {
-        if (active) setPendingError(err instanceof Error ? err.message : "PDM_PENDING_METADATA_FAILED");
-      });
-    return () => {
-      active = false;
-    };
+      .then((result) => { if (active) setPendingMetadata(result.items); })
+      .catch((err) => { if (active) setPendingError(err instanceof Error ? err.message : "PDM_PENDING_METADATA_FAILED"); });
+    return () => { active = false; };
   }, [canSeePendingMetadata, refreshSeq]);
 
   function clearFilters() {
-    setKeywordDraft("");
-    setCommittedKeyword("");
-    setProjectName("");
-    setIsCommon("");
-    setHasCurrentRevision("");
-    setPage(1);
+    setKeywordDraft(""); setCommittedKeyword(""); setProjectName(""); setIsCommon(""); setHasCurrentRevision(""); setPage(1);
   }
 
-  return (
-    <section className="pdm-page pdm-ledger-shell">
-      <header className="pdm-ledger-heading">
-        <div>
-          <span className="eyebrow">PDM 工作台</span>
-          <h1>零件库</h1>
-          <p>{pdmLibraryDescription(user.role)}</p>
-        </div>
-        <span className="muted-inline">筛选条件保留在本页，便于连续查询和追溯。</span>
-      </header>
+  return <section className={styles.page}>
+    <PageHeader title="零件库" eyebrow="PDM 工作台" description={pdmLibraryDescription(user.role)}
+      actions={<Button variant="secondary" loading={loading} loadingLabel="刷新中" onClick={() => setRefreshSeq((current) => current + 1)}>
+        <RefreshCw size={15} aria-hidden="true" />刷新
+      </Button>} metadata={<span>筛选条件保留在本页，便于连续查询和追溯。</span>} />
 
-      <section className={`pdm-overview-grid${canSeePendingMetadata ? "" : " pdm-overview-grid--stats-only"}`} aria-label="PDM 统计与风险概览">
-        <div className="pdm-stat-strip" aria-label="PDM 零件库概览">
-          {libraryStats.map((stat, index) => (
-            <div key={stat.label} className="pdm-stat-card">
-              <span className="pdm-stat-icon">
-                {index === 0 && <Database size={18} strokeWidth={2} aria-hidden="true" />}
-                {index === 1 && <FileText size={18} strokeWidth={2} aria-hidden="true" />}
-                {index === 2 && <ListChecks size={18} strokeWidth={2} aria-hidden="true" />}
-                {index === 3 && <Layers size={18} strokeWidth={2} aria-hidden="true" />}
-              </span>
-              <div>
-                <span>{stat.label}</span>
-                <strong>{stat.value}</strong>
-                <em>{stat.note}</em>
-              </div>
-            </div>
-          ))}
-        </div>
+    <KeyValueList aria-label="PDM 零件库概览" items={libraryStats.map((stat) => ({
+      id: stat.label, label: stat.label, value: <><strong className={styles.statValue}>{stat.value}</strong><span className={styles.statNote}>{stat.note}</span></>
+    }))} />
 
-        {canSeePendingMetadata && (
-          <aside className="pdm-risk-queue" aria-label="PDM 待补录风险队列">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">风险队列</span>
-                <h2>PDM 待补录</h2>
-              </div>
-              <strong>{pendingMetadata.length}</strong>
-            </div>
-            <p>缺少物料号、体系文件号或发布失败的图纸，补录后才能进入正式零件库。</p>
-            {pendingError && <div className="error">PDM 待补录读取失败：{pendingError}</div>}
-            <div className="pdm-pending-list">
-              {pendingMetadata.slice(0, 4).map((item) => (
-                <a key={item.approvalId} className="pdm-pending-item" href={`#/approvals/${item.approvalId}`}>
-                  <span>{item.projectName} / {item.drawingName ?? item.partName} {item.version}</span>
-                  <strong>{pdmMetadataStatusLabel(item.metadataStatus)}</strong>
-                </a>
-              ))}
-              {pendingMetadata.length === 0 && <span className="muted-inline">暂无待补录记录</span>}
-            </div>
-            <a className="table-action-link pdm-risk-queue__link" href="#/pdm/pending-metadata">
-              进入待补录
-              {pendingMetadata.length > 4 ? `，还有 ${pendingMetadata.length - 4} 条` : ""}
-            </a>
-          </aside>
-        )}
-      </section>
+    {canSeePendingMetadata ? <aside className={styles.riskQueue} aria-label="PDM 待补录风险队列">
+      <div><div><span className={styles.eyebrow}>风险队列</span><h2>PDM 待补录</h2></div><StatusChip tone="warning">{pendingMetadata.length} 项</StatusChip></div>
+      <p>缺少物料号、体系文件号或发布失败的图纸，补录后才能进入正式零件库。</p>
+      {pendingError ? <InlineAlert tone="danger">PDM 待补录读取失败：{pendingError}</InlineAlert> : null}
+      <div className={styles.pendingList}>{pendingMetadata.slice(0, 4).map((item) => <a key={item.approvalId} href={`#/approvals/${item.approvalId}`}>
+        <span>{item.projectName} / {item.drawingName ?? item.partName} {item.version}</span>
+        <StatusChip tone="warning">{pdmMetadataStatusLabel(item.metadataStatus)}</StatusChip>
+      </a>)}{pendingMetadata.length === 0 ? <span className={styles.muted}>暂无待补录记录</span> : null}</div>
+      <ButtonLink variant="secondary" size="sm" href="#/pdm/pending-metadata">进入待补录{pendingMetadata.length > 4 ? `，还有 ${pendingMetadata.length - 4} 条` : ""}</ButtonLink>
+    </aside> : null}
 
-      <section className="pdm-filter-section" aria-label="PDM 查询条件">
-        <div className="pdm-primary-search">
-          <label>
-            关键词
-            <span className="input-with-icon">
-              <Search size={16} strokeWidth={2} aria-hidden="true" />
-              <input
-                value={keywordDraft}
-                onChange={(event) => setKeywordDraft(event.target.value)}
-                placeholder="输入物料号、图纸名称或体系文件号"
-              />
-            </span>
-          </label>
-        </div>
-        <div className="pdm-filter-grid">
-          <label>
-            项目
-            <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="按使用项目筛选" />
-          </label>
-          <label>
-            发布状态
-            <select value={hasCurrentRevision} onChange={(event) => setHasCurrentRevision(event.target.value)}>
-              <option value="">全部</option>
-              <option value="true">有当前版本</option>
-              <option value="false">待发布</option>
-            </select>
-          </label>
-          <label>
-            共用件
-            <select value={isCommon} onChange={(event) => setIsCommon(event.target.value)}>
-              <option value="">全部</option>
-              <option value="true">只看共用件</option>
-              <option value="false">非共用件</option>
-            </select>
-          </label>
-          <div className="pdm-filter-actions">
-            {hasActiveFilters && (
-              <button type="button" className="secondary-button clear-filter-button" onClick={clearFilters}>
-                清空筛选
-              </button>
-            )}
-            <button type="button" className="secondary-button icon-text-button" onClick={() => setRefreshSeq((current) => current + 1)} disabled={loading}>
-              <RefreshCw size={14} strokeWidth={2} aria-hidden="true" />
-              刷新
-            </button>
-          </div>
-        </div>
-      </section>
+    <FilterBar summary={<><span>当前页 {items.length} 个 / 共 {total} 个零件</span><span>第 {page} / {pageCount} 页</span>
+      {normalizedDraftKeyword ? <span>关键词：{normalizedDraftKeyword}</span> : null}
+      {projectName.trim() ? <span>项目：{projectName.trim()}</span> : null}
+      {keywordPending ? <span>输入完成后自动刷新</span> : null}</>}
+      actions={hasActiveFilters ? <Button variant="secondary" onClick={clearFilters}>清空筛选</Button> : undefined}>
+      <TextInput id="pdm-keyword" label="关键词" value={keywordDraft} onChange={(event) => setKeywordDraft(event.target.value)}
+        placeholder="物料号、图纸名称或体系文件号" />
+      <TextInput id="pdm-project" label="项目" value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="按使用项目筛选" />
+      <Select id="pdm-release" label="发布状态" value={hasCurrentRevision} onChange={(event) => setHasCurrentRevision(event.target.value)} options={[
+        { value: "", label: "全部" }, { value: "true", label: "有当前版本" }, { value: "false", label: "待发布" }
+      ]} />
+      <Select id="pdm-common" label="共用件" value={isCommon} onChange={(event) => setIsCommon(event.target.value)} options={[
+        { value: "", label: "全部" }, { value: "true", label: "只看共用件" }, { value: "false", label: "非共用件" }
+      ]} />
+    </FilterBar>
 
-      <section className="pdm-ledger-section" aria-label="PDM 零件主表">
-        <div className="section-title-row pdm-table-title-row">
-          <div>
-            <span className="eyebrow">受控零件</span>
-            <h2>零件主数据</h2>
-          </div>
-          <span className="muted-inline">优先按管家婆物料号查询，物料号全局唯一。</span>
-        </div>
-
-        <div className="table-filter-summary">
-          <span>当前页 {items.length} 个 / 共 {total} 个零件</span>
-          <span>第 {page} / {pageCount} 页</span>
-          {normalizedDraftKeyword && <span>关键词：{normalizedDraftKeyword}</span>}
-          {projectName.trim() && <span>项目：{projectName.trim()}</span>}
-          {keywordPending && <span className="muted-inline">输入完成后自动刷新</span>}
-        </div>
-
-        {error && <div className="error">{error}</div>}
-        {loading && <div className="empty compact-empty">{keywordPending ? "正在等待输入完成..." : "正在刷新零件库..."}</div>}
-
-        {items.length > 0 ? (
-          <div className="table-surface pdm-table-surface">
-            <table className="data-table pdm-table">
-              <thead>
-                <tr>
-                  <th>管家婆物料号</th>
-                  <th>图纸名称</th>
-                  <th>当前有效版本</th>
-                  <th>体系文件号</th>
-                  <th>项目复用</th>
-                  <th>状态</th>
-                  <th>最近发布</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.id}>
-                    <td data-label="管家婆物料号">
-                      <a className="table-action-link pdm-material-link" href={`#/pdm/parts/${item.id}`}>
-                        {item.materialCode}
-                      </a>
-                    </td>
-                    <td data-label="图纸名称">
-                      <strong className="pdm-part-name">{item.name}</strong>
-                    </td>
-                    <td data-label="当前有效版本">
-                      {item.currentVersion ? <span className="version-badge">{item.currentVersion}</span> : <span className="muted-inline">待发布</span>}
-                    </td>
-                    <td data-label="体系文件号">{item.currentDocumentCode ?? <span className="muted-inline">待补</span>}</td>
-                    <td data-label="项目复用">{pdmUsageProjectsText(item)}</td>
-                    <td data-label="状态">
-                      <span className={`status-chip status-chip--${pdmPartStatusTone(item)}`}>{pdmPartStatusLabel(item)}</span>
-                    </td>
-                    <td data-label="最近发布">{formatPdmDateTime(item.currentReleasedAt)}</td>
-                    <td data-label="操作" className="row-actions">
-                      <a className="table-action-link" href={`#/pdm/parts/${item.id}`}>
-                        <ExternalLink size={14} strokeWidth={2} aria-hidden="true" />
-                        详情
-                      </a>
-                      {item.currentApprovalId && (
-                        <a className="table-action-link" href={`#/approvals/${item.currentApprovalId}`}>
-                          审批记录
-                        </a>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          !loading && (
-            <div className="empty-state">
-              <AlertTriangle size={24} strokeWidth={2} aria-hidden="true" />
-              <strong>{pdmLibraryEmptyText(hasActiveFilters)}</strong>
-            </div>
-          )
-        )}
-
-        <div className="pagination-bar">
-          <button type="button" className="secondary-button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1 || loading}>
-            上一页
-          </button>
-          <span>第 {page} / {pageCount} 页</span>
-          <button type="button" className="secondary-button" onClick={() => setPage((current) => Math.min(pageCount, current + 1))} disabled={page >= pageCount || loading}>
-            下一页
-          </button>
-        </div>
-      </section>
-    </section>
-  );
+    <TableFrame title="零件主数据" description="优先按管家婆物料号查询，物料号全局唯一。"
+      footer={<Pagination page={page} pageCount={pageCount} totalItems={total} disabled={loading} onPageChange={setPage} />}>
+      <DataTable ariaLabel="PDM 零件主数据" columns={pdmPartColumns} rows={items} getRowKey={(item) => item.id}
+        getRowLabel={(item) => `${item.materialCode} ${item.name}`} loading={loading} error={error || undefined}
+        onRetry={() => setRefreshSeq((current) => current + 1)} emptyTitle={pdmLibraryEmptyText(hasActiveFilters)}
+        onRowActivate={(item) => { location.hash = `/pdm/parts/${item.id}`; }} stickyHeader />
+    </TableFrame>
+  </section>;
 }
 
 export function buildPdmLibraryStats(stats: PdmPartListStats, pendingMetadataCount: number) {
@@ -333,9 +168,7 @@ export function pdmLibraryDescription(role: User["role"]) {
 }
 
 export function pdmLibraryEmptyText(hasActiveFilters: boolean) {
-  return hasActiveFilters
-    ? "没有匹配的零件档案，请调整关键词或筛选条件。"
-    : "暂无 PDM 零件档案。审批通过并发布后会自动进入这里。";
+  return hasActiveFilters ? "没有匹配的零件档案，请调整关键词或筛选条件。" : "暂无 PDM 零件档案。审批通过并发布后会自动进入这里。";
 }
 
 export function pdmUsageProjectsText(item: Pick<PdmPartListItem, "usageProjectCount" | "usageProjects">) {
@@ -356,20 +189,18 @@ export function pdmPartStatusTone(item: Pick<PdmPartListItem, "isCommon" | "curr
   return "print";
 }
 
+function pdmPartStatusPresentation(item: Pick<PdmPartListItem, "isCommon" | "currentRevisionId" | "currentVersion">): { label: string; tone: DataTone } {
+  return { label: pdmPartStatusLabel(item), tone: item.isCommon ? "info" : !item.currentRevisionId || !item.currentVersion ? "warning" : "success" };
+}
+
 export function pdmMetadataStatusLabel(status: PdmMetadataStatus) {
-  return {
-    complete: "完整",
-    missing_material_code: "待补物料号",
-    missing_document_code: "体系文件号待补",
-    missing_required: "关键信息待补"
-  }[status];
+  return { complete: "完整", missing_material_code: "待补物料号", missing_document_code: "体系文件号待补", missing_required: "关键信息待补" }[status];
 }
 
 export function formatPdmDateTime(value: string | null) {
   if (!value) return "未发布";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function booleanFilterValue(value: string) {

@@ -9,6 +9,7 @@ type FieldBase = {
   readonly error?: string;
   readonly required?: boolean;
   readonly className?: string;
+  readonly hideLabel?: boolean;
 };
 
 type NativeFieldProps = Readonly<{
@@ -16,14 +17,14 @@ type NativeFieldProps = Readonly<{
   "aria-invalid"?: true;
 }>;
 
-export function Field({ id, label, description, error, required, className, children }: FieldBase & {
+export function Field({ id, label, description, error, required, className, hideLabel = false, children }: FieldBase & {
   readonly children: (props: NativeFieldProps) => ReactNode;
 }) {
   const descriptionId = description ? `${id}-description` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [descriptionId, errorId].filter(Boolean).join(" ") || undefined;
   return <div className={join(styles.field, className)}>
-    <label htmlFor={id}>{label}{required ? <span className={styles.required} aria-hidden="true"> *</span> : null}</label>
+    <label htmlFor={id} className={hideLabel ? styles.visuallyHidden : undefined}>{label}{required ? <span className={styles.required} aria-hidden="true"> *</span> : null}</label>
     {description ? <p id={descriptionId} className={styles.description}>{description}</p> : null}
     {children({ "aria-describedby": describedBy, "aria-invalid": error ? true : undefined })}
     {error ? <p id={errorId} className={styles.error}>{error}</p> : null}
@@ -34,14 +35,14 @@ type TextInputProps = FieldBase & Omit<InputHTMLAttributes<HTMLInputElement>, "i
   readonly inputRef?: Ref<HTMLInputElement>;
 };
 
-export function TextInput({ id, label, description, error, required, className, inputRef, ...props }: TextInputProps) {
-  return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
+export function TextInput({ id, label, description, error, required, className, hideLabel, inputRef, ...props }: TextInputProps) {
+  return <Field {...{ id, label, description, error, required, className, hideLabel }}>{(aria) =>
     <input {...props} {...aria} ref={inputRef} id={id} required={required} className={styles.control} />}</Field>;
 }
 
-export function PasswordInput({ id, label, description, error, required, className, inputRef, ...props }: TextInputProps) {
+export function PasswordInput({ id, label, description, error, required, className, hideLabel, inputRef, ...props }: TextInputProps) {
   const [visible, setVisible] = useState(false);
-  return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
+  return <Field {...{ id, label, description, error, required, className, hideLabel }}>{(aria) =>
     <div className={styles.passwordControl}>
       <input {...props} {...aria} ref={inputRef} id={id} required={required} type={visible ? "text" : "password"} className={styles.control} />
       <button type="button" aria-label={visible ? "隐藏输入内容" : "显示输入内容"}
@@ -52,8 +53,8 @@ export function PasswordInput({ id, label, description, error, required, classNa
 
 type TextAreaProps = FieldBase & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "id" | "required">;
 
-export function TextArea({ id, label, description, error, required, className, ...props }: TextAreaProps) {
-  return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
+export function TextArea({ id, label, description, error, required, className, hideLabel, ...props }: TextAreaProps) {
+  return <Field {...{ id, label, description, error, required, className, hideLabel }}>{(aria) =>
     <textarea {...props} {...aria} id={id} required={required} className={styles.control} />}</Field>;
 }
 
@@ -61,8 +62,8 @@ type SelectProps = FieldBase & Omit<SelectHTMLAttributes<HTMLSelectElement>, "id
   readonly options: readonly { readonly value: string; readonly label: string; readonly disabled?: boolean }[];
 };
 
-export function Select({ id, label, description, error, required, className, options, ...props }: SelectProps) {
-  return <Field {...{ id, label, description, error, required, className }}>{(aria) =>
+export function Select({ id, label, description, error, required, className, hideLabel, options, ...props }: SelectProps) {
+  return <Field {...{ id, label, description, error, required, className, hideLabel }}>{(aria) =>
     <select {...props} {...aria} id={id} required={required} className={styles.control}>
       {options.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
     </select>}</Field>;

@@ -10,6 +10,7 @@ const notifiedTaskKey = "pdf_approval_notified_task_ids";
 export function MyTasksPage({ user }: { user: User }) {
   const [items, setItems] = useState<Approval[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     listApprovals({ mine: true })
@@ -23,7 +24,8 @@ export function MyTasksPage({ user }: { user: User }) {
         }
         writeNotifiedTaskIds(localStorage, notifiedTaskKey, [...notifiedIds, ...currentIds]);
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
   }, []);
 
   return (
@@ -34,7 +36,7 @@ export function MyTasksPage({ user }: { user: User }) {
         metadata={<><span><strong>{items.length}</strong> 待处理</span>
           <span><strong>{items.filter((item) => item.status === "pending").length}</strong> 审批中</span></>} />
       {error && <InlineAlert tone="danger">{error}</InlineAlert>}
-      <ApprovalTable approvals={items} emptyText="暂无待审图纸" />
+      <ApprovalTable approvals={items} emptyText="暂无待审图纸" loading={loading} />
     </section>
   );
 }

@@ -1,0 +1,4 @@
+.projectName { color: var(--color-text-muted); }
+.version { font-family: var(--font-family-mono); font-weight: 700; font-variant-numeric: tabular-nums; }
+.time { color: var(--color-text-muted); font-family: var(--font-family-mono); font-size: var(--font-size-caption); white-space: nowrap; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }

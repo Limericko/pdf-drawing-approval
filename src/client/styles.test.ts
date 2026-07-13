@@ -11,6 +11,7 @@ const styles = [
 ].map((file) => fs.readFileSync(path.resolve("src/client", file), "utf8")).join("\n");
 const appShellStyles = fs.readFileSync(path.resolve("src/client/patterns/AppShell/AppShell.module.css"), "utf8");
 const navigationStyles = fs.readFileSync(path.resolve("src/client/ui/navigation/Navigation.module.css"), "utf8");
+const dataStyles = fs.readFileSync(path.resolve("src/client/ui/data/Data.module.css"), "utf8");
 
 function ruleFor(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -26,17 +27,17 @@ function rulesFor(selector: string) {
     .join("\n");
 }
 
-function mediaBlockFor(query: string) {
-  const start = styles.indexOf(`@media ${query}`);
+function mediaBlockFor(query: string, source = styles) {
+  const start = source.indexOf(`@media ${query}`);
   if (start === -1) return "";
-  const open = styles.indexOf("{", start);
+  const open = source.indexOf("{", start);
   if (open === -1) return "";
   let depth = 0;
-  for (let index = open; index < styles.length; index += 1) {
-    const char = styles[index];
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
     if (char === "{") depth += 1;
     if (char === "}") depth -= 1;
-    if (depth === 0) return styles.slice(open + 1, index);
+    if (depth === 0) return source.slice(open + 1, index);
   }
   return "";
 }
@@ -101,11 +102,12 @@ describe("approval detail PDF placement styles", () => {
 
   it("adapts the app shell and core work surfaces for phone widths", () => {
     const mobile = mediaBlockFor("(max-width: 520px)");
-    const approvalRow = ruleForIn(mobile, ".approval-table tbody tr");
-    const approvalCell = ruleForIn(mobile, ".approval-table td");
-    const approvalCellBefore = ruleForIn(mobile, ".approval-table td::before");
+    const mobileData = mediaBlockFor("(max-width: 48rem)", dataStyles);
+    const approvalRow = ruleForIn(mobileData, ".dataTable tbody tr");
+    const approvalCell = ruleForIn(mobileData, ".dataTable td");
+    const approvalCellBefore = ruleForIn(mobileData, ".dataTable td::before");
     const pdfStage = ruleForIn(mobile, ".detail-pdf-stage");
-    const tableActionBar = ruleForIn(mobile, ".table-action-bar");
+    const tableActionBar = ruleForIn(mobileData, ".batchActionBar");
 
     expect(appShellStyles).toContain("@media (max-width: 32.5rem)");
     expect(appShellStyles).toContain("grid-template-columns: minmax(0, 1fr)");
@@ -115,7 +117,9 @@ describe("approval detail PDF placement styles", () => {
     expect(approvalCell).toContain("grid-template-columns:");
     expect(approvalCellBefore).toContain("content: attr(data-label)");
     expect(pdfStage).toContain("height: 64vh");
-    expect(tableActionBar).toContain("position: sticky");
+    expect(tableActionBar).toContain("flex-direction: column");
+    expect(mobileData).toContain("position: sticky");
+    expect(mobileData).toContain("z-index: var(--z-sticky)");
   });
 
   it("keeps PDF pages and signature boxes in one scrollable placement workspace", () => {
@@ -170,14 +174,10 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("keeps admin operation logs bounded inside a scrollable panel", () => {
-    const logSurface = ruleFor(".operation-log-panel .table-surface");
-    const tableHeader = ruleFor(".operation-log-panel .data-table th");
-
-    expect(logSurface).toContain("max-height:");
-    expect(logSurface).toContain("overflow: auto");
-    expect(tableHeader).toContain("position: sticky");
-    expect(tableHeader).toContain("top: 0");
-    expect(tableHeader).toContain("z-index:");
+    expect(dataStyles).toContain('.dataTable[data-sticky-header="true"] th');
+    expect(dataStyles).toContain("position: sticky");
+    expect(dataStyles).toContain("top: 0");
+    expect(dataStyles).toContain("z-index: var(--z-sticky)");
   });
 
   it("keeps profile and role guide layouts responsive at medium window widths", () => {
@@ -284,7 +284,7 @@ describe("approval detail PDF placement styles", () => {
     const batchRow = rulesFor(".batch-history-row");
     const commentItem = rulesFor(".comment-item");
     const backupRun = rulesFor(".backup-run-row");
-    const operationRow = ruleFor(".operation-table tbody tr");
+    const operationRow = dataStyles.match(/\.dataTable tbody tr\s*\{([^}]*)\}/)?.[1] ?? "";
     const mutedInline = ruleFor(".muted-inline");
 
     expect(riskRow).toContain("content-visibility: auto");

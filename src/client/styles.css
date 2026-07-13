@@ -642,118 +642,6 @@ input[type="file"] {
   font-size: 13px;
 }
 
-.table-surface {
-  width: 100%;
-  overflow: hidden;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-soft);
-}
-
-.table-action-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  background: rgba(251, 252, 253, 0.94);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-soft);
-}
-
-.table-action-bar span {
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.pagination-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 12px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.batch-action-result {
-  margin-bottom: 10px;
-  padding: 10px 12px;
-  background: var(--success-soft);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--success);
-  border-radius: var(--radius-panel);
-}
-
-.batch-action-result strong {
-  display: block;
-  color: var(--text-strong);
-  font-size: 14px;
-}
-
-.batch-action-result ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--danger);
-  font-size: 13px;
-}
-
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.data-table th,
-.data-table td {
-  padding: 13px 14px;
-  border-bottom: 1px solid #e3e9ee;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.data-table th {
-  background: #eef3f6;
-  color: #465765;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.data-table tbody tr {
-  cursor: pointer;
-}
-
-.data-table tbody tr:hover {
-  background: var(--surface-hover);
-}
-
-.selection-cell {
-  width: 42px;
-  text-align: center;
-}
-
-.selection-cell input {
-  width: 16px;
-  min-height: 16px;
-}
-
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 128px;
-}
-
-.table-action-button {
-  min-height: 30px;
-  padding: 5px 10px;
-  font-size: 12px;
-}
-
 .table-action-link {
   display: inline-flex;
   align-items: center;
@@ -772,29 +660,6 @@ input[type="file"] {
 .table-action-link:hover {
   color: var(--primary-dark);
   background: #dcedf2;
-}
-
-.project-name {
-  color: #284b5a;
-  font-weight: 700;
-}
-
-.version-badge {
-  display: inline-flex;
-  align-items: center;
-  min-width: 54px;
-  justify-content: center;
-  padding: 4px 8px;
-  color: #173d4b;
-  background: var(--primary-soft);
-  border: 1px solid var(--primary-line);
-  border-radius: var(--radius-control);
-  font-weight: 800;
-}
-
-.time-cell {
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .status-chip {
@@ -1071,10 +936,6 @@ input[type="file"] {
   box-shadow: var(--shadow-soft);
 }
 
-.pdm-table-title-row {
-  align-items: end;
-}
-
 .pdm-issue-panel {
   position: sticky;
   top: 18px;
@@ -1159,38 +1020,6 @@ input[type="file"] {
 
 .pdm-issue-more {
   justify-self: start;
-}
-
-.pdm-table-surface {
-  max-height: min(62vh, 720px);
-  overflow: auto;
-}
-
-.pdm-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-
-.pdm-table td {
-  max-width: 280px;
-}
-
-.pdm-table tbody tr {
-  content-visibility: auto;
-  contain-intrinsic-size: 0 48px;
-}
-
-.pdm-part-name {
-  color: var(--text-strong);
-  font-weight: 800;
-}
-
-.pdm-material-link {
-  justify-content: flex-start;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .pdm-record-hero {
@@ -3447,30 +3276,9 @@ input[type="file"] {
   box-shadow: var(--shadow-soft);
 }
 
-.user-table tbody tr {
-  cursor: default;
-}
-
-.operation-table tbody tr {
-  cursor: default;
-  content-visibility: auto;
-  contain-intrinsic-size: 0 44px;
-}
-
 .muted-inline {
   color: var(--muted);
   font-weight: 800;
-}
-
-.operation-log-panel .table-surface {
-  max-height: min(52vh, 560px);
-  overflow: auto;
-}
-
-.operation-log-panel .data-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
 }
 
 .version-update-panel {
@@ -3524,23 +3332,6 @@ input[type="file"] {
   gap: 7px;
   color: #334451;
   font-weight: 700;
-}
-
-.wrap-cell {
-  max-width: 420px;
-  white-space: normal;
-  line-height: 1.45;
-}
-
-.empty-cell {
-  color: var(--muted);
-  text-align: center;
-}
-
-.user-table input,
-.user-table select,
-.template-table input {
-  width: 100%;
 }
 
 .report-filter-grid label.inline-check {
@@ -5031,10 +4822,6 @@ input[type="file"] {
     flex: 1 1 0;
   }
 
-  .pdm-table-surface {
-    max-height: none;
-  }
-
   .placement-stage {
     min-height: 620px;
   }
@@ -5068,11 +4855,6 @@ input[type="file"] {
   .toolbar label {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .data-table {
-    display: block;
-    overflow-x: auto;
   }
 
   .admin-tabs,
@@ -5160,9 +4942,7 @@ input[type="file"] {
   .inline-form input,
   .inline-form button,
   .panel-heading button,
-  .form-actions button,
-  .pagination-bar button,
-  .table-action-bar button {
+  .form-actions button {
     width: 100%;
   }
 
@@ -5193,165 +4973,6 @@ input[type="file"] {
     flex: 0 0 auto;
   }
 
-  .table-action-bar {
-    position: sticky;
-    bottom: 8px;
-    z-index: 8;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .pagination-bar {
-    justify-content: space-between;
-  }
-
-  .approval-table {
-    display: block;
-    min-width: 0;
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-
-  .approval-table thead {
-    display: none;
-  }
-
-  .approval-table tbody {
-    display: grid;
-    gap: 10px;
-    padding: 10px;
-    background: var(--surface-soft);
-  }
-
-  .approval-table tbody tr {
-    display: grid;
-    gap: 0;
-    padding: 10px;
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-panel);
-    box-shadow: 0 6px 16px rgba(16, 36, 45, 0.06);
-  }
-
-  .approval-table td {
-    display: grid;
-    grid-template-columns: 82px minmax(0, 1fr);
-    gap: 10px;
-    align-items: center;
-    min-height: 34px;
-    padding: 7px 0;
-    border-bottom: 1px solid #edf2f4;
-    white-space: normal;
-  }
-
-  .approval-table td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 900;
-  }
-
-  .approval-table td:last-child {
-    border-bottom: 0;
-  }
-
-  .approval-table .selection-cell {
-    width: auto;
-    text-align: left;
-  }
-
-  .approval-table .row-actions {
-    width: auto;
-    grid-template-columns: 82px minmax(0, 1fr);
-  }
-
-  .approval-table .row-actions::before {
-    align-self: center;
-  }
-
-  .approval-table .row-actions .table-action-link,
-  .approval-table .row-actions .table-action-button {
-    width: 100%;
-  }
-
-  .table-surface {
-    overflow: visible;
-  }
-
-  .data-table:not(.approval-table):not(.pdm-table) {
-    min-width: 720px;
-  }
-
-  .pdm-table {
-    display: block;
-    min-width: 0;
-    border-collapse: separate;
-    border-spacing: 0;
-  }
-
-  .pdm-table thead {
-    display: none;
-  }
-
-  .pdm-table tbody {
-    display: grid;
-    gap: 10px;
-    padding: 10px;
-    background: var(--surface-soft);
-  }
-
-  .pdm-table tbody tr {
-    display: grid;
-    gap: 0;
-    padding: 10px;
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-panel);
-    box-shadow: 0 6px 16px rgba(16, 36, 45, 0.06);
-  }
-
-  .pdm-table td {
-    display: grid;
-    grid-template-columns: 92px minmax(0, 1fr);
-    gap: 10px;
-    align-items: center;
-    max-width: none;
-    min-height: 34px;
-    padding: 7px 0;
-    border-bottom: 1px solid #edf2f4;
-    white-space: normal;
-  }
-
-  .pdm-table td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 900;
-  }
-
-  .pdm-table td:last-child {
-    border-bottom: 0;
-  }
-
-  .pdm-table .row-actions {
-    width: auto;
-    grid-template-columns: 92px minmax(0, 1fr);
-  }
-
-  .pdm-table .row-actions .table-action-link,
-  .pdm-table .row-actions .table-action-button {
-    width: 100%;
-  }
-
-  .pdm-table .pdm-inline-repair-row td {
-    display: block;
-    padding: 0;
-  }
-
-  .pdm-table .pdm-inline-repair-row td::before {
-    display: none;
-  }
-
   .pdm-overview-grid .pdm-stat-strip,
   .pdm-pending-summary,
   .pdm-tab-list {
@@ -5377,10 +4998,6 @@ input[type="file"] {
   .pdm-approval-link span {
     display: grid;
     white-space: normal;
-  }
-
-  .operation-log-panel .table-surface {
-    overflow: auto;
   }
 
   .detail-pdf-stage {

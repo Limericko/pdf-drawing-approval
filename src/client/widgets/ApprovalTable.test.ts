@@ -12,9 +12,16 @@ describe("approval table usability", () => {
   });
 
   it("marks table cells for mobile card rendering", () => {
-    expect(source).toContain("approval-table");
+    expect(source).toContain("DataTable");
+    expect(source).toContain("mobileHidden: true");
     for (const label of ["项目", "零件", "版本", "主管", "工艺", "总状态", "签审", "提交时间", "操作"]) {
-      expect(source).toContain(`data-label="${label}"`);
+      expect(source).toContain(`header: "${label}"`);
     }
+  });
+
+  it("maps domain status to data component presentation without teaching DataTable business states", () => {
+    expect(source).toContain("approvalStatusPresentation");
+    expect(source).toContain("<StatusChip tone={presentation.tone}");
+    expect(source).not.toContain("../widgets/StatusChip");
   });
 });
