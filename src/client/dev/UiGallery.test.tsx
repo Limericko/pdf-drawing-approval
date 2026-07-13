@@ -12,6 +12,9 @@ describe("UiGallery", () => {
     expect(markup).toContain("排版层级");
     expect(markup).toContain("间距与稳定尺寸");
     expect(markup).toContain("深色工具表面");
+    expect(markup).toContain("操作组件");
+    expect(markup).toContain("表单组件");
+    expect(markup).toContain("反馈与状态");
     expect(markup).not.toContain("Lorem ipsum");
   });
 
@@ -21,6 +24,6 @@ describe("UiGallery", () => {
     expect(markup).toContain("<header");
     expect(markup).toContain("<main");
     expect(markup).toContain("<section");
-    expect(markup).toContain("Phase 2 · DS0 / DS1");
+    expect(markup).toContain("Phase 2 · DS0–DS2");
   });
 });

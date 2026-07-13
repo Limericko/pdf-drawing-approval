@@ -10,6 +10,8 @@ import {
   type PlatformSessionContext
 } from "../../api/identityClient.ts";
 import { PlatformRequestError } from "../../api/platformRequest.ts";
+import { Button } from "../../ui/actions/index.tsx";
+import { InlineAlert } from "../../ui/feedback/index.tsx";
 import { currentBrowserIdentityRoute, disposeBrowserIdentityRoute } from "./identityRoutes.ts";
 import { initialIdentityState, transitionIdentity, type IdentityEvent, type IdentityState } from "./identityState.ts";
 import { InvitationAcceptancePage, type InvitationQrCode } from "./InvitationAcceptancePage.tsx";
@@ -330,10 +332,10 @@ export function PlatformIdentityApp() {
       onContinue={() => recoveryAcknowledged && dispatch({ type: "recoveryCodesAcknowledged" })} /> : null}
     {state.status === "signedIn" && accessContext ? <PlatformAccessPage user={state.user} context={accessContext}
       logoutBusy={busy} logoutError={error} onLogout={signOut} /> : null}
-    {state.status === "fatalError" ? <div className="platform-panel platform-panel--narrow" role="alert">
+    {state.status === "fatalError" ? <div className="platform-panel platform-panel--narrow">
       <p className="platform-kicker">安全入口</p><h1 tabIndex={-1}>暂时无法继续</h1>
-      <p>安全流程未能完成。请刷新页面重试，持续失败时联系管理员。</p>
-      <button className="platform-button" type="button" onClick={() => location.reload()}>刷新页面</button>
+      <InlineAlert tone="danger">安全流程未能完成。请刷新页面重试，持续失败时联系管理员。</InlineAlert>
+      <Button onClick={() => location.reload()}>刷新页面</Button>
     </div> : null}
   </PlatformFrame>;
 }

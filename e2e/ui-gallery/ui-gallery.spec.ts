@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-test("DS0/DS1 foundation is stable, accessible and responsive", async ({ page }) => {
+test("DS0–DS2 foundation is stable, accessible and responsive", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
@@ -9,7 +9,7 @@ test("DS0/DS1 foundation is stable, accessible and responsive", async ({ page })
 
   await page.goto("/__ui-gallery");
   await expect(page.getByRole("heading", { level: 1, name: "UI 设计系统基线" })).toBeVisible();
-  await expect(page.getByText("Phase 2 · DS0 / DS1")).toBeVisible();
+  await expect(page.getByText("Phase 2 · DS0–DS2")).toBeVisible();
 
   const overflow = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

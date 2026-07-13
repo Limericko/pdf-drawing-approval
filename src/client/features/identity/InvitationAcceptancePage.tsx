@@ -1,4 +1,7 @@
 import { useRef, useState, type FormEvent } from "react";
+import { Button } from "../../ui/actions/index.tsx";
+import { FormActions, PasswordInput, TextInput } from "../../ui/forms/index.tsx";
+import { InlineAlert } from "../../ui/feedback/index.tsx";
 
 export type InvitationQrCode =
   | { readonly status: "loading" }
@@ -73,38 +76,30 @@ export function InvitationAcceptancePage({
   return <div className="platform-panel platform-panel--activation">
     <p className="platform-kicker">账号激活 · 02</p><h1 tabIndex={-1}>设置安全登录</h1>
     <p className="platform-lead">设置密码并绑定身份验证器，完成后会生成一次性恢复码。</p>
-    {error ? <p className="platform-error" role="alert" tabIndex={-1}>{error}</p> : null}
+    {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
     {stage === "preparing" ? <p aria-busy="true">正在验证邀请并准备安全设置…</p> : <>
       <div className="platform-enrollment">
         <div className="platform-qr" aria-live="polite">
           {qrCode.status === "ready" ? <img src={qrCode.dataUrl} alt="身份验证器二维码" width="220" height="220" /> :
             qrCode.status === "loading" ? <p aria-busy="true">正在本地生成二维码…</p> :
-              <p className="platform-error" role="alert" tabIndex={-1}>{qrCode.message}</p>}
+              <InlineAlert tone="danger">{qrCode.message}</InlineAlert>}
         </div>
         <div><p className="platform-eyebrow">手工密钥</p><code>{manualSecret || "无法读取，请重新打开邀请链接"}</code>
           <p>若无法扫描二维码，请在身份验证器中手工输入此密钥。</p>
-          {manualSecret ? <button className="platform-button platform-button--secondary" type="button"
-            disabled={busy} onClick={() => void copySecret()}>复制密钥</button> : null}
-          <p className={copyFeedback?.status === "error" ? "platform-copy-feedback platform-error" :
-            "platform-copy-feedback"} aria-live="polite">
-            {copyFeedback?.version === copyGeneration.current.version ? copyFeedback.message : ""}
-          </p></div>
+          {manualSecret ? <Button variant="secondary" disabled={busy} onClick={() => void copySecret()}>复制密钥</Button> : null}
+          {copyFeedback?.version === copyGeneration.current.version ? <InlineAlert
+            tone={copyFeedback.status === "error" ? "danger" : "success"}>{copyFeedback.message}</InlineAlert> : null}</div>
       </div>
       <form className="platform-form" onSubmit={submit} aria-busy={busy}>
-        <div className="platform-form-grid"><div><label htmlFor="platform-new-password">设置密码</label>
-          <input id="platform-new-password" name="password" type="password" autoComplete="new-password"
-            minLength={12} maxLength={256} autoFocus required disabled={busy} /></div>
-          <div><label htmlFor="platform-confirm-password">确认密码</label>
-          <input id="platform-confirm-password" name="passwordConfirmation" type="password" autoComplete="new-password"
-            minLength={12} maxLength={256} required disabled={busy}
-            onInput={(event) => event.currentTarget.setCustomValidity("")} /></div></div>
-        <label htmlFor="platform-enrollment-totp">动态验证码</label>
-        <input id="platform-enrollment-totp" name="totp" inputMode="numeric" autoComplete="one-time-code"
-          maxLength={128} required disabled={busy} />
-        <div className="platform-actions"><button className="platform-button" type="submit" disabled={busy}>
-          {busy ? "正在激活…" : "完成激活"}</button>
-          <button className="platform-button platform-button--secondary" type="button" onClick={onCancel} disabled={busy}>
-            取消激活</button></div>
+        <div className="platform-form-grid"><PasswordInput id="platform-new-password" name="password" label="设置密码"
+          autoComplete="new-password" minLength={12} maxLength={256} autoFocus required disabled={busy} />
+          <PasswordInput id="platform-confirm-password" name="passwordConfirmation" label="确认密码"
+            autoComplete="new-password" minLength={12} maxLength={256} required disabled={busy}
+            onInput={(event) => event.currentTarget.setCustomValidity("")} /></div>
+        <TextInput id="platform-enrollment-totp" name="totp" label="动态验证码" inputMode="numeric"
+          autoComplete="one-time-code" maxLength={128} required disabled={busy} />
+        <FormActions><Button type="submit" loading={busy} loadingLabel="正在激活">完成激活</Button>
+          <Button variant="secondary" onClick={onCancel} disabled={busy}>取消激活</Button></FormActions>
       </form>
     </>}
   </div>;

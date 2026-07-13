@@ -4298,3 +4298,37 @@ TDD 与浏览器校准：
 
 - Phase 2 已开始，但尚未完成；本切片只完成详细计划、DS0 和 DS1。
 - 下一切片是 Task 3 Actions：Button、IconButton、ButtonLink 和 ButtonGroup，并从 platform identity 开始迁移调用点。
+
+## 2026-07-14 Phase 2 Task 3–5：DS2 Platform Identity 垂直切片
+
+范围：
+
+- 新增仓库内生 Actions、Forms、Feedback 组件层；Actions 包含 `Button`、`IconButton`、`ButtonLink`、`ButtonGroup`，Forms 包含字段、输入、选择、选择组、开关、文件拖放和表单动作，Feedback 包含提示、Toast、保存状态、进度、骨架、空/错状态和连接横幅。
+- Platform 登录、MFA、邀请激活、恢复码和项目访问页面已迁移到公共组件；业务请求、路由、Cookie/CSRF、安全激活和项目权限逻辑保持不变。
+- 删除 identity 中零引用的 `.platform-button`、`.platform-error`、`.platform-feedback`、基础 input/select、factor 和 confirmation 实现；保留的 `platform-form` 只负责页面布局。`platformIdentity.css` 的颜色全部改为语义令牌。
+- UI Gallery 扩展到 DS0–DS2 的主要状态；五份截图已人工检查，当前大小为 desktop `229528`、compact `225062`、landscape `223411`、portrait `226621`、mobile `214005` bytes。
+
+真实浏览器校准：
+
+- loading Button 初始丢失可访问名称，修复为 loading 时使用显式 `aria-label`。
+- warning 文本初始对比度为 `3.41:1`，将 warning 令牌调整为 `#8a5c00` 后通过 axe。
+- PasswordInput 的“显示密码”按钮与“密码”输入框名称冲突；按钮改用“显示/隐藏输入内容”可访问名称，具体字段信息保留在 title。
+- RadioGroup 原先把说明文本并入 accessible name；改为独立 `aria-labelledby` 与 `aria-describedby`，恢复码选项可按精确名称定位。
+
+Gallery 生命周期修复：
+
+- Windows 下 Playwright `webServer` 退出存在端口释放竞态。`scripts/run-ui-gallery-e2e.mjs` 现直接使用 Vite `createServer()` 持有服务，Playwright CLI 以 `shell: false` 子进程运行，并在成功或失败路径的 `finally` 关闭 Vite。
+- runner 生命周期单测 `4/4` 通过。`npm run e2e:ui` 连续两次均为五视口 `5/5` 通过；两次结束后的 `34173` 监听数均为 `0`，未再出现端口占用。
+
+本切片回归：
+
+- 全量 client：46 个测试文件、`390/390` 通过。
+- `npm run e2e:typecheck`：通过；runner 的依赖注入声明已收窄为实际使用的 Vite 和 child-process 契约。
+- `npm run build`：TypeScript 与 Vite 生产构建通过；只保留既有 PDF.js `531.35 kB` chunk 警告。
+- Phase 1 Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- Platform 退出后 `.cache/platform-e2e/state.json` 不存在，`24172/24173` 监听均为 `0`，`pdf_approval_e2e_%` 测试数据库为 `0`。
+
+当前边界：
+
+- Phase 2 尚未完成；本切片只收口 DS2 公共组件中的 Actions、Forms、Feedback 以及 Platform Identity 调用点。
+- 下一切片继续迁移 legacy Login/Profile/Submit，然后实现 Overlays、DS3 AppShell 和 DS4 数据组件及业务页面迁移。

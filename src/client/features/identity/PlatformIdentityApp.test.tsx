@@ -40,11 +40,10 @@ describe("platform identity activation UI", () => {
     const mfa = renderToStaticMarkup(<MfaChallengePage busy={false} error="" onSubmit={vi.fn()}
       onCancel={vi.fn()} />);
 
-    expect(mfa).toContain('aria-labelledby="platform-mfa-totp-name"');
-    expect(mfa).toContain('aria-describedby="platform-mfa-totp-description"');
-    expect(mfa).toContain('<strong id="platform-mfa-totp-name">身份验证器</strong>');
-    expect(mfa).toContain('<small id="platform-mfa-totp-description">输入 6 位动态验证码</small>');
-    expect(mfa).toContain('<label for="platform-mfa-code">6 位动态验证码</label>');
+    expect(mfa).toContain('<label for="method-totp"');
+    expect(mfa).toContain('<strong id="method-totp-label">身份验证器</strong>');
+    expect(mfa).toContain('<small id="method-totp-description">输入 6 位动态验证码</small>');
+    expect(mfa).toContain('<label for="platform-mfa-code">6 位动态验证码');
     expect(mfa).not.toContain('<label for="platform-mfa-code">动态验证码</label>');
   });
 
@@ -151,7 +150,8 @@ describe("platform identity activation UI", () => {
       acknowledged={false} onAcknowledgedChange={vi.fn()} onContinue={vi.fn()} />);
     expect(html).toContain("RECOVERY-ONE");
     expect(html).toContain("我已将恢复码保存在安全位置");
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>继续登录<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled/);
+    expect(html).toContain("继续登录");
   });
 
   it("cancelling while invitation prepare is pending aborts ownership and blocks every stale write", async () => {

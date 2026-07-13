@@ -1,5 +1,8 @@
 import type { FormEvent } from "react";
 import type { LoginRequest } from "../../../shared/contracts/identity.ts";
+import { Button } from "../../ui/actions/index.tsx";
+import { PasswordInput, TextInput } from "../../ui/forms/index.tsx";
+import { InlineAlert } from "../../ui/feedback/index.tsx";
 
 export function PlatformLoginPage({
   busy,
@@ -20,15 +23,13 @@ export function PlatformLoginPage({
     <p className="platform-kicker">验证身份 · 01</p>
     <h1 tabIndex={-1}>登录审批平台</h1>
     <p className="platform-lead">使用受邀账号登录，密码验证后还需完成双重验证。</p>
-    {error ? <p className="platform-error" role="alert" tabIndex={-1}>{error}</p> : null}
+    {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
     <form className="platform-form" onSubmit={submit} aria-busy={busy}>
-      <label htmlFor="platform-login-email">邮箱地址</label>
-      <input id="platform-login-email" name="email" type="email" autoComplete="username" maxLength={254}
-        autoFocus required disabled={busy} />
-      <label htmlFor="platform-login-password">密码</label>
-      <input id="platform-login-password" name="password" type="password" autoComplete="current-password"
+      <TextInput id="platform-login-email" name="email" type="email" label="邮箱地址" autoComplete="username"
+        maxLength={254} autoFocus required disabled={busy} />
+      <PasswordInput id="platform-login-password" name="password" label="密码" autoComplete="current-password"
         maxLength={256} required disabled={busy} />
-      <button className="platform-button" type="submit" disabled={busy}>{busy ? "正在验证…" : "继续验证"}</button>
+      <Button type="submit" loading={busy} loadingLabel="正在验证">继续验证</Button>
     </form>
   </div>;
 }

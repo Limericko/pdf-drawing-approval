@@ -60,7 +60,9 @@ describe("PlatformAccessPage", () => {
     expect(html).toContain("发动机图纸安全评审");
     expect(html).toContain('role="alert"');
     expect(html).toContain("退出登录失败，请检查网络连接后重试。");
-    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-busy="true"[^>]*>退出登录<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-busy="true"/);
+    expect(html).toContain("退出登录");
+    expect(html).toContain("正在退出");
   });
 
   it("rejects management calls at the controller boundary for an ordinary member", async () => {

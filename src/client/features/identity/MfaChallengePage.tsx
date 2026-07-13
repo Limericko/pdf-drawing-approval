@@ -1,5 +1,8 @@
 import { useState, type FormEvent } from "react";
 import type { MfaCompleteRequest } from "../../../shared/contracts/identity.ts";
+import { Button } from "../../ui/actions/index.tsx";
+import { FormActions, RadioGroup, TextInput } from "../../ui/forms/index.tsx";
+import { InlineAlert } from "../../ui/feedback/index.tsx";
 
 export function MfaChallengePage({
   busy,
@@ -22,25 +25,18 @@ export function MfaChallengePage({
     <p className="platform-kicker">安全确认 · 02</p>
     <h1 tabIndex={-1}>完成双重验证</h1>
     <p className="platform-lead">选择当前可用的验证方式。</p>
-    {error ? <p className="platform-error" role="alert" tabIndex={-1}>{error}</p> : null}
+    {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
     <form className="platform-form" onSubmit={submit} aria-busy={busy}>
-      <fieldset className="platform-factor"><legend>验证方式</legend>
-        <label><input type="radio" name="method" value="totp" checked={method === "totp"}
-          aria-labelledby="platform-mfa-totp-name" aria-describedby="platform-mfa-totp-description"
-          onChange={() => setMethod("totp")} /> <span><strong id="platform-mfa-totp-name">身份验证器</strong>
-            <small id="platform-mfa-totp-description">输入 6 位动态验证码</small></span></label>
-        <label><input type="radio" name="method" value="recovery" checked={method === "recovery"}
-          aria-labelledby="platform-mfa-recovery-name" aria-describedby="platform-mfa-recovery-description"
-          onChange={() => setMethod("recovery")} /> <span><strong id="platform-mfa-recovery-name">恢复码</strong>
-            <small id="platform-mfa-recovery-description">使用一枚未使用的恢复码</small></span></label>
-      </fieldset>
-      <label htmlFor="platform-mfa-code">{method === "totp" ? "6 位动态验证码" : "恢复码"}</label>
-      <input id="platform-mfa-code" name="code" inputMode={method === "totp" ? "numeric" : "text"}
-        autoComplete="one-time-code" autoFocus required maxLength={128} disabled={busy} />
-      <div className="platform-actions"><button className="platform-button" type="submit" disabled={busy}>
-        {busy ? "正在确认…" : "确认并登录"}</button>
-        <button className="platform-button platform-button--secondary" type="button" onClick={onCancel} disabled={busy}>
-          返回登录</button></div>
+      <RadioGroup legend="验证方式" name="method" value={method} disabled={busy}
+        onChange={(value) => setMethod(value as MfaCompleteRequest["factor"]["method"])} options={[
+          { value: "totp", label: "身份验证器", description: "输入 6 位动态验证码" },
+          { value: "recovery", label: "恢复码", description: "使用一枚未使用的恢复码" }
+        ]} />
+      <TextInput id="platform-mfa-code" name="code" label={method === "totp" ? "6 位动态验证码" : "恢复码"}
+        inputMode={method === "totp" ? "numeric" : "text"} autoComplete="one-time-code" autoFocus required
+        maxLength={128} disabled={busy} />
+      <FormActions><Button type="submit" loading={busy} loadingLabel="正在确认">确认并登录</Button>
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>返回登录</Button></FormActions>
     </form>
   </div>;
 }

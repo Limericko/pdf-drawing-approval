@@ -36,11 +36,5 @@ export default defineConfig({
     video: "off",
     ...browserChannel
   },
-  webServer: {
-    command: "npm run e2e:ui:client",
-    url: `${webUrl}/__ui-gallery`,
-    reuseExistingServer: false,
-    timeout: 30_000
-  },
   projects: viewports.map(([name, width, height]) => ({ name, use: { viewport: { width, height } } }))
 });

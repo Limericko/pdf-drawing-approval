@@ -1,4 +1,8 @@
+import { Copy, Save, Trash2 } from "lucide-react";
 import type { CSSProperties } from "react";
+import { Button, ButtonGroup, IconButton } from "../ui/actions/index.tsx";
+import { Checkbox, FormActions, PasswordInput, RadioGroup, Select, Switch, TextArea, TextInput } from "../ui/forms/index.tsx";
+import { EmptyState, ErrorState, InlineAlert, SaveIndicator, Skeleton } from "../ui/feedback/index.tsx";
 import styles from "./UiGallery.module.css";
 
 const semanticColors = [
@@ -28,7 +32,7 @@ export function UiGallery() {
         <h1>UI 设计系统基线</h1>
       </div>
       <div className={styles.phaseStamp}>
-        <span>Phase 2 · DS0 / DS1</span>
+        <span>Phase 2 · DS0–DS2</span>
         <strong>精密工业</strong>
       </div>
     </header>
@@ -104,20 +108,73 @@ export function UiGallery() {
           </article>
         </div>
       </section>
+
+      <section className={styles.gallerySection} aria-labelledby="shared-actions">
+        <SectionHeading index="05" id="shared-actions" title="操作组件" description="主操作唯一，危险操作只用于不可逆命令。" />
+        <div className={styles.componentSurface}>
+          <ButtonGroup aria-label="操作组件状态">
+            <Button><Save size={16} aria-hidden="true" />保存修改</Button>
+            <Button variant="secondary">返回列表</Button>
+            <Button variant="ghost">查看记录</Button>
+            <Button variant="danger"><Trash2 size={16} aria-hidden="true" />删除版本</Button>
+            <Button loading loadingLabel="正在保存">保存修改</Button>
+            <Button disabled>不可执行</Button>
+            <IconButton label="复制物料号" variant="secondary"><Copy size={16} aria-hidden="true" /></IconButton>
+          </ButtonGroup>
+        </div>
+      </section>
+
+      <section className={styles.gallerySection} aria-labelledby="shared-forms">
+        <SectionHeading index="06" id="shared-forms" title="表单组件" description="标签、说明和错误始终与控件建立语义关联。" />
+        <form className={styles.formDemo} onSubmit={(event) => event.preventDefault()}>
+          <TextInput id="gallery-drawing" label="图纸名称" defaultValue="E2E轴承座" description="使用图框中的正式名称" />
+          <PasswordInput id="gallery-password" label="审批密码" defaultValue="drawing-review" />
+          <Select id="gallery-role" label="项目角色" defaultValue="supervisor" options={[
+            { value: "designer", label: "设计人员" }, { value: "supervisor", label: "主管审阅" }
+          ]} />
+          <TextInput id="gallery-invalid" label="体系文件号" error="体系文件号不能为空" />
+          <TextArea id="gallery-note" label="处理说明" defaultValue="已按审阅意见修订圆角尺寸。" />
+          <div className={styles.choiceDemo}>
+            <Checkbox id="gallery-check" label="我已核对图纸版本" defaultChecked />
+            <Switch id="gallery-notify" label="邮件通知" defaultChecked />
+          </div>
+          <RadioGroup legend="审核结论" name="gallery-result" defaultValue="approved" options={[
+            { value: "approved", label: "通过", description: "允许进入后续流程" },
+            { value: "rejected", label: "驳回", description: "退回设计人员修改" }
+          ]} />
+          <FormActions><Button type="submit">提交审核</Button><Button variant="secondary">保存草稿</Button></FormActions>
+        </form>
+      </section>
+
+      <section className={styles.gallerySection} aria-labelledby="shared-feedback">
+        <SectionHeading index="07" id="shared-feedback" title="反馈与状态" description="加载、空、错、离线和保存状态都有明确恢复路径。" />
+        <div className={styles.feedbackGrid}>
+          <InlineAlert tone="info" title="处理中">签章文件正在后台生成。</InlineAlert>
+          <InlineAlert tone="success" title="发布完成">版本 A03 已发布到零件库。</InlineAlert>
+          <InlineAlert tone="warning" title="需要确认">WebDAV 回读校验尚未完成。</InlineAlert>
+          <InlineAlert tone="danger" title="保存失败">网络恢复后请重新提交当前修改。</InlineAlert>
+          <div className={styles.statusDemo}><SaveIndicator status="saving" /><SaveIndicator status="saved" />
+            <SaveIndicator status="offline" /></div>
+          <Skeleton lines={3} label="正在读取任务" />
+          <EmptyState title="暂无待处理问题">当前图纸没有阻断审批的问题。</EmptyState>
+          <ErrorState title="项目读取失败" onRetry={() => undefined}>请检查连接后重新加载。</ErrorState>
+        </div>
+      </section>
     </main>
   </div>;
 }
 
-function SectionHeading({ index, title, description }: {
+function SectionHeading({ index, id, title, description }: {
   readonly index: string;
+  readonly id?: string;
   readonly title: string;
   readonly description: string;
 }) {
-  const id = title === "语义颜色" ? "semantic-colors"
+  const headingId = id ?? (title === "语义颜色" ? "semantic-colors"
     : title === "排版层级" ? "type-scale"
-      : title === "间距与稳定尺寸" ? "spacing-size" : "surface-focus";
+      : title === "间距与稳定尺寸" ? "spacing-size" : "surface-focus");
   return <div className={styles.sectionHeading}>
     <span>{index}</span>
-    <div><h2 id={id}>{title}</h2><p>{description}</p></div>
+    <div><h2 id={headingId}>{title}</h2><p>{description}</p></div>
   </div>;
 }

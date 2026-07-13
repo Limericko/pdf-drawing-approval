@@ -7,6 +7,9 @@ import {
   type PlatformSessionContext
 } from "../../api/identityClient.ts";
 import type { CreateInvitationRequest, CreateProjectRequest } from "../../../shared/contracts/identity.ts";
+import { Button } from "../../ui/actions/index.tsx";
+import { Select, TextInput } from "../../ui/forms/index.tsx";
+import { EmptyState, ErrorState, InlineAlert, Skeleton } from "../../ui/feedback/index.tsx";
 import { createSingleFlight } from "./singleFlight.ts";
 import { focusPlatformError } from "./platformFocus.ts";
 
@@ -286,29 +289,26 @@ export function PlatformAccessPage({
         <h1 id="platform-access-heading" tabIndex={-1}>可访问项目</h1>
         <p>当前身份：{user.displayName} · {user.emailNormalized}</p>
       </div>
-      <button className="platform-button platform-button--secondary" type="button" disabled={logoutBusy}
-        aria-busy={logoutBusy} onClick={() => void onLogout()}>
-        退出登录
-      </button>
+      <Button variant="secondary" disabled={logoutBusy} loading={logoutBusy} loadingLabel="正在退出"
+        onClick={() => void onLogout()}>退出登录</Button>
     </header>
 
-    {logoutError ? <p className="platform-error" role="alert" tabIndex={-1}>{logoutError}</p> : null}
+    {logoutError ? <InlineAlert tone="danger">{logoutError}</InlineAlert> : null}
 
     <dl className="platform-access__identity">
       <div><dt>平台角色</dt><dd>{user.platformRole === "admin" ? "管理员" : "成员"}</dd></div>
       <div><dt>可执行操作</dt><dd>{globalLabels.length ? globalLabels.join(" · ") : "使用已授权项目"}</dd></div>
     </dl>
 
-    {feedback ? <p className="platform-feedback" role="status">{feedback}</p> : null}
-    {error ? <div className="platform-error" role="alert" tabIndex={-1}><span>{error}</span>
-      <button type="button" onClick={() => location.reload()}>重试</button></div> : null}
+    {feedback ? <InlineAlert tone="success">{feedback}</InlineAlert> : null}
+    {error ? <ErrorState title="项目列表加载失败" onRetry={() => location.reload()}>{error}</ErrorState> : null}
 
     <div className="platform-section-heading">
       <div><p className="platform-eyebrow">授权范围</p><h2>项目清单</h2></div>
       <span>{projects.length} 个项目</span>
     </div>
-    {loading ? <p aria-busy="true">正在读取项目…</p> : projects.length === 0 ?
-      <div className="platform-empty"><h3>暂无可访问项目</h3><p>请联系项目管理员分配访问权限。</p></div> :
+    {loading ? <Skeleton lines={4} label="正在读取项目" /> : projects.length === 0 ?
+      <EmptyState title="暂无可访问项目">请联系项目管理员分配访问权限。</EmptyState> :
       <div className="platform-projects">
         <nav aria-label="项目清单">
           {projects.map((project) => <button key={project.id} type="button"
@@ -318,12 +318,9 @@ export function PlatformAccessPage({
           </button>)}
         </nav>
         <article aria-live="polite">
-          {accessLoading ? <p aria-busy="true">正在读取项目权限…</p> : accessError ?
-            <div className="platform-project-access-error" role="alert" tabIndex={-1}>
-              <p>项目权限加载失败，请重试。</p>
-              <button className="platform-button platform-button--secondary" type="button"
-                onClick={() => accessLoader.retry()}>重试当前项目</button>
-            </div> : access && selectedSummary ? <>
+          {accessLoading ? <Skeleton lines={3} label="正在读取项目权限" /> : accessError ?
+            <ErrorState title="项目权限加载失败" onRetry={() => accessLoader.retry()}>请重新读取当前项目。</ErrorState>
+            : access && selectedSummary ? <>
             <p className="platform-eyebrow">当前项目</p>
             <h3>{access.project.name}</h3>
             <p>成员角色：{projectRoleLabels[selectedSummary.role]}</p>
@@ -337,21 +334,20 @@ export function PlatformAccessPage({
     {canCreate || canInvite ? <div className="platform-management">
       {canCreate ? <form onSubmit={(event) => void submitProject(event)} aria-busy={projectBusy}>
         <h2>创建项目</h2>
-        <label htmlFor="platform-project-name">项目名称</label>
-        <input id="platform-project-name" name="projectName" maxLength={160} required disabled={projectBusy} />
-        <button className="platform-button" type="submit" disabled={projectBusy}>创建项目</button>
+        <TextInput id="platform-project-name" name="projectName" label="项目名称" maxLength={160} required disabled={projectBusy} />
+        <Button type="submit" loading={projectBusy} loadingLabel="正在创建">创建项目</Button>
       </form> : null}
       {canInvite ? <form onSubmit={(event) => void submitInvitation(event)} aria-busy={invitationBusy}>
         <h2>邀请项目成员</h2>
-        <label htmlFor="platform-invite-email">成员邮箱</label>
-        <input id="platform-invite-email" name="inviteEmail" type="email" maxLength={254} required disabled={invitationBusy} />
-        <label htmlFor="platform-project-role">项目角色</label>
-        <select id="platform-project-role" name="projectRole" defaultValue="viewer" disabled={invitationBusy}>
-          <option value="viewer">只读成员</option><option value="designer">设计人员</option>
-          <option value="supervisor">主管审阅</option><option value="process">工艺复核</option>
-          <option value="manager">项目经理</option>
-        </select>
-        <button className="platform-button" type="submit" disabled={invitationBusy}>创建邀请</button>
+        <TextInput id="platform-invite-email" name="inviteEmail" type="email" label="成员邮箱" maxLength={254}
+          required disabled={invitationBusy} />
+        <Select id="platform-project-role" name="projectRole" label="项目角色" defaultValue="viewer"
+          disabled={invitationBusy} options={[
+            { value: "viewer", label: "只读成员" }, { value: "designer", label: "设计人员" },
+            { value: "supervisor", label: "主管审阅" }, { value: "process", label: "工艺复核" },
+            { value: "manager", label: "项目经理" }
+          ]} />
+        <Button type="submit" loading={invitationBusy} loadingLabel="正在创建">创建邀请</Button>
       </form> : null}
     </div> : null}
   </section>;

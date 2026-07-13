@@ -309,6 +309,47 @@
   color: var(--color-text-muted);
 }
 
+.componentSurface,
+.formDemo,
+.feedbackGrid {
+  padding: var(--space-5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.formDemo {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.formDemo > :nth-child(n + 5),
+.formDemo > div:last-child {
+  grid-column: 1 / -1;
+}
+
+.choiceDemo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  align-items: center;
+}
+
+.feedbackGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.statusDemo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-4);
+  background: var(--color-surface-subtle);
+}
+
 @media (max-width: 64rem) {
   .colorGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .surfaceGrid { grid-template-columns: 1fr 1fr; }
@@ -321,6 +362,8 @@
   .intro, .measureGrid { grid-template-columns: 1fr; gap: var(--space-4); }
   .colorGrid { grid-template-columns: 1fr 1fr; }
   .typeRow { grid-template-columns: 1fr; gap: var(--space-2); }
+  .formDemo, .feedbackGrid { grid-template-columns: 1fr; }
+  .formDemo > * { grid-column: auto; }
 }
 
 @media (max-width: 32.5rem) {
