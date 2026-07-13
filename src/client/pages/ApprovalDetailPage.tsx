@@ -73,6 +73,10 @@ import { AnnotationSidePanel } from "./approvalDetail/AnnotationSidePanel.tsx";
 import { FloatingSupportPanel, type SupportTab } from "./approvalDetail/FloatingSupportPanel.tsx";
 import { PdmMetadataPanel, type PdmRepairDraft } from "./approvalDetail/PdmMetadataPanel.tsx";
 import { SignaturePanel } from "./approvalDetail/SignaturePanel.tsx";
+import { Button, ButtonLink } from "../ui/actions/index.tsx";
+import { Checkbox, NumberInput, Select, TextInput } from "../ui/forms/index.tsx";
+import { InlineAlert } from "../ui/feedback/index.tsx";
+import { Dialog } from "../ui/overlays/index.tsx";
 import {
   canRegenerateSignedPdf,
   canCreateAnnotation,
@@ -1228,131 +1232,55 @@ function PrintSettingsDialog({
   onPrintAndArchive: () => void;
 }) {
   return (
-    <div className="print-settings-backdrop" role="presentation">
-      <form
-        className="print-settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="print-settings-title"
+    <Dialog open title="打印签后 PDF" size="lg" onClose={onCancel} closeDisabled={busy}
+      description="系统打印回调成功后，将自动标记打印归档。"
+      footer={<>
+        <ButtonLink variant="secondary" href={signedPdfUrl} target="_blank" rel="noreferrer">预览签后 PDF</ButtonLink>
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>取消</Button>
+        <Button type="submit" form="print-settings-form" loading={busy} loadingLabel="打印中">打印并归档</Button>
+      </>}>
+      <form id="print-settings-form"
         onSubmit={(event) => {
           event.preventDefault();
           void onPrintAndArchive();
         }}
       >
-        <div className="print-settings-header">
-          <div>
-            <span className="eyebrow">PRINT</span>
-            <h2 id="print-settings-title">打印签后 PDF</h2>
-            <p>系统打印回调成功后，将自动标记打印归档。</p>
-          </div>
-          <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>
-            关闭
-          </button>
-        </div>
-        {error && <div className="error">{error}</div>}
+        {error && <InlineAlert tone="danger">{error}</InlineAlert>}
         <div className="print-settings-grid">
-          <label>
-            系统打印机
-            <select value={settings.printerName} onChange={(event) => onSettingsChange({ printerName: event.target.value })}>
-              <option value="">使用系统默认打印机</option>
-              {printers.map((printer) => (
-                <option key={printer.name} value={printer.name}>
-                  {printer.displayName || printer.name}{printer.isDefault ? "（默认）" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            份数
-            <input
-              type="number"
-              min={1}
-              max={99}
-              value={settings.copies}
-              onChange={(event) => onSettingsChange({ copies: Number(event.target.value) })}
-            />
-          </label>
-          <label>
-            打印范围
-            <input
-              value={settings.pageRange}
-              onChange={(event) => onSettingsChange({ pageRange: event.target.value })}
-              placeholder="留空为全部，例如 1,3,5-8"
-            />
-          </label>
-          <label>
-            纸张
-            <select value={settings.paperSize} onChange={(event) => onSettingsChange({ paperSize: event.target.value as PrintSettings["paperSize"] })}>
-              {paperSizeOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            方向
-            <select value={settings.orientation} onChange={(event) => onSettingsChange({ orientation: event.target.value as PrintSettings["orientation"] })}>
-              <option value="portrait">纵向</option>
-              <option value="landscape">横向</option>
-            </select>
-          </label>
-          <label>
-            颜色
-            <select value={settings.colorMode} onChange={(event) => onSettingsChange({ colorMode: event.target.value as PrintSettings["colorMode"] })}>
-              <option value="color">彩色</option>
-              <option value="grayscale">黑白</option>
-            </select>
-          </label>
-          <label>
-            双面
-            <select value={settings.duplexMode} onChange={(event) => onSettingsChange({ duplexMode: event.target.value as PrintSettings["duplexMode"] })}>
-              <option value="simplex">单面</option>
-              <option value="longEdge">长边双面</option>
-              <option value="shortEdge">短边双面</option>
-            </select>
-          </label>
-          <label>
-            边距
-            <select value={settings.marginMode} onChange={(event) => onSettingsChange({ marginMode: event.target.value as PrintSettings["marginMode"] })}>
-              <option value="default">默认</option>
-              <option value="none">无边距</option>
-              <option value="printableArea">可打印区域</option>
-            </select>
-          </label>
-          <label>
-            缩放比例
-            <input
-              type="number"
-              min={25}
-              max={200}
-              value={settings.scaleFactor}
-              onChange={(event) => onSettingsChange({ scaleFactor: Number(event.target.value) })}
-            />
-          </label>
-          <label className="print-settings-check">
-            <input
-              type="checkbox"
-              checked={settings.printBackground}
-              onChange={(event) => onSettingsChange({ printBackground: event.target.checked })}
-            />
-            打印背景
-          </label>
+          <Select id="print-printer" label="系统打印机" value={settings.printerName}
+            onChange={(event) => onSettingsChange({ printerName: event.target.value })}
+            options={[{ value: "", label: "使用系统默认打印机" }, ...printers.map((printer) => ({
+              value: printer.name, label: `${printer.displayName || printer.name}${printer.isDefault ? "（默认）" : ""}`
+            }))]} />
+          <NumberInput id="print-copies" label="份数" min={1} max={99} value={settings.copies}
+            onChange={(event) => onSettingsChange({ copies: Number(event.target.value) })} />
+          <TextInput id="print-page-range" label="打印范围" value={settings.pageRange}
+            onChange={(event) => onSettingsChange({ pageRange: event.target.value })} placeholder="留空为全部，例如 1,3,5-8" />
+          <Select id="print-paper" label="纸张" value={settings.paperSize}
+            onChange={(event) => onSettingsChange({ paperSize: event.target.value as PrintSettings["paperSize"] })}
+            options={paperSizeOptions} />
+          <Select id="print-orientation" label="方向" value={settings.orientation}
+            onChange={(event) => onSettingsChange({ orientation: event.target.value as PrintSettings["orientation"] })}
+            options={[{ value: "portrait", label: "纵向" }, { value: "landscape", label: "横向" }]} />
+          <Select id="print-color" label="颜色" value={settings.colorMode}
+            onChange={(event) => onSettingsChange({ colorMode: event.target.value as PrintSettings["colorMode"] })}
+            options={[{ value: "color", label: "彩色" }, { value: "grayscale", label: "黑白" }]} />
+          <Select id="print-duplex" label="双面" value={settings.duplexMode}
+            onChange={(event) => onSettingsChange({ duplexMode: event.target.value as PrintSettings["duplexMode"] })}
+            options={[{ value: "simplex", label: "单面" }, { value: "longEdge", label: "长边双面" }, { value: "shortEdge", label: "短边双面" }]} />
+          <Select id="print-margin" label="边距" value={settings.marginMode}
+            onChange={(event) => onSettingsChange({ marginMode: event.target.value as PrintSettings["marginMode"] })}
+            options={[{ value: "default", label: "默认" }, { value: "none", label: "无边距" }, { value: "printableArea", label: "可打印区域" }]} />
+          <NumberInput id="print-scale" label="缩放比例" min={25} max={200} value={settings.scaleFactor}
+            onChange={(event) => onSettingsChange({ scaleFactor: Number(event.target.value) })} />
+          <Checkbox id="print-background" label="打印背景" checked={settings.printBackground}
+            onChange={(event) => onSettingsChange({ printBackground: event.target.checked })} />
         </div>
         <p className="print-settings-note">
           应用能确认打印任务已提交给 Windows，无法判断打印机后续缺纸、卡纸或实际出纸状态。
         </p>
-        <div className="print-settings-actions">
-          <a className="button-link secondary-link" href={signedPdfUrl} target="_blank" rel="noreferrer">
-            预览签后 PDF
-          </a>
-          <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>
-            取消
-          </button>
-          <button type="submit" disabled={busy}>
-            {busy ? "打印中" : "打印并归档"}
-          </button>
-        </div>
       </form>
-    </div>
+    </Dialog>
   );
 }
 

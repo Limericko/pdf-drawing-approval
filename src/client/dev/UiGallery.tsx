@@ -1,8 +1,9 @@
 import { Copy, Save, Trash2 } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { Button, ButtonGroup, IconButton } from "../ui/actions/index.tsx";
 import { Checkbox, FormActions, PasswordInput, RadioGroup, Select, Switch, TextArea, TextInput } from "../ui/forms/index.tsx";
 import { EmptyState, ErrorState, InlineAlert, SaveIndicator, Skeleton } from "../ui/feedback/index.tsx";
+import { Dialog, Drawer, Popover, Tooltip } from "../ui/overlays/index.tsx";
 import styles from "./UiGallery.module.css";
 
 const semanticColors = [
@@ -24,6 +25,9 @@ const typeSamples = [
 const spacingTokens = ["1 · 4", "2 · 8", "3 · 12", "4 · 16", "5 · 24", "6 · 32", "7 · 40", "8 · 48"];
 
 export function UiGallery() {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
   return <div className={styles.galleryShell}>
     <header className={styles.masthead}>
       <div className={styles.productMark} aria-hidden="true">P2</div>
@@ -160,7 +164,31 @@ export function UiGallery() {
           <ErrorState title="项目读取失败" onRetry={() => undefined}>请检查连接后重新加载。</ErrorState>
         </div>
       </section>
+
+      <section className={styles.gallerySection} aria-labelledby="shared-overlays">
+        <SectionHeading index="08" id="shared-overlays" title="浮层与确认" description="浮层管理焦点、Escape、滚动锁和关闭后的焦点回归。" />
+        <div className={styles.componentSurface}>
+          <ButtonGroup aria-label="浮层组件入口">
+            <Button onClick={() => setDialogOpen(true)}>打开对话框</Button>
+            <Button variant="secondary" onClick={() => setDrawerOpen(true)}>打开属性抽屉</Button>
+            <Popover open={popoverOpen} label="版本筛选" onClose={() => setPopoverOpen(false)}
+              trigger={<Button variant="secondary" onClick={() => setPopoverOpen((value) => !value)}>筛选条件</Button>}>
+              仅显示需要工艺复核的图纸版本。
+            </Popover>
+            <Tooltip content="复制当前图纸的 SHA-256"><Button variant="ghost">哈希说明</Button></Tooltip>
+          </ButtonGroup>
+        </div>
+      </section>
     </main>
+    <Dialog open={dialogOpen} title="确认发布版本 A03" description="发布后，该版本将成为零件库当前有效版本。"
+      onClose={() => setDialogOpen(false)} footer={<><Button variant="secondary" onClick={() => setDialogOpen(false)}>取消</Button>
+        <Button onClick={() => setDialogOpen(false)}>确认发布</Button></>}>
+      <InlineAlert tone="warning">发布前请确认图纸签章和版本号。</InlineAlert>
+    </Dialog>
+    <Drawer open={drawerOpen} title="图纸属性" description="轴承座 · A03" onClose={() => setDrawerOpen(false)}
+      footer={<Button onClick={() => setDrawerOpen(false)}>保存属性</Button>}>
+      <TextInput id="gallery-drawer-owner" label="负责人" defaultValue="林工" />
+    </Drawer>
   </div>;
 }
 

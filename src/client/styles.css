@@ -525,59 +525,6 @@ input[type="file"] {
   box-shadow: none;
 }
 
-.desktop-update-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(21, 32, 43, 0.28);
-  backdrop-filter: blur(3px);
-}
-
-.desktop-update-dialog {
-  position: relative;
-  width: min(520px, 100%);
-  border: 1px solid rgba(44, 84, 108, 0.18);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 24px 64px rgba(18, 34, 48, 0.22);
-  padding: 24px;
-  display: grid;
-  gap: 18px;
-}
-
-.desktop-update-dialog h2 {
-  margin: 4px 0 8px;
-  font-size: 22px;
-  line-height: 1.25;
-  color: #162631;
-}
-
-.desktop-update-dialog p {
-  margin: 0;
-  color: #526674;
-  line-height: 1.7;
-}
-
-.desktop-update-dialog__close {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(44, 84, 108, 0.16);
-  border-radius: 8px;
-  background: #f8fafb;
-  color: #526674;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
 .desktop-update-progress {
   display: grid;
   gap: 8px;
@@ -619,13 +566,6 @@ input[type="file"] {
 .desktop-update-notes {
   padding-top: 12px;
   border-top: 1px solid rgba(44, 84, 108, 0.14);
-}
-
-.desktop-update-dialog__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
 }
 
 .login-layout {
@@ -1022,45 +962,6 @@ input[type="file"] {
   gap: 8px;
   align-items: center;
   justify-content: flex-end;
-}
-
-.signature-required-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: calc(var(--z-floating) + 10);
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(16, 36, 45, 0.42);
-}
-
-.signature-required-dialog {
-  display: grid;
-  gap: 16px;
-  width: min(100%, 500px);
-  padding: 20px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-left: 4px solid var(--warning);
-  border-radius: var(--radius-panel);
-  box-shadow: var(--shadow-raised);
-}
-
-.signature-required-dialog h2 {
-  margin: 4px 0 8px;
-  color: var(--text-strong);
-  font-size: 22px;
-  line-height: 1.2;
-}
-
-.signature-required-dialog p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.signature-required-dialog button {
-  justify-self: end;
 }
 
 .table-filter-summary {
@@ -3053,47 +2954,6 @@ input[type="file"] {
   color: var(--danger);
 }
 
-.print-settings-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(7, 26, 36, 0.42);
-}
-
-.print-settings-dialog {
-  width: min(780px, 100%);
-  max-height: min(88vh, 760px);
-  overflow: auto;
-  padding: 20px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-panel);
-  box-shadow: 0 24px 80px rgba(7, 26, 36, 0.24);
-}
-
-.print-settings-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 16px;
-}
-
-.print-settings-header h2 {
-  margin: 2px 0 6px;
-}
-
-.print-settings-header p,
-.print-settings-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.55;
-}
-
 .print-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3113,34 +2973,15 @@ input[type="file"] {
   min-width: 0;
 }
 
-.print-settings-check {
-  align-content: center;
-  grid-template-columns: auto minmax(0, 1fr);
-  display: flex !important;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px !important;
-}
-
-.print-settings-check input {
-  width: auto;
-  min-height: auto;
-}
-
 .print-settings-note {
   margin-top: 14px;
   padding: 10px 12px;
+  color: var(--muted);
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-}
-
-.print-settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 16px;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .side-panel dt {
@@ -6106,9 +5947,6 @@ input[type="file"] {
     max-height: calc(100vh - 116px);
   }
 
-  .signature-required-overlay {
-    padding: 12px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

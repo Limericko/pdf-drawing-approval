@@ -53,6 +53,7 @@ import {
 import { apiUrl } from "../clientConfig.ts";
 import { statusLabel } from "../widgets/status.ts";
 import { OperationsTab } from "./settings/OperationsTab.tsx";
+import { ConfirmDialog } from "../ui/overlays/index.tsx";
 export {
   batchSubmissionStatusLabel,
   buildMaintenanceRunSummary,
@@ -129,6 +130,7 @@ export function SettingsPage() {
   const [backfillingPdm, setBackfillingPdm] = useState(false);
   const [newUser, setNewUser] = useState({ username: "", password: "", displayName: "", email: "", role: "designer" as User["role"] });
   const [reportFilters, setReportFilters] = useState({ projectName: "", status: "", from: "", to: "" });
+  const [dangerConfirmation, setDangerConfirmation] = useState<"cleanup" | "pdm-backfill" | null>(null);
 
   useEffect(() => {
     refreshSettings();
@@ -419,7 +421,7 @@ export function SettingsPage() {
   }
 
   async function executeCleanupNow() {
-    if (!window.confirm("确认执行清理？系统只会清理临时上传、旧失败批量提交记录和未被当前记录引用的旧签审 PDF。")) return;
+    setDangerConfirmation(null);
     setCleaning("execute");
     setMessage("正在执行清理...");
     try {
@@ -472,7 +474,7 @@ export function SettingsPage() {
   }
 
   async function executePdmBackfill() {
-    if (!window.confirm("确认执行 PDM 历史回填？系统会扫描已通过/已归档图纸，并把标准文件名的记录发布到 PDM 零件库。")) return;
+    setDangerConfirmation(null);
     setBackfillingPdm(true);
     setMessage("正在执行 PDM 历史回填...");
     try {
@@ -872,7 +874,7 @@ export function SettingsPage() {
           onRefreshSignatureStatuses={refreshSignatureStatuses}
           onRefreshBatchSubmissions={refreshBatchSubmissions}
           onCleanupPreview={runCleanupPreview}
-          onCleanupExecute={executeCleanupNow}
+          onCleanupExecute={() => setDangerConfirmation("cleanup")}
           onMaintenanceChange={setMaintenanceSettings}
           onBackupValidationPathChange={setBackupValidationPath}
           onSaveMaintenance={saveMaintenance}
@@ -881,9 +883,17 @@ export function SettingsPage() {
           onExportReport={exportApprovalReport}
           onRefreshOperationLogs={refreshOperationLogs}
           onCheckUpdate={checkUpdateNow}
-          onRunPdmBackfill={executePdmBackfill}
+          onRunPdmBackfill={() => setDangerConfirmation("pdm-backfill")}
         />
       )}
+      <ConfirmDialog open={dangerConfirmation === "cleanup"} title="执行系统清理"
+        description="系统只会清理临时上传、旧失败批量提交记录和未被当前记录引用的旧签审 PDF。"
+        confirmLabel="确认清理" danger busy={cleaning === "execute"} onConfirm={() => void executeCleanupNow()}
+        onClose={() => setDangerConfirmation(null)} />
+      <ConfirmDialog open={dangerConfirmation === "pdm-backfill"} title="执行 PDM 历史回填"
+        description="系统会扫描已通过或已归档图纸，并把标准文件名的记录发布到 PDM 零件库。"
+        confirmLabel="确认回填" danger busy={backfillingPdm} onConfirm={() => void executePdmBackfill()}
+        onClose={() => setDangerConfirmation(null)} />
     </section>
   );
 }

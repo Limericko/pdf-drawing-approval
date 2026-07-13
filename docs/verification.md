@@ -4340,3 +4340,11 @@ Gallery 生命周期修复：
 - 聚焦迁移与既有布局测试：5 个文件、`24/24` 通过；全量 client 更新为 47 个文件、`392/392` 通过。生产构建通过，只保留既有 PDF.js `531.35 kB` 警告。
 - legacy Playwright 登录/角色入口在 desktop/mobile 共 `10/10` 通过，覆盖管理员、主管、工艺、设计师落点和登录页 critical axe 门禁；退出后 `14173/18080` 监听均为 `0`。
 - 使用真实浏览器人工检查 desktop 登录、提交、个人资料和 `390×844` mobile 登录；控件无溢出，字段可访问名称、密码显示按钮、空状态和禁用原因均正确暴露。
+
+### DS2 Overlay 公共层与调用点迁移
+
+- 新增 `Dialog`、`ConfirmDialog`、`Drawer`、`Popover`、`Tooltip`；Modal/Drawer 统一管理初始焦点、Tab 环、Escape、body 滚动锁和关闭后的焦点回归，手机使用全宽底部 Dialog 或全屏 Drawer。
+- 桌面更新、签名必配、打印设置、管理端系统清理和 PDM 历史回填已迁移到公共浮层；打印设置同步迁移到共享 Actions/Forms/Feedback。
+- 旧 `.desktop-update-*` 容器、`.signature-required-*`、`.print-settings-backdrop/dialog/header/check/actions` 在生产调用点零引用后删除；更新下载进度和打印表单的领域布局样式保留。
+- Overlay 与迁移聚焦回归：7 个文件、`44/44` 通过；全量 client 更新为 49 个文件、`396/396` 通过，`e2e:typecheck` 和生产构建通过。
+- Gallery 五视口交互验证 Dialog/Drawer 初始焦点、Escape 关闭、焦点回归和 Popover Escape；更新基线后非更新模式 `5/5` 通过，`34173` 监听为 `0`。桌面与手机截图已人工检查；当前大小为 desktop `245403`、compact `240070`、landscape `238445`、portrait `241343`、mobile `228479` bytes。

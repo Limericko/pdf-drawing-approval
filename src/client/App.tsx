@@ -30,6 +30,8 @@ import { LoginPage } from "./pages/LoginPage.tsx";
 import { ServerConnectionPage } from "./pages/ServerConnectionPage.tsx";
 import { defaultRouteForRole, navigationForRole, routeAllowedForRole, routePath, type AppRouteName } from "./roleAccess.ts";
 import { RoleFlowGuide } from "./widgets/RoleFlowGuide.tsx";
+import { Button } from "./ui/actions/index.tsx";
+import { Dialog } from "./ui/overlays/index.tsx";
 
 type Route =
   | { name: "tasks" }
@@ -503,26 +505,18 @@ function DesktopUpdateDialog({
   const downloaded = status.status === "downloaded";
   const failed = status.status === "error";
 
+  const title = downloaded ? `客户端新版${latestVersion}已下载` : failed ? "客户端更新检查失败" : `正在准备客户端新版${latestVersion}`;
+  const description = downloaded
+    ? "安装包已下载完成。请保存当前工作后打开安装包，按安装向导完成升级。"
+    : failed
+      ? status.message ?? "无法读取局域网更新清单，请确认服务端正在运行。"
+      : status.message ?? "正在连接服务端更新目录并下载客户端安装包。";
   return (
-    <div className="desktop-update-overlay">
-      <section className="desktop-update-dialog" role="dialog" aria-modal="true" aria-labelledby="desktop-update-title">
-        <button type="button" className="desktop-update-dialog__close" aria-label="关闭更新提示" onClick={onDismiss}>
-          <X size={16} strokeWidth={2} aria-hidden="true" />
-        </button>
-        <div>
-          <span className="eyebrow">CLIENT UPDATE</span>
-          <h2 id="desktop-update-title">
-            {downloaded ? `客户端新版${latestVersion}已下载` : failed ? "客户端更新检查失败" : `正在准备客户端新版${latestVersion}`}
-          </h2>
-          <p>
-            {downloaded
-              ? "安装包已下载完成。请保存当前工作后打开安装包，按安装向导完成升级。"
-              : failed
-                ? status.message ?? "无法读取局域网更新清单，请确认服务端正在运行。"
-                : status.message ?? "正在连接服务端更新目录并下载客户端安装包。"}
-          </p>
-        </div>
-
+    <Dialog open title={title} description={description} onClose={onDismiss} closeLabel="关闭更新提示"
+      footer={<>{failed && <Button onClick={onRetry}>重新检查</Button>}
+        {downloaded && <Button onClick={onOpenInstaller}>打开安装包</Button>}
+        <Button variant="secondary" onClick={onDismiss}>{downloaded ? "稍后安装" : "后台处理"}</Button></>}>
+      <div>
         {downloading && (
           <div className="desktop-update-progress" aria-label="客户端下载进度">
             <div className="desktop-update-progress__bar">
@@ -551,14 +545,8 @@ function DesktopUpdateDialog({
             ))}
           </ul>
         )}
-
-        <div className="desktop-update-dialog__actions">
-          {failed && <button type="button" onClick={onRetry}>重新检查</button>}
-          {downloaded && <button type="button" onClick={onOpenInstaller}>打开安装包</button>}
-          <button type="button" className="secondary" onClick={onDismiss}>{downloaded ? "稍后安装" : "后台处理"}</button>
-        </div>
-      </section>
-    </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -628,16 +616,12 @@ function navIconForRoute(route: AppRouteName): LucideIcon {
 
 function SignatureRequiredDialog({ onGoSignature }: { onGoSignature: () => void }) {
   return (
-    <div className="signature-required-overlay">
-      <section className="signature-required-dialog" role="dialog" aria-modal="true" aria-labelledby="signature-required-title">
-        <div>
-          <span className="eyebrow">SIGNATURE REQUIRED</span>
-          <h2 id="signature-required-title">必须先添加签名</h2>
-          <p>当前账号尚未配置手写签名。请先在“我的签名”中上传 PNG 或在线手写签名，再继续提交、审核或打印归档。</p>
-        </div>
-        <button type="button" onClick={onGoSignature}>去添加签名</button>
-      </section>
-    </div>
+    <Dialog open title="必须先添加签名"
+      description="当前账号尚未配置手写签名。请先在“我的签名”中上传 PNG 或在线手写签名，再继续提交、审核或打印归档。"
+      onClose={onGoSignature} closeLabel="前往添加签名"
+      footer={<Button onClick={onGoSignature}>去添加签名</Button>}>
+      <span className="eyebrow">SIGNATURE REQUIRED</span>
+    </Dialog>
   );
 }
 

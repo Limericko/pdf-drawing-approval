@@ -20,6 +20,26 @@ test("DS0–DS2 foundation is stable, accessible and responsive", async ({ page 
   await page.keyboard.press("Tab");
   await expect(page.locator("button:focus-visible").first()).toBeVisible();
 
+  const dialogTrigger = page.getByRole("button", { name: "打开对话框" });
+  await dialogTrigger.click();
+  await expect(page.getByRole("dialog", { name: "确认发布版本 A03" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "关闭对话框" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "确认发布版本 A03" })).toHaveCount(0);
+  await expect(dialogTrigger).toBeFocused();
+
+  const drawerTrigger = page.getByRole("button", { name: "打开属性抽屉" });
+  await drawerTrigger.click();
+  await expect(page.getByRole("dialog", { name: "图纸属性" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "图纸属性" })).toHaveCount(0);
+  await expect(drawerTrigger).toBeFocused();
+
+  await page.getByRole("button", { name: "筛选条件" }).click();
+  await expect(page.getByRole("dialog", { name: "版本筛选" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "版本筛选" })).toHaveCount(0);
+
   const axe = await new AxeBuilder({ page }).analyze();
   const blocking = axe.violations.filter(({ impact }) => impact === "serious" || impact === "critical");
   expect(blocking, JSON.stringify(blocking, null, 2)).toEqual([]);
