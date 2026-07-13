@@ -2,6 +2,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export function resolveApiProxyTarget(env: Record<string, string | undefined> = process.env) {
+  if (env.PDF_APPROVAL_VITE_TARGET === "platform-e2e") {
+    const target = env.PDF_APPROVAL_PLATFORM_TEST_API_TARGET?.trim();
+    if (!target) throw new Error("PLATFORM_E2E_API_TARGET_MISSING");
+    return target;
+  }
   return env.PDF_APPROVAL_DEV_API_TARGET ?? "http://localhost:8080";
 }
 

@@ -48,4 +48,14 @@ describe("vite dev server proxy", () => {
     expect(resolveApiProxyTarget({ PDF_APPROVAL_DEV_API_TARGET: "http://127.0.0.1:18080" })).toBe("http://127.0.0.1:18080");
     expect(resolveApiProxyTarget({})).toBe("http://localhost:8080");
   });
+
+  it("uses the platform target only when the platform E2E client is explicit", () => {
+    expect(resolveApiProxyTarget({
+      PDF_APPROVAL_VITE_TARGET: "platform-e2e",
+      PDF_APPROVAL_PLATFORM_TEST_API_TARGET: "http://127.0.0.1:28080",
+      PDF_APPROVAL_DEV_API_TARGET: "http://127.0.0.1:18080"
+    })).toBe("http://127.0.0.1:28080");
+    expect(() => resolveApiProxyTarget({ PDF_APPROVAL_VITE_TARGET: "platform-e2e" }))
+      .toThrow("PLATFORM_E2E_API_TARGET_MISSING");
+  });
 });

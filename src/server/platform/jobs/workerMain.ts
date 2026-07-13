@@ -33,16 +33,35 @@ const MAX_STAGING_CLEANUP_VERIFICATION_MS = 1_000;
 const SMTP_HEALTH_TIMEOUT_MS = 1_000;
 const SMTP_HEALTH_TTL_MS = 60_000;
 
-export async function workerMain(env: NodeJS.ProcessEnv = process.env) {
-  const config = loadPlatformConfig(env, "worker");
-  return runWorkerResourceLifecycle({
+type WorkerMainLifecycleOptions = {
+  readonly createPool: () => PlatformPool;
+  readonly createStorage: () => StorageAdapter;
+  readonly assertReady: (pool: PlatformPool) => Promise<void>;
+  readonly run: (pool: PlatformPool, storage: StorageAdapter) => Promise<void>;
+  readonly signal?: AbortSignal;
+};
+
+export type WorkerMainDependencies = {
+  readonly loadConfig?: (env: NodeJS.ProcessEnv, target: "worker") => WorkerPlatformConfig;
+  readonly storageFactory?: (config: WorkerPlatformConfig["storage"]) => StorageAdapter;
+  readonly runLifecycle?: (options: WorkerMainLifecycleOptions) => Promise<void>;
+  readonly signal?: AbortSignal;
+};
+
+export async function workerMain(env: NodeJS.ProcessEnv = process.env, dependencies: WorkerMainDependencies = {}) {
+  const config = (dependencies.loadConfig ?? loadPlatformConfig)(env, "worker");
+  const storageFactory = dependencies.storageFactory ?? createStorage;
+  const runLifecycle = dependencies.runLifecycle ?? ((options: WorkerMainLifecycleOptions) =>
+    runWorkerResourceLifecycle(options));
+  return runLifecycle({
     createPool: () => createPlatformPool(config.database, "pdf-approval-worker"),
-    createStorage: () => createStorage(config.storage),
+    createStorage: () => storageFactory(config.storage),
     assertReady: async (pool) => {
       assertWorkerCapacity(config);
       await assertExpectedSchema(pool, await loadMigrationFiles());
     },
-    run: (pool, storage) => runConfiguredWorkers(config, pool, storage)
+    run: (pool, storage) => runConfiguredWorkers(config, pool, storage, dependencies.signal),
+    signal: dependencies.signal
   });
 }
 
@@ -53,7 +72,12 @@ export function assertWorkerCapacity(config: Pick<WorkerPlatformConfig, "databas
   }
 }
 
-async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: PlatformPool, storage: StorageAdapter) {
+async function runConfiguredWorkers(
+  config: WorkerPlatformConfig,
+  pool: PlatformPool,
+  storage: StorageAdapter,
+  outerSignal?: AbortSignal
+) {
   const controller = new AbortController();
   const mail = createPlatformMailTransport({ config: config.smtp });
   const smtpHealthCache = createDependencyHealthCache({
@@ -63,6 +87,8 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
   });
   const smtpHealth = async () => (await smtpHealthCache.check()).ok ? "healthy" as const : "unhealthy" as const;
   const stop = () => controller.abort();
+  if (outerSignal?.aborted) controller.abort();
+  else outerSignal?.addEventListener("abort", stop, { once: true });
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   try {
@@ -149,6 +175,7 @@ async function runConfiguredWorkers(config: WorkerPlatformConfig, pool: Platform
     mail.close();
     process.removeListener("SIGTERM", stop);
     process.removeListener("SIGINT", stop);
+    outerSignal?.removeEventListener("abort", stop);
   }
 }
 
@@ -158,6 +185,7 @@ export async function runWorkerResourceLifecycle<TPool extends ClosablePool, TSt
   readonly createStorage: () => TStorage;
   readonly assertReady: (pool: TPool) => Promise<void>;
   readonly run: (pool: TPool, storage: TStorage) => Promise<void>;
+  readonly signal?: AbortSignal;
 }) {
   if (!options || typeof options.createPool !== "function" || typeof options.createStorage !== "function" ||
       typeof options.assertReady !== "function" || typeof options.run !== "function") throw new Error("INVALID_WORKER_LIFECYCLE_OPTIONS");
@@ -166,7 +194,9 @@ export async function runWorkerResourceLifecycle<TPool extends ClosablePool, TSt
   let primaryError: unknown;
   try {
     await options.assertReady(pool);
+    options.signal?.throwIfAborted();
     storage = options.createStorage();
+    options.signal?.throwIfAborted();
     await options.run(pool, storage);
   } catch (error) {
     primaryError = error;
@@ -197,8 +227,21 @@ function isMainModule() {
 
 if (isMainModule()) {
   workerMain().catch((error: unknown) => {
-    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "WORKER_FAILED";
-    process.stderr.write(`${code}\n`);
+    process.stderr.write(`${formatWorkerProcessFailure(error)}\n`);
     process.exitCode = 1;
   });
+}
+
+const WORKER_PROCESS_FAILURE_CODES = new Set([
+  "PLATFORM_CONFIG_INVALID",
+  "INSECURE_PRODUCTION_CONFIG",
+  "WORKER_POOL_CAPACITY_INSUFFICIENT",
+  "PLATFORM_SCHEMA_MISMATCH"
+]);
+
+export function formatWorkerProcessFailure(error: unknown) {
+  const candidate = error && typeof error === "object" && "code" in error && typeof error.code === "string"
+    ? error.code
+    : error instanceof Error ? error.message : undefined;
+  return candidate && WORKER_PROCESS_FAILURE_CODES.has(candidate) ? candidate : "WORKER_FAILED";
 }

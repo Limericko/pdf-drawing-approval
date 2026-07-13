@@ -4180,3 +4180,89 @@ npm run e2e
 
 - Phase 0 未修改业务流程、数据库 schema 或桌面打包逻辑；`package.json` 和 lockfile 仅增加测试脚本及开发依赖。
 - 产品代码唯一改动是将登录方式切换容器的 ARIA 语义从 `tablist` 修正为 `group`，未改变交互或认证行为。
+
+## 2026-07-13 Phase 1 Task 22 平台收尾验证（进行中）
+
+范围与隔离：
+
+- 新增独立 `playwright.platform.config.ts`，使用 `24173`（Vite）和 `28080`（Platform API），未修改 Phase 0 的 `playwright.config.ts`、`14173`、`18080` 或 legacy `.cache/e2e/runtime`。
+- 平台 harness 设计为每次创建唯一 fresh PostgreSQL database，应用当前 `0001`–`0007` 迁移，以真实 `startPlatformWebServer()`、`workerMain()` 和 Vite 启动 Web/Worker/客户端。每次运行拥有单一 MinIO cleanup root `phase1-e2e/<run-id>`；Web 与 Worker 显式注入同一个测试 StorageAdapter wrapper，把逻辑 `write/openRead/head/delete` 和 wrapper 自有 health probe 全部映射到其 `objects/` 子前缀。Worker probe sentinel 位于同一 owned root 的 `sentinel/` 子前缀，因此对 adapter 仍是前缀外对象，但正常退出或启动失败时可由 cleanup root 统一兜底。生产默认 storage factory 不变，也没有新增环境变量 fallback。退出时关闭 HTTP、Pool、Worker、删除该 owned cleanup root 和本次 state 文件，再由现有 harness 等待 session 为 0 并 `DROP DATABASE ... WITH (FORCE)`。
+- Mailpit 清理函数只接受 `127.0.0.1|localhost|::1:58025`；由于 Mailpit API 的本地测试基线使用全量清理，harness 只有在首次清理成功、确认取得本地测试实例所有权后才在退出时再次清理。它不得指向共享或远程 Mailpit。
+- 测试种子使用源码内固定的 `.test` 邮箱、合成密码和 TOTP 常量；`.cache/platform-e2e/state.json` 分别记录 owned `storageCleanupRoot` 与 adapter 实际 `storagePrefix`，并只发布非秘密的管理员邮箱及必要实体 ID，不写密码、TOTP secret 或 recovery codes。进程启动第一步先删除陈旧 state，退出再次删除；不提交截图、trace、视频或临时 state。
+
+已实际执行的 TDD 与静态门禁（节选；所有测试命令均由 60 秒执行器约束）：
+
+```powershell
+node scripts/run-with-timeout.mjs 60000 npm run e2e:platform -- --project=desktop-chromium e2e/platform/identity-security.spec.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run e2e/platform/support/totp.unit.test.ts e2e/platform/support/mailpit.unit.test.ts e2e/platform/support/fixtures.unit.test.ts e2e/platform/support/server.unit.test.ts src/client/viteConfig.test.ts
+node scripts/run-with-timeout.mjs 60000 npm run e2e:typecheck
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/client
+npm run test:platform:unit
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/auth.test.ts src/server/domain src/server/repositories src/server/services src/server/files src/server/pdf
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/routes/auth.test.ts src/server/routes/submissions.test.ts src/server/routes/approvals.test.ts src/server/routes/approvalAnnotations.test.ts src/server/routes/approvalComments.test.ts src/server/routes/pdm.test.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/routes/settings.test.ts src/server/routes/system.test.ts src/server/routes/users.test.ts src/server/routes/profile.test.ts src/server/routes/signatures.test.ts src/server/routes/signatureTemplates.test.ts src/server/routes/operationLogs.test.ts src/server/routes/reports.test.ts src/server/routes/tray.test.ts src/server/server.test.ts src/server/startServer.test.ts src/server/dbIndexes.test.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/serverPackage.test.ts src/server/serverExePackage.test.ts
+node scripts/run-with-timeout.mjs 60000 npm run desktop:test
+node scripts/run-with-timeout.mjs 60000 npm run build
+node scripts/run-with-timeout.mjs 60000 npm run e2e -- --project=desktop-chromium e2e/smoke/login-navigation.spec.ts
+git diff --check
+```
+
+结果：
+
+- 首个 identity spec 有效 RED：1 个用例在 `page.goto(http://127.0.0.1:24173/)` 得到 `ERR_CONNECTION_REFUSED`，证明当时尚无 harness；墙钟 `12.0s`。此前 Playwright 先暴露本机缺少版本匹配的 bundled Chromium 与 ffmpeg，平台配置改为“bundled Chromium 存在时优先，否则使用已安装 Chrome channel”，并关闭非必需视频；截图/trace 均位于被忽略的 `.cache/platform-e2e`。
+- Vite platform target 先得到预期 RED：24 个通过、1 个失败，实际仍选 `18080` 而预期 platform `28080`；墙钟 `16.2s`。最小实现后，TOTP、Mailpit 与 Vite 共 3 个文件、29 个用例通过；fresh 复测 Vitest `4.17s`、命令墙钟 `14.6s`。
+- lifecycle fixture 初次类型检查得到预期 RED：`TS2322`，worker-scoped fixture 被错误声明为 test scope；墙钟 `10.6s`。分离 Playwright test/worker fixtures 后通过；三份完整 spec 落盘后的 fresh `e2e:typecheck` 通过，命令墙钟 `10.7s`。
+- Mailpit 不可用诊断先得到预期 RED：2 个通过、1 个失败，原始 `connect ECONNREFUSED secret-host` 未映射；修复后 3/3 通过，Vitest `1.67s`、命令墙钟 `10.2s`，错误消息不再泄露连接上下文。
+- state 发布竞态与清理诊断先得到预期 RED：2 个文件、2 个用例均因函数不存在失败，同时证明导入 `server.ts` 会错误启动 harness；墙钟 `15.1s`。修复后 state 使用临时文件 + rename 原子发布，并在 Vite 绑定 `24173` 前完成；`server.ts` 增加 main-module guard，清理逐项保留稳定子错误。2/2 GREEN 后 `e2e:typecheck` 继续通过，组合命令墙钟 `24.2s`。
+- 最终 support + Vite targeted fresh：5 个文件、32 个用例通过，Vitest `6.17s`；随后 `e2e:typecheck` 和 `git diff --check` 通过，组合墙钟 `25.7s`。
+- 端口检查显示平台 `24173:RELEASED`、`28080:RELEASED`。
+
+已完成的无 Docker 回归门禁：
+
+- Task 20/21 身份客户端与界面聚焦：9 个文件、156 个用例通过，墙钟 `13.0s`。
+- 全量 client：40 个文件、375 个用例通过，墙钟 `15.6s`。
+- legacy auth/domain/repositories/services/files/pdf：31 个文件、130 个用例通过，墙钟 `20.3s`。
+- legacy 核心 routes：6 个文件、88 个用例通过，墙钟 `41.0s`。
+- legacy settings/system/users 等：12 个文件、65 个用例通过，墙钟 `23.7s`。
+- server/server-exe package：2 个文件、3 个用例通过，墙钟 `12.1s`。
+- Electron：3 个文件、12 个用例通过，墙钟 `12.3s`。
+- `npm run build`：TypeScript 与 Vite 生产构建通过，墙钟 `29.7s`；只保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告。
+
+规格审查 Important 修复证据：
+
+- 物理 S3 前缀与 Worker 注入先得到预期 RED：storage suite 因 wrapper 模块不存在失败；Worker 新用例仍进入真实 `loadPlatformConfig`，4 个既有用例通过、1 个新用例失败，墙钟 `13.3s`。实现测试 wrapper、Web `dependencies.createStorage` 注入和 Worker 显式 `loadConfig/storageFactory/runLifecycle` 依赖后，2 个文件、7 个用例通过，墙钟 `17.6s`。
+- fresh 受影响回归包含 prefixed storage、TOTP、Mailpit、state publication、cleanup diagnostics 和 Worker lifecycle：6 个文件、14 个用例通过，墙钟 `14.6s`。
+- identity security spec 在 `page.goBack()` 后、下一次 `page.goto('/')` 前，使用同一 helper 同时扫描后退态 URL、localStorage、sessionStorage 和 console；检查 challenge、invitation、enrollment、`otpauth://` URI、手工 TOTP secret、两次 TOTP code 与全部 recovery codes 均不残留。
+- 运行手册已明确列出 `npm run platform:db:migrate`、`npm run platform:bootstrap-admin` 和 `npm run platform:worker`；未跟踪 `.env.local` 使用等价的显式 Node 入口覆盖，不修改或隐藏 npm 默认配置。
+- 修复后的 Task 20/21 聚焦回归：9 个文件、156 个用例通过，墙钟 `13.2s`；`e2e:typecheck` 通过，墙钟 `11.2s`；`npm run build` 通过，墙钟 `27.3s`，仍只有既有 PDF.js `531.35 kB` 警告。
+
+质量审查 Critical / Important 修复证据（未运行 Docker 或浏览器）：
+
+- 本地依赖边界采用 fail-closed：在 Mailpit、PostgreSQL、MinIO 的任何请求前，先删除陈旧 state，再校验全部 TEST/admin/migration/web/worker/bootstrap PostgreSQL URL 均为固定 `55432` loopback、允许的本地角色/数据库/本地密码；MinIO 必须是固定 `59000` loopback HTTP、无认证/path/query/hash、精确 `pdf-approval` bucket、`forcePathStyle=true` 和 local-only 示例凭据。run env 从白名单显式构造，不继承生产同名配置。对应 RED 后，环境与启动边界 2 个文件、14 个用例通过。
+- startup、E2E Worker child 和正式 Worker 进程错误只允许白名单稳定 code，否则输出通用 code；数据库 URL、secret 和任意 `error.code` 不再透传。对应 3 个文件、10 个用例通过。
+- S3 prefix 回收检查 `DeleteObjects.Errors`，且 `IsTruncated=true` 缺 `NextContinuationToken` 时 fail-closed；多页、部分失败和缺 token 3 个用例通过。
+- `npm run e2e:platform` 无参数时由无 shell 的 Node runner 顺序执行 desktop identity、desktop session/project、mobile identity 三次独立 fresh harness；显式参数保持单次 Playwright 直通。stateful Playwright `retries` 固定为 0；command matrix 2/2 通过。
+- 完整 harness 已接真实 Worker prefix probe：先在 owned run root 的 `objects/` adapter 子前缀写对象、在同一 root 的 `sentinel/` 子前缀写 sentinel，并在真实 PostgreSQL transaction 中写 storage metadata 与 cleanup outbox intent，之后才启动 Worker；轮询时先确认 sentinel 存在，观察到对象已删除且 metadata 为 `deleted` 后再确认一次 sentinel，最后主动删除 sentinel。sentinel 对 Worker adapter 是前缀外对象；正常退出或可处理终止信号下由 cleanup root 兜底。异常强杀、进程崩溃或断电仍可能留下该本地测试 root，当前不声称自动回收历史 root。该真实 PostgreSQL + MinIO 路径因当前 Docker 阻塞尚未执行，不记录为 PASS。
+- Mailpit 全量清理前获取 `127.0.0.1:58026` OS 独占锁，退出释放；并发所有权测试 4/4 通过。Worker child 在启动配置/模式检查前建立外层 AbortSignal，IPC/SIGTERM/SIGINT shutdown 在 schema gate 后仍被观察，取消后不创建 storage、不启动 loop；Worker 相关 2 个文件、8 个用例通过。
+- 邀请限流按源码定义保留 `invitation.prepare` 与 `invitation.complete` 两个不同 PostgreSQL 共享 bucket；E2E 分别验证两类失败各自达到 `429`，不把 prepare 打满误写成 complete 必须立即 `429`。
+- fresh 组合受影响回归：12 个文件、65 个用例通过，墙钟 `17.4s`；Worker 聚焦实际收集 3 个文件、19 个用例通过，墙钟 `14.8s`。身份客户端/API 聚焦另有 9 个文件、113 个用例通过，墙钟 `15.9s`；既有 Task 20/21 9 文件、156 用例证据仍见上一条。
+- `e2e:typecheck` 首次仅因新 runner `.mjs` 缺类型声明失败；补同名 `.d.mts` 后 fresh 通过，墙钟 `11.3s`。`npm run build` fresh 通过，墙钟 `29.4s`，仍只有既有 PDF.js `531.35 kB` chunk 警告。
+- 最终 Minor 的 ownership layout 与 sentinel 成功前复检均先得到有效 RED：2 个文件、7 个用例中 2 个失败；最小修复后受影响 4 个文件、11 个用例通过，墙钟 `15.4s`。layout 断言 sentinel 不属于 adapter `objects/` 前缀但属于 cleanup root；竞态用例模拟首次 sentinel 存在、probe 已删、返回前 sentinel 消失并确认必须失败。
+
+基础设施阻塞与失败恢复证据：
+
+- `npm run infra:status` 失败，Docker named pipe 不存在；墙钟 `19.8s`。未执行 `reset`，未新建或删除卷。
+- Docker Desktop 进程启动后 daemon 在 45 秒内未就绪；随后 `docker desktop start` 明确报告当前托管环境无权读取 `C:\Users\Administrator\.docker\config.json`，也无权创建 `%LOCALAPPDATA%\Docker\log\host`。最后一次仅把 CLI/日志相关用户目录重定向到本工作树已忽略的 `.cache`，仍在 60 秒内超时；按三次同类失败上限停止，没有修改 Docker daemon data root。
+- 接入完整 harness 后再次运行 desktop identity 分组，webServer 在 `16.5s` 内以本地 Mailpit 不可用失败；没有启动测试用 PostgreSQL、MinIO、Web、Worker 或客户端，未把该结果记录为 PASS。
+- `npm run test:platform:unit` 在当前托管环境得到 35 个文件通过、1 个文件失败；526 个用例通过、1 个失败、1 个按 Windows symlink policy 跳过，墙钟 `53.6s`。唯一失败是既有 `runWithTimeout.test.ts` 的真实进程树用例：期望 `status=124`，30.019 秒后得到 `status=null`。单文件复现为 11/12 通过、同一用例失败，墙钟 `46.5s`。
+- 直接运行该测试内部的 250ms watchdog 命令，输出孙进程 PID 后明确报告 `COMMAND_TREE_TERMINATION_FAILED:taskkill exited with code 1`，外层在 `12.3s` 被硬超时；事后 PID 已不存在。证据表明当前托管环境拒绝/破坏 `taskkill /t /f`，不是 Task 22 diff 或 watchdog 逻辑回归。本任务没有修改 watchdog、没有放宽 60 秒，也没有把 platform unit 记录为 PASS。
+- Phase 0 Playwright 最小 desktop login 分组启动了 5 个用例，但本机没有 Playwright 1.61.1 对应的 bundled Chromium，5 个用例均在约 2ms 的浏览器启动阶段失败；60 秒 watchdog 随后同样因 `taskkill exited with code 1` 无法回收，外层墙钟 `67.0s` 硬超时。按同类环境失败上限停止其余 legacy 浏览器组；事后 `14173:RELEASED`、`18080:RELEASED`，无测试服务残留。
+
+尚未完成、不得外推为通过：
+
+- desktop identity、desktop session/project、mobile identity 三个 Playwright 分组尚未 GREEN；Axe、无横向溢出、真实 Cookie/CSRF/邀请/恢复码/限流浏览器断言仍等待本地 PostgreSQL、MinIO、Mailpit 可用后执行。
+- 九组 platform 后端 integration 因 Docker/PostgreSQL/MinIO/Mailpit 不可用而未执行；不得用单元结果替代。
+- platform unit 有 1 个明确的托管 `taskkill` 环境失败，Phase 0 Playwright 有 bundled Chromium + `taskkill` 环境失败；两者均未通过。其余上列 client/legacy/package/Electron/build 门禁已 fresh 执行。
+- 端口释放当前只证明失败启动后无残留；正常 Web/Worker/Vite 启动再关闭的释放证据仍待补。
+- build 已通过；已知 PDF.js `531.35 kB` 警告仍与 Phase 0 基线一致，不阻断构建，但不能据此推断浏览器或平台集成门禁通过。

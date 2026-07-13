@@ -4,5 +4,5 @@
     "types": ["node", "vitest/globals", "@playwright/test"],
     "noEmit": true
   },
-  "include": ["e2e/**/*.ts", "playwright.config.ts"]
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "playwright.platform.config.ts"]
 }
