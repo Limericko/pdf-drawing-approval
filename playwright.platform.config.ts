@@ -23,12 +23,6 @@ export default defineConfig({
     video: "off",
     ...browserChannel
   },
-  webServer: {
-    command: "npm run e2e:platform:server",
-    url: webUrl,
-    reuseExistingServer: false,
-    timeout: 30_000
-  },
   projects: [
     {
       name: "desktop-chromium",

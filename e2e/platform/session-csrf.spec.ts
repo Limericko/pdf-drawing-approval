@@ -26,7 +26,7 @@ test("会话绑定 CSRF 且退出后旧 Cookie 与 token 同时失效", async ({
     expect((await jsonRequest(pageB, "/api/v2/projects", "POST", payload, csrfA)).status).toBe(403);
     expect((await jsonRequest(pageB, "/api/v2/projects", "POST", payload, csrfB)).status).toBe(201);
 
-    const oldCookie = (await contextB.cookies()).find(({ name }) => name.includes("pdf_approval_session"));
+    const oldCookie = (await contextB.cookies()).find(({ name }) => name === "platform_session");
     expect(oldCookie).toBeDefined();
     const logout = await jsonRequest(pageB, "/api/v2/session", "DELETE", {}, csrfB);
     expect(logout.status).toBe(204);

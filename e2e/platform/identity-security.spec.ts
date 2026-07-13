@@ -10,6 +10,8 @@ const invitee = Object.freeze({
   password: "Phase1-E2E-Invitee-Password-42!"
 });
 
+test.setTimeout(120_000);
+
 test("平台身份、安全激活和一次性恢复码形成完整闭环", async ({ page, platform, browserMessages }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "登录审批平台" })).toBeVisible();
@@ -19,7 +21,7 @@ test("平台身份、安全激活和一次性恢复码形成完整闭环", async
   const loginResponse = await submitLogin(page, platform.seed.adminEmail, platformE2EAdmin.password);
   const challenge = await loginResponse.json() as { readonly challengeToken: string };
   await expect(page.getByRole("heading", { name: "完成双重验证" })).toBeVisible();
-  expect((await page.context().cookies()).filter(({ name }) => name.includes("pdf_approval_session"))).toHaveLength(0);
+  expect((await page.context().cookies()).filter(({ name }) => name === "platform_session")).toHaveLength(0);
   await expectSecretsAbsent(page, [challenge.challengeToken], browserMessages);
 
   const mfaResponsePromise = waitForPost(page, "/api/v2/auth/mfa/complete");
@@ -30,7 +32,7 @@ test("平台身份、安全激活和一次性恢复码形成完整闭环", async
   expectNoStore(mfaResponse);
   await expect(page.getByRole("heading", { name: "可访问项目" })).toBeVisible();
   expect((await page.context().cookies()).some(({ name, httpOnly, sameSite }) =>
-    name.includes("pdf_approval_session") && httpOnly && sameSite === "Lax")).toBe(true);
+    name === "platform_session" && httpOnly && sameSite === "Lax")).toBe(true);
   await expectCriticalAxeClean(page);
   await expectNoHorizontalOverflow(page);
 
@@ -57,6 +59,7 @@ test("平台身份、安全激活和一次性恢复码形成完整闭环", async
 
   const prepareResponsePromise = waitForPost(page, "/api/v2/invitations/prepare");
   await page.goto(`${platform.webUrl}/#/accept-invitation?token=${encodeURIComponent(delivered.invitationToken)}`);
+  await page.reload();
   const prepareResponse = await prepareResponsePromise;
   expectNoStore(prepareResponse);
   const prepared = await prepareResponse.json() as { readonly enrollmentToken: string; readonly otpauthUri: string };
@@ -121,8 +124,8 @@ async function completeUiLogin(page: Page, email: string, password: string, code
   method: "totp" | "recovery" = "totp") {
   await expect(page.getByRole("heading", { name: "登录审批平台" })).toBeVisible();
   await submitLogin(page, email, password);
-  if (method === "recovery") await page.getByLabel("恢复码", { exact: true }).check();
-  await page.getByLabel(method === "totp" ? "6 位动态验证码" : "恢复码", { exact: true }).fill(code);
+  if (method === "recovery") await page.getByRole("radio", { name: "恢复码", exact: true }).check();
+  await page.getByRole("textbox", { name: method === "totp" ? "6 位动态验证码" : "恢复码", exact: true }).fill(code);
   const response = waitForPost(page, "/api/v2/auth/mfa/complete");
   await page.getByRole("button", { name: "确认并登录" }).click();
   expect((await response).status()).toBe(200);

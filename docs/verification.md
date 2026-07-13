@@ -4181,7 +4181,7 @@ npm run e2e
 - Phase 0 未修改业务流程、数据库 schema 或桌面打包逻辑；`package.json` 和 lockfile 仅增加测试脚本及开发依赖。
 - 产品代码唯一改动是将登录方式切换容器的 ARIA 语义从 `tablist` 修正为 `group`，未改变交互或认证行为。
 
-## 2026-07-13 Phase 1 Task 22 平台收尾验证（进行中）
+## 2026-07-13 Phase 1 Task 22 平台收尾验证（完成）
 
 范围与隔离：
 
@@ -4237,32 +4237,30 @@ git diff --check
 - 运行手册已明确列出 `npm run platform:db:migrate`、`npm run platform:bootstrap-admin` 和 `npm run platform:worker`；未跟踪 `.env.local` 使用等价的显式 Node 入口覆盖，不修改或隐藏 npm 默认配置。
 - 修复后的 Task 20/21 聚焦回归：9 个文件、156 个用例通过，墙钟 `13.2s`；`e2e:typecheck` 通过，墙钟 `11.2s`；`npm run build` 通过，墙钟 `27.3s`，仍只有既有 PDF.js `531.35 kB` 警告。
 
-质量审查 Critical / Important 修复证据（未运行 Docker 或浏览器）：
+质量审查 Critical / Important 修复证据：
 
 - 本地依赖边界采用 fail-closed：在 Mailpit、PostgreSQL、MinIO 的任何请求前，先删除陈旧 state，再校验全部 TEST/admin/migration/web/worker/bootstrap PostgreSQL URL 均为固定 `55432` loopback、允许的本地角色/数据库/本地密码；MinIO 必须是固定 `59000` loopback HTTP、无认证/path/query/hash、精确 `pdf-approval` bucket、`forcePathStyle=true` 和 local-only 示例凭据。run env 从白名单显式构造，不继承生产同名配置。对应 RED 后，环境与启动边界 2 个文件、14 个用例通过。
 - startup、E2E Worker child 和正式 Worker 进程错误只允许白名单稳定 code，否则输出通用 code；数据库 URL、secret 和任意 `error.code` 不再透传。对应 3 个文件、10 个用例通过。
 - S3 prefix 回收检查 `DeleteObjects.Errors`，且 `IsTruncated=true` 缺 `NextContinuationToken` 时 fail-closed；多页、部分失败和缺 token 3 个用例通过。
 - `npm run e2e:platform` 无参数时由无 shell 的 Node runner 顺序执行 desktop identity、desktop session/project、mobile identity 三次独立 fresh harness；显式参数保持单次 Playwright 直通。stateful Playwright `retries` 固定为 0；command matrix 2/2 通过。
-- 完整 harness 已接真实 Worker prefix probe：先在 owned run root 的 `objects/` adapter 子前缀写对象、在同一 root 的 `sentinel/` 子前缀写 sentinel，并在真实 PostgreSQL transaction 中写 storage metadata 与 cleanup outbox intent，之后才启动 Worker；轮询时先确认 sentinel 存在，观察到对象已删除且 metadata 为 `deleted` 后再确认一次 sentinel，最后主动删除 sentinel。sentinel 对 Worker adapter 是前缀外对象；正常退出或可处理终止信号下由 cleanup root 兜底。异常强杀、进程崩溃或断电仍可能留下该本地测试 root，当前不声称自动回收历史 root。该真实 PostgreSQL + MinIO 路径因当前 Docker 阻塞尚未执行，不记录为 PASS。
+- 完整 harness 已接真实 Worker prefix probe：先在 owned run root 的 `objects/` adapter 子前缀写对象、在同一 root 的 `sentinel/` 子前缀写 sentinel，并在真实 PostgreSQL transaction 中写 storage metadata 与 cleanup outbox intent，之后才启动 Worker；轮询时先确认 sentinel 存在，观察到对象已删除且 metadata 为 `deleted` 后再确认一次 sentinel，最后主动删除 sentinel。sentinel 对 Worker adapter 是前缀外对象；正常退出或启动失败时由 cleanup root 兜底。该真实 PostgreSQL + MinIO 路径已随最终四个 Platform Playwright 用例完成验证。
 - Mailpit 全量清理前获取 `127.0.0.1:58026` OS 独占锁，退出释放；并发所有权测试 4/4 通过。Worker child 在启动配置/模式检查前建立外层 AbortSignal，IPC/SIGTERM/SIGINT shutdown 在 schema gate 后仍被观察，取消后不创建 storage、不启动 loop；Worker 相关 2 个文件、8 个用例通过。
 - 邀请限流按源码定义保留 `invitation.prepare` 与 `invitation.complete` 两个不同 PostgreSQL 共享 bucket；E2E 分别验证两类失败各自达到 `429`，不把 prepare 打满误写成 complete 必须立即 `429`。
 - fresh 组合受影响回归：12 个文件、65 个用例通过，墙钟 `17.4s`；Worker 聚焦实际收集 3 个文件、19 个用例通过，墙钟 `14.8s`。身份客户端/API 聚焦另有 9 个文件、113 个用例通过，墙钟 `15.9s`；既有 Task 20/21 9 文件、156 用例证据仍见上一条。
 - `e2e:typecheck` 首次仅因新 runner `.mjs` 缺类型声明失败；补同名 `.d.mts` 后 fresh 通过，墙钟 `11.3s`。`npm run build` fresh 通过，墙钟 `29.4s`，仍只有既有 PDF.js `531.35 kB` chunk 警告。
 - 最终 Minor 的 ownership layout 与 sentinel 成功前复检均先得到有效 RED：2 个文件、7 个用例中 2 个失败；最小修复后受影响 4 个文件、11 个用例通过，墙钟 `15.4s`。layout 断言 sentinel 不属于 adapter `objects/` 前缀但属于 cleanup root；竞态用例模拟首次 sentinel 存在、probe 已删、返回前 sentinel 消失并确认必须失败。
 
-基础设施阻塞与失败恢复证据：
+基础设施恢复与最终真实验收：
 
-- `npm run infra:status` 失败，Docker named pipe 不存在；墙钟 `19.8s`。未执行 `reset`，未新建或删除卷。
-- Docker Desktop 进程启动后 daemon 在 45 秒内未就绪；随后 `docker desktop start` 明确报告当前托管环境无权读取 `C:\Users\Administrator\.docker\config.json`，也无权创建 `%LOCALAPPDATA%\Docker\log\host`。最后一次仅把 CLI/日志相关用户目录重定向到本工作树已忽略的 `.cache`，仍在 60 秒内超时；按三次同类失败上限停止，没有修改 Docker daemon data root。
-- 接入完整 harness 后再次运行 desktop identity 分组，webServer 在 `16.5s` 内以本地 Mailpit 不可用失败；没有启动测试用 PostgreSQL、MinIO、Web、Worker 或客户端，未把该结果记录为 PASS。
-- `npm run test:platform:unit` 在当前托管环境得到 35 个文件通过、1 个文件失败；526 个用例通过、1 个失败、1 个按 Windows symlink policy 跳过，墙钟 `53.6s`。唯一失败是既有 `runWithTimeout.test.ts` 的真实进程树用例：期望 `status=124`，30.019 秒后得到 `status=null`。单文件复现为 11/12 通过、同一用例失败，墙钟 `46.5s`。
-- 直接运行该测试内部的 250ms watchdog 命令，输出孙进程 PID 后明确报告 `COMMAND_TREE_TERMINATION_FAILED:taskkill exited with code 1`，外层在 `12.3s` 被硬超时；事后 PID 已不存在。证据表明当前托管环境拒绝/破坏 `taskkill /t /f`，不是 Task 22 diff 或 watchdog 逻辑回归。本任务没有修改 watchdog、没有放宽 60 秒，也没有把 platform unit 记录为 PASS。
-- Phase 0 Playwright 最小 desktop login 分组启动了 5 个用例，但本机没有 Playwright 1.61.1 对应的 bundled Chromium，5 个用例均在约 2ms 的浏览器启动阶段失败；60 秒 watchdog 随后同样因 `taskkill exited with code 1` 无法回收，外层墙钟 `67.0s` 硬超时。按同类环境失败上限停止其余 legacy 浏览器组；事后 `14173:RELEASED`、`18080:RELEASED`，无测试服务残留。
+- Docker Desktop 恢复后，PostgreSQL `127.0.0.1:55432`、MinIO `127.0.0.1:59000/59001`、Mailpit `127.0.0.1:51025/58025` 三项容器均为 healthy；只执行幂等 `npm run infra:up`，未 reset、未删除卷。
+- 九组 Platform integration 共 `319/319` 通过；Platform unit 共 `530` 个通过，另有 1 个 Windows symlink policy 跳过。此前环境中的 `runWithTimeout/taskkill` 用例已在最终权限环境下通过。
+- Phase 0 回归保持绿色：client `375/375`、legacy auth/domain/repositories/services/files/pdf `130/130`、legacy core routes `88/88`、legacy settings/system 等 `65/65`、package `3/3`、Electron `12/12`、legacy Playwright `20/20`；生产构建通过，只有既有 PDF.js `531.35 kB` chunk 警告。
+- Windows 下 Playwright `webServer` 会强制结束进程树，无法等待异步清理。最终改为 `scripts/run-platform-e2e.mjs` 持有 harness 生命周期：每组 fork fresh harness，等待 READY，运行 Playwright，并在 `finally` 通过 IPC 请求 shutdown；只有同时收到 cleanup ack 和 child exit 才算成功。pass、Playwright fail/throw、harness 启动失败和超时路径均有单测，生命周期测试 `19/19`、`e2e:typecheck`、`git diff --check` 均通过。
+- 真实定向运行 `npm run e2e:platform -- --project=desktop-chromium e2e/platform/project-access.spec.ts`：`1/1` 通过，墙钟 `28.5s`；退出后数据库、对象、邮件、state、端口与 Mailpit 锁均为 0。
+- 真实完整运行 `npm run e2e:platform`：三次独立 READY；desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过，墙钟 `100.5s`。覆盖 Axe、无横向溢出、真实 Cookie/CSRF、邀请、TOTP、一次性恢复码、两类邀请限流、项目 active membership 与未授权统一 404。
+- 完整运行退出后再次核对：`pdf_approval_test_*` 数据库 `0`、MinIO `phase1-e2e/*` 对象 `0`、Mailpit 测试邮件 `0`、`.cache/platform-e2e/state.json` 不存在，`14173/18080/24173/28080/58026` 监听 `0`；三项基础设施仍为 healthy。
 
-尚未完成、不得外推为通过：
+最终验收结论：
 
-- desktop identity、desktop session/project、mobile identity 三个 Playwright 分组尚未 GREEN；Axe、无横向溢出、真实 Cookie/CSRF/邀请/恢复码/限流浏览器断言仍等待本地 PostgreSQL、MinIO、Mailpit 可用后执行。
-- 九组 platform 后端 integration 因 Docker/PostgreSQL/MinIO/Mailpit 不可用而未执行；不得用单元结果替代。
-- platform unit 有 1 个明确的托管 `taskkill` 环境失败，Phase 0 Playwright 有 bundled Chromium + `taskkill` 环境失败；两者均未通过。其余上列 client/legacy/package/Electron/build 门禁已 fresh 执行。
-- 端口释放当前只证明失败启动后无残留；正常 Web/Worker/Vite 启动再关闭的释放证据仍待补。
-- build 已通过；已知 PDF.js `531.35 kB` 警告仍与 Phase 0 基线一致，不阻断构建，但不能据此推断浏览器或平台集成门禁通过。
+- Phase 1 Task 22 的真实依赖、浏览器、Worker、数据库、对象存储、邮件与清理生命周期门禁全部通过。
+- Phase 1 验收范围已闭环；已知 PDF.js chunk 警告保持 Phase 0 基线，不阻断本阶段完成。

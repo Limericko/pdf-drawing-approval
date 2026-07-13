@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
@@ -11,7 +11,11 @@ import { v7 as uuidv7 } from "uuid";
 import { startPlatformWebServer, type PlatformWebServer } from "../../../src/server/platform/startPlatformWebServer.ts";
 import { loadPlatformConfig } from "../../../src/server/platform/config/loadPlatformConfig.ts";
 import { createStorage as createStorageAdapter } from "../../../src/server/platform/storage/createStorage.ts";
-import { createCleanupIntent } from "../../../src/server/platform/storage/cleanupIntentPublisher.ts";
+import { createCleanupIntent, type CleanupIntentPublisher } from
+  "../../../src/server/platform/storage/cleanupIntentPublisher.ts";
+import type { QueryExecutor } from "../../../src/server/platform/database/queryExecutor.ts";
+import type { CreateStagingStorageObject, ReadyStorageObjectContent, StorageObject } from
+  "../../../src/server/platform/storage/storageObjectRepository.ts";
 import { PostgresStorageObjectRepository } from
   "../../../src/server/platform/storage/postgres/PostgresStorageObjectRepository.ts";
 import { createStorageKey } from "../../../src/server/platform/storage/storageKey.ts";
@@ -47,9 +51,13 @@ async function main() {
   let client: ChildProcess | undefined;
   let mailpitOwned = false;
   let shutdownInFlight: Promise<void> | undefined;
+  let startupSettled = false;
+  let settleStartup!: () => void;
+  const startupFinished = new Promise<void>((resolve) => { settleStartup = resolve; });
 
   const shutdown = (exitCode: number) => {
     shutdownInFlight ??= (async () => {
+      if (!startupSettled) await startupFinished;
       const errors: unknown[] = [];
       await capture(() => stopChild(client), errors);
       await capture(() => web?.closeAsync(), errors);
@@ -71,35 +79,128 @@ async function main() {
     return shutdownInFlight;
   };
 
-  process.once("SIGINT", () => { void shutdown(0); });
-  process.once("SIGTERM", () => { void shutdown(0); });
+  const processControl = installPlatformE2EProcessControl({ target: process, shutdown });
+  let startupFailure: unknown;
 
   try {
     await prepareLocalPlatformE2EStartup(process.env, () => rm(platformStateFile, { force: true }));
+    assertStartupActive(processControl);
     mailpit = createPlatformMailpit({ baseUrl: mailpitUrl });
     mailpitLock = await acquireLocalMailpitCleanupLock();
+    assertStartupActive(processControl);
     await mailpit.clearLocalTestInstance();
     mailpitOwned = true;
+    assertStartupActive(processControl);
     database = await createPlatformTestDatabase(process.env);
+    assertStartupActive(processControl);
     const env = createPlatformE2ERunEnvironment(process.env, database, { apiPort: API_PORT, webUrl });
     const seed = await seedPlatformE2E(database, env);
+    assertStartupActive(processControl);
     storage = await createS3PrefixLease(env, storageLayout.cleanupRoot);
+    assertStartupActive(processControl);
     await verifyWorkerPrefixCleanupWiring(database, env, storagePrefix, storageLayout.sentinelPrefix, async () => {
       worker = startPlatformE2EWorker(env, { storagePrefix });
       await waitForWorkerHeartbeat(database!);
     });
+    assertStartupActive(processControl);
     web = await startPlatformWebServer({ env, host: "127.0.0.1", port: API_PORT,
       dependencies: { createStorage: (config) => createPrefixedStorage(createStorageAdapter(config), storagePrefix) } });
+    assertStartupActive(processControl);
     const state: PlatformE2EState = { runId, databaseName: database.databaseName,
       storageCleanupRoot: storageLayout.cleanupRoot, storagePrefix,
       webUrl, apiUrl, mailpitUrl, seed };
     client = await publishStateBeforeStart(state, publishPlatformE2EState, () => startViteClient(env));
+    assertStartupActive(processControl);
     await waitForHttp(webUrl, client);
+    assertStartupActive(processControl);
     process.stdout.write(`PLATFORM_E2E_READY ${webUrl}\n`);
   } catch (error) {
-    process.stderr.write(`${formatStartupFailure(error)}\n`);
-    await shutdown(1);
+    startupFailure = error;
+  } finally {
+    startupSettled = true;
+    settleStartup();
   }
+  if (startupFailure !== undefined) {
+    if (!processControl.shutdownRequested) {
+      process.stderr.write(`${formatStartupFailure(startupFailure)}\n`);
+      await processControl.startupFailed();
+    } else {
+      await processControl.fail();
+    }
+  }
+}
+
+type PlatformE2EProcessTarget = {
+  on(event: string | symbol, listener: (...args: any[]) => void): unknown;
+  once(event: string | symbol, listener: (...args: any[]) => void): unknown;
+  removeListener(event: string | symbol, listener: (...args: any[]) => void): unknown;
+  readonly connected?: boolean;
+  readonly send?: (...args: any[]) => any;
+  readonly disconnect?: () => void;
+  exitCode?: string | number | null;
+};
+
+export function installPlatformE2EProcessControl(options: {
+  readonly target: PlatformE2EProcessTarget;
+  readonly shutdown: (exitCode: number) => Promise<void>;
+}) {
+  let shutdownRequested = false;
+  let completion: Promise<void> | undefined;
+  const target = options.target;
+  const removeListeners = () => {
+    target.removeListener("message", onMessage);
+    target.removeListener("SIGINT", onSigint);
+    target.removeListener("SIGTERM", onSigterm);
+  };
+  const complete = (exitCode: number, acknowledge: boolean) => {
+    shutdownRequested = true;
+    completion ??= (async () => {
+      await options.shutdown(exitCode);
+      removeListeners();
+      if (acknowledge && target.connected && target.send) {
+        await sendProcessMessage(target, {
+          type: "shutdown-complete",
+          exitCode: typeof target.exitCode === "number" ? target.exitCode : exitCode
+        });
+      }
+      if (target.connected && target.disconnect) target.disconnect();
+    })();
+    return completion;
+  };
+  const onMessage = (message: unknown) => {
+    if (message && typeof message === "object" && "type" in message && message.type === "shutdown") {
+      void complete(0, true);
+    }
+  };
+  const onSigint = () => { void complete(0, false); };
+  const onSigterm = () => { void complete(0, false); };
+  const startupFailed = async () => {
+    if (target.connected && target.send) {
+      try {
+        await sendProcessMessage(target, { type: "startup-failed" });
+        return;
+      } catch { /* the runner is gone, so this process must own cleanup */ }
+    }
+    await complete(1, false);
+  };
+  target.on("message", onMessage);
+  target.once("SIGINT", onSigint);
+  target.once("SIGTERM", onSigterm);
+  return Object.freeze({
+    get shutdownRequested() { return shutdownRequested; },
+    fail: () => complete(1, false),
+    startupFailed
+  });
+}
+
+function sendProcessMessage(target: PlatformE2EProcessTarget, message: unknown) {
+  return new Promise<void>((resolve, reject) => {
+    target.send!(message, (error: Error | null) => error ? reject(error) : resolve());
+  });
+}
+
+function assertStartupActive(control: { readonly shutdownRequested: boolean }) {
+  if (control.shutdownRequested) throw new Error("PLATFORM_E2E_SHUTDOWN_REQUESTED");
 }
 
 export async function prepareLocalPlatformE2EStartup(
@@ -160,11 +261,11 @@ async function verifyWorkerPrefixCleanupWiring(
   const workerConfig = loadPlatformConfig(env, "worker");
   const prefixedStorage = createPrefixedStorage(createStorageAdapter(workerConfig.storage), storagePrefix);
   const pool = database.createPool("migration");
-  const createdAt = new Date(Date.now() - 2_000);
+  const probeContent = Buffer.from("worker-prefix-probe");
   try {
     await runWorkerPrefixCleanupProbe({
       writePrefixedProbe: async () => {
-        await prefixedStorage.write(logicalKey, Readable.from("worker-prefix-probe"), "application/octet-stream");
+        await prefixedStorage.write(logicalKey, Readable.from(probeContent), "application/octet-stream");
       },
       writeOutsideSentinel: async () => {
         await rawClient.send(new PutObjectCommand({
@@ -175,14 +276,23 @@ async function verifyWorkerPrefixCleanupWiring(
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
-          const object = await new PostgresStorageObjectRepository(client).createStaging({
-            id, driver: "s3", objectKey: logicalKey, createdAt,
-            uploadExpiresAt: new Date(createdAt.getTime() + 1_000)
-          });
           const publisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({
             createId: uuidv7, clock: () => new Date()
           }));
-          await publisher.publish(client, createCleanupIntent(object, "staging"));
+          await enqueueReadyStorageCleanupProbe({
+            repository: new PostgresStorageObjectRepository(client),
+            publisher,
+            executor: client,
+            clock: () => new Date(),
+            payload: {
+              id,
+              driver: "s3",
+              objectKey: logicalKey,
+              sizeBytes: probeContent.byteLength,
+              sha256: createHash("sha256").update(probeContent).digest(),
+              mediaType: "application/octet-stream"
+            }
+          });
           await client.query("COMMIT");
         } catch (error) {
           await client.query("ROLLBACK").catch(() => undefined);
@@ -214,6 +324,43 @@ async function verifyWorkerPrefixCleanupWiring(
     prefixedStorage.destroy();
     rawClient.destroy();
   }
+}
+
+type ReadyStorageCleanupProbeRepository = {
+  createStaging(input: CreateStagingStorageObject): Promise<unknown>;
+  markReady(id: string, content: ReadyStorageObjectContent): Promise<unknown>;
+  markDeletePending(id: string, requestedAt: Date): Promise<Pick<StorageObject,
+    "id" | "driver" | "objectKey" | "cleanupTombstone" | "cleanupGeneration">>;
+};
+
+type ReadyStorageCleanupProbePayload = Pick<CreateStagingStorageObject, "id" | "driver" | "objectKey"> &
+  Pick<ReadyStorageObjectContent, "sizeBytes" | "sha256" | "mediaType">;
+
+export async function enqueueReadyStorageCleanupProbe(options: {
+  readonly repository: ReadyStorageCleanupProbeRepository;
+  readonly publisher: CleanupIntentPublisher;
+  readonly executor: QueryExecutor;
+  readonly clock: () => Date;
+  readonly payload: ReadyStorageCleanupProbePayload;
+}) {
+  const deleteRequestedAt = options.clock();
+  const readyAt = new Date(deleteRequestedAt.getTime() - 1);
+  const createdAt = new Date(deleteRequestedAt.getTime() - 2);
+  await options.repository.createStaging({
+    id: options.payload.id,
+    driver: options.payload.driver,
+    objectKey: options.payload.objectKey,
+    createdAt,
+    uploadExpiresAt: new Date(deleteRequestedAt.getTime() + 60_000)
+  });
+  await options.repository.markReady(options.payload.id, {
+    sizeBytes: options.payload.sizeBytes,
+    sha256: options.payload.sha256,
+    mediaType: options.payload.mediaType,
+    readyAt
+  });
+  const pending = await options.repository.markDeletePending(options.payload.id, deleteRequestedAt);
+  await options.publisher.publish(options.executor, createCleanupIntent(pending, "delete_pending"));
 }
 
 export function createStorageOwnershipLayout(runId: string) {
