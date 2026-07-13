@@ -103,6 +103,25 @@ describe("RuntimeApp", () => {
     expect(markup).not.toContain("stack");
   });
 
+  it("loads the platform entry only for platform mode while legacy remains on App", () => {
+    const PlatformEntry = vi.fn(() => React.createElement("main", { "data-runtime-mode": "platform-test" },
+      "按需平台入口"));
+    const markup = renderToStaticMarkup(React.createElement(RuntimeEntryView, {
+      entry: { status: "ready", mode: "platform", basePath: "/" },
+      platformEntry: PlatformEntry
+    }));
+    expect(markup).toContain('data-runtime-mode="platform-test"');
+    expect(markup).toContain("按需平台入口");
+    expect(PlatformEntry).toHaveBeenCalledTimes(1);
+    PlatformEntry.mockClear();
+    const legacyMarkup = renderToStaticMarkup(React.createElement(RuntimeEntryView, {
+      entry: { status: "ready", mode: "legacy" },
+      platformEntry: PlatformEntry
+    }));
+    expect(legacyMarkup).toContain("登录");
+    expect(PlatformEntry).not.toHaveBeenCalled();
+  });
+
   it("consumes platform invitation fragments after mode selection without touching legacy routes", () => {
     const platformHistory = { replaceState: vi.fn() };
     activateRuntimeEntry({ status: "ready", mode: "platform", basePath: "/" }, {

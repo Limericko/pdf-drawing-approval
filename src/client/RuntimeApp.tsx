@@ -1,10 +1,15 @@
-import { useEffect, useState, type FC } from "react";
+import { lazy, Suspense, useEffect, useState, type ComponentType, type FC } from "react";
 import { z } from "zod";
 import { App } from "./App.tsx";
 import { disposeIdentityClient } from "./api/identityClient.ts";
 import { isDesktopClient } from "./clientConfig.ts";
 import { disposeBrowserIdentityRoute, IdentityRouteCommitError,
   initializeBrowserIdentityRoute } from "./features/identity/identityRoutes.ts";
+
+const LazyPlatformIdentityApp = lazy(async () => {
+  const module = await import("./features/identity/PlatformIdentityApp.tsx");
+  return { default: module.PlatformIdentityApp };
+});
 
 type RuntimeSelection = { readonly mode: "legacy" } | { readonly mode: "platform"; readonly basePath: string };
 export type RuntimeEntry =
@@ -181,13 +186,19 @@ export function activateRuntimeEntry(entry: RuntimeEntry, locationInput: {
   return entry;
 }
 
-export function RuntimeEntryView({ entry }: { readonly entry: RuntimeEntry }) {
+export function RuntimeEntryView({ entry, platformEntry: PlatformEntry }: {
+  readonly entry: RuntimeEntry;
+  readonly platformEntry?: ComponentType;
+}) {
   if (entry.status === "loading") return <main aria-busy="true">正在确认服务运行模式…</main>;
   if (entry.status === "fatalError") {
     return <main role="alert">无法确定运行模式，请刷新页面或联系管理员。</main>;
   }
   if (entry.mode === "legacy") return <App />;
-  return <main data-runtime-mode="platform">平台身份入口</main>;
+  if (PlatformEntry) return <PlatformEntry />;
+  return <Suspense fallback={<main aria-busy="true">正在加载安全访问入口…</main>}>
+    <LazyPlatformIdentityApp />
+  </Suspense>;
 }
 
 function disposeRuntimeMemory() {

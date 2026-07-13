@@ -176,6 +176,20 @@ describe("platformRequest", () => {
     expect(removeEventListener.mock.calls[0]![0]).toBe(addEventListener.mock.calls[0]![0]);
   });
 
+  it("rechecks cancellation after response validation before returning parsed identity data", async () => {
+    const controller = new AbortController();
+    const abortingSchema = okSchema.transform((value) => {
+      controller.abort(new Error("token=post-parse-abort-secret"));
+      return value;
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ ok: true })));
+
+    await expect(platformRequest("/api/v2/session", {
+      responseSchema: abortingSchema,
+      signal: controller.signal
+    })).rejects.toEqual({ status: 0, code: "REQUEST_ABORTED", requestId: "", title: "Request cancelled" });
+  });
+
   it("contains reader and cancel failures without unhandled or secret-bearing errors", async () => {
     const secret = "password=reader-lifecycle-secret";
     const cancel = vi.fn(async () => { throw new Error(secret); });

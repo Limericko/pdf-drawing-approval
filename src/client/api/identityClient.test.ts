@@ -89,6 +89,142 @@ describe("identityClient", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v2/session", expect.anything());
   });
 
+  it("reuses the MFA lease signal for session refresh and never stores CSRF after cancellation", async () => {
+    const controller = new AbortController();
+    let resolveSession!: (response: Response) => void;
+    const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ user }))
+      .mockImplementationOnce(() => sessionResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const completion = completeMfa({ challengeToken: "challenge-secret",
+      factor: { method: "totp", code: "123456" } }, controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    controller.abort();
+    resolveSession(json({ ...session, csrfToken: "must-not-survive-cancellation" }));
+
+    await expect(completion).rejects.toMatchObject({ code: "REQUEST_ABORTED" });
+    expect(fetchMock.mock.calls[0]![1]!.signal).toBe(controller.signal);
+    expect(fetchMock.mock.calls[1]![1]!.signal).toBe(controller.signal);
+    await expect(createProject({ name: "must not send" })).rejects.toMatchObject({ code: "CSRF_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rechecks the lease after platformRequest settles before storing CSRF", async () => {
+    const controller = new AbortController();
+    let abortChecks = 0;
+    const signal = {
+      get aborted() {
+        abortChecks += 1;
+        if (abortChecks === 8) queueMicrotask(() => controller.abort());
+        return controller.signal.aborted;
+      },
+      addEventListener: controller.signal.addEventListener.bind(controller.signal),
+      removeEventListener: controller.signal.removeEventListener.bind(controller.signal)
+    } as AbortSignal;
+    const body = JSON.stringify({ ...session, csrfToken: "must-not-cross-await-boundary" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/json" }),
+      body: null,
+      text: async () => body
+    } as Response)));
+
+    await expect(getSession(signal)).rejects.toMatchObject({ code: "REQUEST_ABORTED" });
+    await expect(createProject({ name: "must not send" })).rejects.toMatchObject({ code: "CSRF_UNAVAILABLE" });
+  });
+
+  it.each(["resolve", "reject", "401"] as const)(
+    "does not let a stale logout %s clear CSRF from a newer session generation",
+    async (completionMode) => {
+      let resolveLogout!: (response: Response) => void;
+      let rejectLogout!: (error: unknown) => void;
+      const logoutResponse = new Promise<Response>((resolve, reject) => {
+        resolveLogout = resolve;
+        rejectLogout = reject;
+      });
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json({ ...session, csrfToken: "csrf-before-logout" }))
+        .mockImplementationOnce(() => logoutResponse)
+        .mockResolvedValueOnce(json({ ...session, csrfToken: "csrf-new-session" }))
+        .mockResolvedValueOnce(json({ project: project(), membership: membership(), capabilities: ["project.read"] }, 201));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await getSession();
+      const staleLogout = logout();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      disposeIdentityClient();
+      await getSession();
+      if (completionMode === "resolve") resolveLogout(new Response(null, { status: 204 }));
+      else if (completionMode === "401") resolveLogout(problem(401, "SESSION_INVALID"));
+      else rejectLogout(new Error("token=stale-logout-network-secret"));
+      const logoutResult = await staleLogout.catch((error) => error);
+      if (completionMode === "resolve") expect(logoutResult).toBeUndefined();
+      else {
+        expect(logoutResult).toMatchObject({ code: completionMode === "401" ? "SESSION_INVALID" : "NETWORK_ERROR" });
+        expect(JSON.stringify(logoutResult)).not.toContain("stale-logout-network-secret");
+        expect(JSON.stringify(logoutResult)).not.toContain("csrf-new-session");
+      }
+
+      await createProject({ name: "new session remains usable" });
+      const headers = new Headers(fetchMock.mock.calls[3]![1]!.headers);
+      expect(headers.get("x-csrf-token")).toBe("csrf-new-session");
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it.each(["mutation", "session"] as const)(
+    "does not let a stale %s 401 clear CSRF from a newer session generation",
+    async (requestKind) => {
+      let resolveStale!: (response: Response) => void;
+      const staleResponse = new Promise<Response>((resolve) => { resolveStale = resolve; });
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(json({ ...session, csrfToken: "csrf-before-stale-request" }))
+        .mockImplementationOnce(() => staleResponse)
+        .mockResolvedValueOnce(json({ ...session, csrfToken: "csrf-new-session" }))
+        .mockResolvedValueOnce(json({ project: project(), membership: membership(), capabilities: ["project.read"] }, 201));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await getSession();
+      const staleRequest = requestKind === "mutation" ? createProject({ name: "stale mutation" }) : refreshSession();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      disposeIdentityClient();
+      await getSession();
+      resolveStale(problem(401, "SESSION_INVALID"));
+      const staleError = await staleRequest.catch((error) => error);
+      expect(staleError).toMatchObject({ status: 401, code: "SESSION_INVALID" });
+      expect(JSON.stringify(staleError)).not.toContain("csrf-new-session");
+
+      await createProject({ name: "new session remains usable" });
+      const headers = new Headers(fetchMock.mock.calls[3]![1]!.headers);
+      expect(headers.get("x-csrf-token")).toBe("csrf-new-session");
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    }
+  );
+
+  it("keeps the current CSRF after a logout network failure so mutation and logout retry remain possible", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ ...session, csrfToken: "csrf-retryable-logout" }))
+      .mockRejectedValueOnce(new Error("password=offline-logout-secret"))
+      .mockResolvedValueOnce(json({ project: project(), membership: membership(), capabilities: ["project.read"] }, 201))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getSession();
+    const failure = await logout().catch((error) => error);
+    expect(failure).toMatchObject({ code: "NETWORK_ERROR" });
+    expect(JSON.stringify(failure)).not.toContain("offline-logout-secret");
+    await createProject({ name: "still authenticated" });
+    const mutationHeaders = new Headers(fetchMock.mock.calls[2]![1]!.headers);
+    expect(mutationHeaders.get("x-csrf-token")).toBe("csrf-retryable-logout");
+    await logout();
+    await expect(createProject({ name: "must not send after successful retry" }))
+      .rejects.toMatchObject({ code: "CSRF_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it("clears CSRF before refresh, on 401, logout and module disposal", async () => {
     const fetchMock = mockResponses(
       json(session),

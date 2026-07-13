@@ -23,12 +23,13 @@ import {
   type PrepareInvitationRequest
 } from "../../shared/contracts/identity.ts";
 import type { z } from "zod";
-import { PlatformRequestError, platformRequest } from "./platformRequest.ts";
+import { PlatformRequestAbortError, PlatformRequestError, platformRequest } from "./platformRequest.ts";
 
 type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export type PlatformSessionContext = Omit<SessionResponse, "csrfToken">;
 
 let csrfToken: string | undefined;
+let csrfEpoch = 0;
 
 export async function login(input: LoginRequest, signal?: AbortSignal) {
   clearCsrf();
@@ -54,7 +55,8 @@ export async function completeMfa(input: MfaCompleteRequest, signal?: AbortSigna
 export async function getSession(signal?: AbortSignal): Promise<PlatformSessionContext> {
   clearCsrf();
   const session = await request("/api/v2/session", { responseSchema: sessionResponseSchema, signal });
-  csrfToken = session.csrfToken;
+  if (signal?.aborted) throw new PlatformRequestAbortError();
+  storeCsrf(session.csrfToken);
   return publicSession(session);
 }
 
@@ -62,11 +64,9 @@ export const refreshSession = getSession;
 
 export async function logout(signal?: AbortSignal) {
   const ownedCsrf = requireCsrf();
-  try {
-    await request("/api/v2/session", { method: "DELETE", json: {}, csrfToken: ownedCsrf, signal });
-  } finally {
-    clearCsrf();
-  }
+  const ownedEpoch = csrfEpoch;
+  await request("/api/v2/session", { method: "DELETE", json: {}, csrfToken: ownedCsrf, signal }, ownedEpoch);
+  clearCsrfIfUnchanged(ownedEpoch);
 }
 
 export function prepareInvitation(input: PrepareInvitationRequest, signal?: AbortSignal) {
@@ -120,11 +120,12 @@ export function disposeIdentityClient() {
   clearCsrf();
 }
 
-async function request<T>(target: string, options: Parameters<typeof platformRequest<T>>[1]) {
+async function request<T>(target: string, options: Parameters<typeof platformRequest<T>>[1],
+  ownedCsrfEpoch = csrfEpoch) {
   try {
     return await platformRequest(target, options);
   } catch (error) {
-    if (error instanceof PlatformRequestError && error.status === 401) clearCsrf();
+    if (error instanceof PlatformRequestError && error.status === 401) clearCsrfIfUnchanged(ownedCsrfEpoch);
     throw error;
   }
 }
@@ -142,6 +143,16 @@ function requireCsrf() {
 
 function clearCsrf() {
   csrfToken = undefined;
+  csrfEpoch += 1;
+}
+
+function storeCsrf(value: string) {
+  csrfToken = value;
+  csrfEpoch += 1;
+}
+
+function clearCsrfIfUnchanged(epoch: number) {
+  if (csrfEpoch === epoch) clearCsrf();
 }
 
 function publicSession(session: SessionResponse): PlatformSessionContext {

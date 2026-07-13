@@ -78,6 +78,7 @@ export async function platformRequest<T = undefined>(target: string, options: Pl
     throw new PlatformRequestError(response.status, "RESPONSE_INVALID", responseRequestId(response),
       "Invalid server response");
   }
+  throwIfAborted(options.signal);
   return parsed.data;
 }
 
