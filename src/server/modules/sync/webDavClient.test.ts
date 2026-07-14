@@ -57,6 +57,14 @@ describe("WebDAV protocol client", () => {
     expect(moveHeaders.get("Overwrite")).toBe("F");
   });
 
+  it("deletes only an explicitly supplied temporary path for cleanup", async () => {
+    const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      new Response(null, { status: 204 }));
+    const client = createWebDavClient({ endpointUrl: "https://dav.example.test/root/", credential, fetch });
+    await expect(client.removeTemporary("/Published/A01.pdf.partial-sync")).resolves.toEqual({ removed: true });
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "DELETE", redirect: "manual" });
+  });
+
   it("never forwards credentials across origins or outside the configured base path", async () => {
     const fetch = vi.fn(async () => new Response(null, { status: 302, headers: {
       Location: "https://evil.example/steal"

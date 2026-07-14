@@ -17,6 +17,11 @@ import { createDeleteStorageObjectHandler } from "./handlers/deleteStorageObject
 import { createSendInvitationEmailHandler } from "./handlers/sendInvitationEmail.ts";
 import { createFinalizeApprovedDrawingHandler } from "./handlers/finalizeApprovedDrawing.ts";
 import { createPdmService } from "../../modules/pdm/pdmService.ts";
+import { createWebDavCredentialProvider } from "../../modules/sync/webDavCredentialProvider.ts";
+import { createWebDavEndpointPolicy } from "../../modules/sync/webDavEndpointPolicy.ts";
+import { createWebDavWorkerHandlers } from "../../modules/sync/webDavWorkerHandlers.ts";
+import { webDavEventRegistrations, webDavHandlerRegistrations } from "../../modules/sync/webDavJobRegistry.ts";
+import { WebDavScanScheduler } from "../../modules/sync/webDavScanScheduler.ts";
 import { approvalCompletedEventRegistration, invitationEmailEventRegistration, JobRegistry,
   storageCleanupEventRegistration } from "./jobRegistry.ts";
 import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
@@ -97,7 +102,8 @@ async function runConfiguredWorkers(
   try {
     const transactionRunner = <T>(callback: Parameters<typeof withTransaction<T>>[1]) => withTransaction(pool, callback);
     const clock = () => new Date();
-    const outboxPublisher = new CleanupIntentOutboxPublisher(new PostgresOutboxPublisher({ createId: uuidv7, clock }));
+    const postgresOutboxPublisher = new PostgresOutboxPublisher({ createId: uuidv7, clock });
+    const outboxPublisher = new CleanupIntentOutboxPublisher(postgresOutboxPublisher);
     const cleanupHandler = createDeleteStorageObjectHandler({
       transactionRunner,
       createRepository: (executor) => new PostgresStorageObjectRepository(executor),
@@ -111,13 +117,18 @@ async function runConfiguredWorkers(
     const finalizeApprovalHandler = createFinalizeApprovedDrawingHandler({
       pool, storage, pdm: createPdmService({ pool }), clock
     });
+    const webDavHandlers = createWebDavWorkerHandlers({ pool, storage,
+      credentials: createWebDavCredentialProvider(config.webdavCredentials), publisher: postgresOutboxPublisher,
+      endpointPolicy: createWebDavEndpointPolicy({ environment: config.environment,
+        allowedHosts: config.webdavAllowedHosts }), stagingRoot: config.webdavStagingRoot, clock });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts), invitationEmailEventRegistration(config.worker.maxAttempts),
-        approvalCompletedEventRegistration(config.worker.maxAttempts)],
+        approvalCompletedEventRegistration(config.worker.maxAttempts), ...webDavEventRegistrations(config.worker.maxAttempts)],
       [
         { jobType: "storage_object_cleanup", payloadVersion: 1, handler: cleanupHandler },
         { jobType: "invitation.email", payloadVersion: 1, handler: invitationHandler },
-        { jobType: "approval.finalize", payloadVersion: 1, handler: finalizeApprovalHandler }
+        { jobType: "approval.finalize", payloadVersion: 1, handler: finalizeApprovalHandler },
+        ...webDavHandlerRegistrations(webDavHandlers)
       ]
     );
     const startedAt = clock();
@@ -151,6 +162,12 @@ async function runConfiguredWorkers(
         batchSize: RECONCILE_BATCH_SIZE,
         orphanReadyGraceMs: 24 * 60 * 60_000
       });
+      const webDavScheduler = new WebDavScanScheduler({ pool, publisher: postgresOutboxPublisher, clock });
+      const compositeReconciler = { async runOnce(signal: AbortSignal) {
+        const result = await reconciler.runOnce(signal);
+        await webDavScheduler.runOnce(signal);
+        return result;
+      } };
       const promise = runWorker({
         workerId,
         startedAt,
@@ -159,7 +176,7 @@ async function runConfiguredWorkers(
         registry,
         dispatcher,
         dispatchBatchSize: DISPATCH_BATCH_SIZE,
-        reconciler,
+        reconciler: compositeReconciler,
         reconcileIntervalMs: RECONCILE_INTERVAL_MS,
         heartbeat: new WorkerHeartbeatRepository(pool),
         smtpHealth,

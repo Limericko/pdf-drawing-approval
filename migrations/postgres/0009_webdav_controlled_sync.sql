@@ -220,6 +220,10 @@ CREATE INDEX webdav_sync_items_revision_id_idx
   ON platform.webdav_sync_items(revision_id) WHERE revision_id IS NOT NULL;
 CREATE INDEX webdav_sync_items_remote_path_idx
   ON platform.webdav_sync_items(mapping_id,remote_path,updated_at DESC,id DESC);
+CREATE UNIQUE INDEX webdav_sync_items_active_remote_path_uidx
+  ON platform.webdav_sync_items(mapping_id,direction,remote_path)
+  WHERE status IN ('discovered','downloading','validating','pending_upload','uploading','verifying',
+    'conflict','remote_missing','failed');
 
 CREATE TABLE platform.webdav_sync_conflicts (
   id uuid PRIMARY KEY,
@@ -397,6 +401,12 @@ GRANT INSERT ON TABLE
   platform.webdav_sync_items,
   platform.webdav_sync_conflicts
 TO platform_worker;
+GRANT INSERT (id,project_id,document_code,name,created_by_user_id,created_at,updated_at)
+  ON TABLE platform.documents TO platform_worker;
+GRANT INSERT (
+  id,project_id,document_id,revision_code,original_object_id,source,status,metadata_status,material_code,
+  client_request_id,created_by_user_id,created_at,updated_at
+) ON TABLE platform.drawing_revisions TO platform_worker;
 
 GRANT UPDATE (credential_available,capabilities,last_checked_at,last_error_code,status,version,updated_at)
   ON TABLE platform.webdav_connections TO platform_worker;
@@ -404,8 +414,13 @@ GRANT UPDATE (
   next_scan_at,last_scan_at,last_success_at,scan_lease_token,scan_lease_expires_at,version,updated_at
 ) ON TABLE platform.webdav_directory_mappings TO platform_worker;
 GRANT UPDATE (
-  remote_etag,remote_size_bytes,remote_modified_at,remote_sha256,storage_object_id,revision_id,
+  remote_path,remote_etag,remote_size_bytes,remote_modified_at,remote_sha256,storage_object_id,revision_id,
   temporary_remote_path,status,attempt_count,last_error_code,version,completed_at,updated_at
 ) ON TABLE platform.webdav_sync_items TO platform_worker;
+GRANT UPDATE (
+  remote_path,remote_etag,remote_size_bytes,remote_modified_at,remote_sha256,cloud_revision_id,
+  cloud_object_id,cloud_size_bytes,cloud_sha256,status,resolution,resolution_reason,renamed_remote_path,
+  resolved_by_user_id,resolved_at,version,updated_at
+) ON TABLE platform.webdav_sync_conflicts TO platform_worker;
 
 REVOKE ALL ON FUNCTION platform.require_ready_storage_object() FROM PUBLIC;

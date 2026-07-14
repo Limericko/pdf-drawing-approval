@@ -91,6 +91,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       publicBaseUrl: parsePublicBaseUrl(env),
       worker,
       webdavAllowedHosts: loadWebDavAllowedHosts(env),
+      webdavStagingRoot: loadWebDavStagingRoot(env),
       webdavCredentials: loadWebDavCredentials(env, environment),
       keyrings: { invitationHmac: invitationHmac.value }
     };
@@ -301,6 +302,13 @@ function loadWebDavAllowedHosts(env: NodeJS.ProcessEnv) {
     configInvalid("PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS");
   }
   return Object.freeze(hosts);
+}
+
+function loadWebDavStagingRoot(env: NodeJS.ProcessEnv) {
+  const configured = env.PDF_APPROVAL_WEBDAV_STAGING_ROOT?.trim();
+  const root = configured || path.resolve(".cache", "platform-webdav-staging");
+  if (!path.isAbsolute(root)) configInvalid("PDF_APPROVAL_WEBDAV_STAGING_ROOT");
+  return path.normalize(root);
 }
 
 function validWebDavAllowedHost(value: string) {

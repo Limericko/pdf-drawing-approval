@@ -14,10 +14,12 @@ import { uuidV7Schema } from "../../../shared/contracts/common.ts";
 import type { PlatformPool } from "../../platform/database/pool.ts";
 import type { QueryExecutor } from "../../platform/database/queryExecutor.ts";
 import { withTransaction } from "../../platform/database/transaction.ts";
+import { PostgresOutboxPublisher } from "../../platform/jobs/outboxPublisher.ts";
 import { PostgresAuditRepository } from "../identity/repositories/postgres/PostgresAuditRepository.ts";
 
 type ProjectRole = "manager" | "designer" | "supervisor" | "process" | "viewer";
 type AccessRow = QueryResultRow & { role: ProjectRole };
+const outbox = new PostgresOutboxPublisher({ createId: uuidV7, clock: () => new Date() });
 
 type PublishRow = QueryResultRow & {
   approval_id: string;
@@ -113,6 +115,7 @@ export function createPdmService(options: { readonly pool: PlatformPool }) {
           if (actorUserId) await requireAccess(transaction, projectId, actorUserId, "edit");
           const result = await publishInTransaction(transaction, projectId, approvalId);
           if (result.changed) {
+            await publishRevisionEvent(transaction, projectId, approvalId, result.link.revision_id);
             await appendAudit(transaction, {
               actorUserId,
               actorType: actorUserId ? "user" : "worker",
@@ -167,6 +170,9 @@ export function createPdmService(options: { readonly pool: PlatformPool }) {
           );
           const approval = await approvalIdForRevision(transaction, link.revision_id);
           const published = await publishInTransaction(transaction, owned.projectId, approval);
+          if (published.changed) {
+            await publishRevisionEvent(transaction, owned.projectId, approval, published.link.revision_id);
+          }
           await recordMutation(transaction, owned.projectId, link.id, "metadata_update",
             owned.update.idempotencyKey, payloadHash, published.link.version);
           await appendAudit(transaction, {
@@ -207,6 +213,9 @@ export function createPdmService(options: { readonly pool: PlatformPool }) {
           if (link.release_status === "void" || link.version !== owned.update.version) throw conflict();
           const approval = await approvalIdForRevision(transaction, link.revision_id);
           const published = await publishInTransaction(transaction, owned.projectId, approval);
+          if (published.changed) {
+            await publishRevisionEvent(transaction, owned.projectId, approval, published.link.revision_id);
+          }
           await recordMutation(transaction, owned.projectId, link.id, "publish_retry",
             owned.update.idempotencyKey, payloadHash, published.link.version);
           await appendAudit(transaction, {
@@ -336,6 +345,12 @@ export function createPdmService(options: { readonly pool: PlatformPool }) {
       }
     }
   });
+}
+
+async function publishRevisionEvent(executor: QueryExecutor, projectId: string, approvalId: string,
+  revisionId: string) {
+  await outbox.publishIdempotent(executor, { eventType: "pdm.revision.published", payloadVersion: 1,
+    payload: { projectId, approvalId, revisionId } }, `pdm-revision-published:${revisionId}`);
 }
 
 async function publishInTransaction(executor: QueryExecutor, projectId: string, approvalId: string) {

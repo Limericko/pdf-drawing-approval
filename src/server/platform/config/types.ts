@@ -102,6 +102,7 @@ export type WorkerPlatformConfig = BasePlatformConfig<"worker"> & {
   publicBaseUrl: string;
   worker: PlatformWorkerConfig;
   webdavAllowedHosts: readonly string[];
+  webdavStagingRoot: string;
   webdavCredentials: WebDavCredentialSourceConfig;
   keyrings: {
     invitationHmac: VersionedKeyring;

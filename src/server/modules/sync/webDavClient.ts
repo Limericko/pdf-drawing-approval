@@ -147,6 +147,11 @@ export function createWebDavClient(options: {
         headers: { Destination: destination.href, Overwrite: "F" }
       }, [200, 201, 204]);
       return { etag: response.headers.get("ETag") };
+    },
+
+    async removeTemporary(path: string) {
+      const response = await request("DELETE", ownPath(path), {}, [200, 204, 404]);
+      return { removed: response.status !== 404 };
     }
   });
 }

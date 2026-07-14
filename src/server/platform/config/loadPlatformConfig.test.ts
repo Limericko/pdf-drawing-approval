@@ -172,6 +172,14 @@ describe("loadPlatformConfig target composition", () => {
       .toEqual(["dav.company.com", "files.company.com"]);
   });
 
+  it("uses an absolute worker quarantine directory for resumable WebDAV downloads", () => {
+    const root = path.resolve(".cache", "webdav-quarantine-test");
+    expect(loadPlatformConfig(workerEnv({ PDF_APPROVAL_WEBDAV_STAGING_ROOT: root }), "worker").webdavStagingRoot)
+      .toBe(root);
+    expect(() => loadPlatformConfig(workerEnv({ PDF_APPROVAL_WEBDAV_STAGING_ROOT: "relative/staging" }), "worker"))
+      .toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_WEBDAV_STAGING_ROOT");
+  });
+
   it.each(["*.company.com", "dav.company.com,dav.company.com", "https://dav.company.com", "dav.company.com:443"])(
     "rejects the unsafe WebDAV allowed host list %s", (value) => {
       expect(() => loadPlatformConfig(webEnv({ PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: value }), "web"))
