@@ -11,6 +11,7 @@ import { createSignatureRoutes } from "../modules/signatures/routes/signatureRou
 import { createIssueRoutes } from "../modules/issues/routes/issueRoutes.ts";
 import { createAdministrationRoutes } from "../modules/administration/routes/administrationRoutes.ts";
 import { createPrintArchiveRoutes } from "../modules/approvals/routes/printArchiveRoutes.ts";
+import { createWebDavSyncRoutes } from "../modules/sync/routes/webDavSyncRoutes.ts";
 import { createErrorMiddleware, type EmergencySink } from "./http/errorMiddleware.ts";
 import { HttpProblem } from "./http/problemResponse.ts";
 import { requestContext } from "./http/requestContext.ts";
@@ -27,6 +28,7 @@ type SignatureService = Parameters<typeof createSignatureRoutes>[0]["signatures"
 type IssueService = Parameters<typeof createIssueRoutes>[0]["issues"];
 type AdministrationService = Parameters<typeof createAdministrationRoutes>[0]["administration"];
 type PrintArchiveService = Parameters<typeof createPrintArchiveRoutes>[0]["printArchive"];
+type WebDavSyncService = Parameters<typeof createWebDavSyncRoutes>[0]["webDavSync"];
 type SecurityLogger = Parameters<typeof createErrorMiddleware>[0]["logger"];
 
 export type CreatePlatformServerOptions = {
@@ -41,6 +43,7 @@ export type CreatePlatformServerOptions = {
     readonly issues: IssueService;
     readonly administration: AdministrationService;
     readonly printArchive: PrintArchiveService;
+    readonly webDavSync: WebDavSyncService;
   };
   readonly health: PlatformHealthOptions;
   readonly logger: SecurityLogger;
@@ -160,6 +163,16 @@ export function createPlatformServer(options: CreatePlatformServerOptions) {
   }));
   app.use("/api/v2/projects", createPdmRoutes({
     pdm: options.services.pdm,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/webdav-sync", createWebDavSyncRoutes({
+    webDavSync: options.services.webDavSync,
     sessions: options.services.sessions,
     publicBaseUrl: options.config.publicBaseUrl,
     cookie: {

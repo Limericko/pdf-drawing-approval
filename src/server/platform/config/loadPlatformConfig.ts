@@ -90,6 +90,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       smtp: loadSmtpConfig(env),
       publicBaseUrl: parsePublicBaseUrl(env),
       worker,
+      webdavAllowedHosts: loadWebDavAllowedHosts(env),
       webdavCredentials: loadWebDavCredentials(env, environment),
       keyrings: { invitationHmac: invitationHmac.value }
     };
@@ -110,6 +111,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
     publicBaseUrl: parsePublicBaseUrl(env),
     trustedProxy: parseTrustedProxy(env),
     session: loadSessionConfig(env),
+    webdavAllowedHosts: loadWebDavAllowedHosts(env),
     keyrings: {
       totpEncryption: totpEncryption.value,
       invitationHmac: invitationHmac.value,
@@ -289,6 +291,26 @@ function loadWebDavCredentials(env: NodeJS.ProcessEnv, environment: PlatformEnvi
     entries.set(reference, { username: value.username, password: value.password });
   }
   return { driver: "inline", entries };
+}
+
+function loadWebDavAllowedHosts(env: NodeJS.ProcessEnv) {
+  const raw = env.PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS?.trim();
+  if (!raw) return Object.freeze([]) as readonly string[];
+  const hosts = raw.split(",").map((value) => value.trim().toLowerCase());
+  if (hosts.length > 100 || hosts.some((host) => !validWebDavAllowedHost(host)) || new Set(hosts).size !== hosts.length) {
+    configInvalid("PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS");
+  }
+  return Object.freeze(hosts);
+}
+
+function validWebDavAllowedHost(value: string) {
+  if (!value || value.length > 253 || value.endsWith(".") || value.includes("*") || value.includes(":")) return false;
+  try {
+    const url = new URL(`https://${value}`);
+    return url.hostname === value && url.pathname === "/";
+  } catch {
+    return false;
+  }
 }
 
 function validCredentialRef(value: string) {

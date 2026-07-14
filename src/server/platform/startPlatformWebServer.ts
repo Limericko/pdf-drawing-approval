@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Server as HttpServer } from "node:http";
 import type { Express } from "express";
 import type { QueryConfig, QueryResultRow } from "pg";
+import { v7 as uuidv7 } from "uuid";
 import { createAuthenticationService } from "../modules/identity/authenticationService.ts";
 import { createAuthorizationService } from "../modules/identity/authorizationService.ts";
 import { createInvitationService } from "../modules/identity/invitationService.ts";
@@ -12,6 +13,8 @@ import { createSignatureService } from "../modules/signatures/signatureService.t
 import { createIssueService } from "../modules/issues/issueService.ts";
 import { createAdministrationService } from "../modules/administration/administrationService.ts";
 import { createPrintArchiveService } from "../modules/approvals/printArchiveService.ts";
+import { createWebDavSyncService } from "../modules/sync/webDavSyncService.ts";
+import { createWebDavEndpointPolicy } from "../modules/sync/webDavEndpointPolicy.ts";
 import { createSessionService } from "./security/sessionService.ts";
 import { loadPlatformConfig } from "./config/loadPlatformConfig.ts";
 import type { WebPlatformConfig } from "./config/types.ts";
@@ -19,6 +22,7 @@ import { loadMigrationFiles, type MigrationFile } from "./database/migrationFile
 import { createPlatformPool, type PlatformPool } from "./database/pool.ts";
 import type { QueryExecutor } from "./database/queryExecutor.ts";
 import { withTransaction } from "./database/transaction.ts";
+import { PostgresOutboxPublisher } from "./jobs/outboxPublisher.ts";
 import { assertExpectedSchema } from "./database/schemaVersion.ts";
 import { createStorage } from "./storage/createStorage.ts";
 import { StorageObjectService } from "./storage/storageObjectService.ts";
@@ -175,6 +179,10 @@ function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: P
     issues: createIssueService({ pool }),
     administration: createAdministrationService({ pool, storageHealth: () => storage.checkHealth() }),
     printArchive: createPrintArchiveService({ pool }),
+    webDavSync: createWebDavSyncService({ pool,
+      publisher: new PostgresOutboxPublisher({ createId: uuidv7, clock: () => new Date() }),
+      allowEndpoint: createWebDavEndpointPolicy({ environment: config.environment,
+        allowedHosts: config.webdavAllowedHosts }) }),
     storageObjects,
     storageAccess: createStorageAccessService({ pool, storageObjects }),
     authentication: createAuthenticationService({

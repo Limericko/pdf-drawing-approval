@@ -3,6 +3,7 @@ CREATE TABLE platform.webdav_connections (
   name text NOT NULL,
   endpoint_url text NOT NULL,
   credential_ref text NOT NULL,
+  credential_available boolean NOT NULL DEFAULT false,
   status text NOT NULL DEFAULT 'active',
   capabilities jsonb NOT NULL DEFAULT '{"class1":false,"move":false,"rangeDownload":false}'::jsonb,
   last_checked_at timestamptz,
@@ -43,6 +44,17 @@ CREATE TABLE platform.webdav_connections (
   ),
   CONSTRAINT webdav_connections_updated_at_check CHECK (updated_at>=created_at)
 );
+
+ALTER TABLE platform.admin_mutation_requests
+  DROP CONSTRAINT admin_mutation_requests_action_check;
+ALTER TABLE platform.admin_mutation_requests
+  ADD CONSTRAINT admin_mutation_requests_action_check CHECK (
+    action IN (
+      'user_status','membership_update','session_revoke','job_retry',
+      'webdav_connection_create','webdav_connection_update',
+      'webdav_mapping_create','webdav_mapping_update','webdav_conflict_resolve','webdav_sync_retry'
+    )
+  );
 
 CREATE INDEX webdav_connections_created_by_user_id_idx
   ON platform.webdav_connections(created_by_user_id);
@@ -178,6 +190,7 @@ CREATE TABLE platform.webdav_sync_items (
   CONSTRAINT webdav_sync_items_status_check CHECK (
     status IN ('discovered','downloading','validating','imported','pending_upload','uploading',
       'verifying','succeeded','conflict','remote_missing','failed')
+      OR status='skipped'
   ),
   CONSTRAINT webdav_sync_items_attempt_count_check CHECK (attempt_count>=0),
   CONSTRAINT webdav_sync_items_error_check CHECK (
@@ -185,8 +198,8 @@ CREATE TABLE platform.webdav_sync_items (
   ),
   CONSTRAINT webdav_sync_items_version_check CHECK (version>0),
   CONSTRAINT webdav_sync_items_completed_state_check CHECK (
-    (status IN ('imported','succeeded') AND completed_at IS NOT NULL AND completed_at>=created_at)
-    OR (status NOT IN ('imported','succeeded') AND completed_at IS NULL)
+    (status IN ('imported','succeeded','skipped') AND completed_at IS NOT NULL AND completed_at>=created_at)
+    OR (status NOT IN ('imported','succeeded','skipped') AND completed_at IS NULL)
   ),
   CONSTRAINT webdav_sync_items_updated_at_check CHECK (updated_at>=created_at)
 );
@@ -354,7 +367,7 @@ GRANT SELECT,INSERT ON TABLE
 TO platform_web;
 
 GRANT UPDATE (
-  name,endpoint_url,credential_ref,status,capabilities,last_checked_at,last_error_code,version,updated_at
+  name,endpoint_url,credential_ref,credential_available,status,capabilities,last_checked_at,last_error_code,version,updated_at
 ) ON TABLE platform.webdav_connections TO platform_web;
 GRANT UPDATE (
   incoming_path,outgoing_path,publish_variant,status,scan_interval_seconds,next_scan_at,last_scan_at,
@@ -385,7 +398,7 @@ GRANT INSERT ON TABLE
   platform.webdav_sync_conflicts
 TO platform_worker;
 
-GRANT UPDATE (capabilities,last_checked_at,last_error_code,status,version,updated_at)
+GRANT UPDATE (credential_available,capabilities,last_checked_at,last_error_code,status,version,updated_at)
   ON TABLE platform.webdav_connections TO platform_worker;
 GRANT UPDATE (
   next_scan_at,last_scan_at,last_success_at,scan_lease_token,scan_lease_expires_at,version,updated_at

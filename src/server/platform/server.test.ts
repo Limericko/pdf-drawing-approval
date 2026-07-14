@@ -15,6 +15,7 @@ const config: WebPlatformConfig = {
   publicBaseUrl: "https://approval.example.test",
   trustedProxy: false,
   session: { cookieSecure: false, absoluteTtlMs: 60_000, idleTtlMs: 30_000, touchIntervalMs: 1_000 },
+  webdavAllowedHosts: [],
   keyrings: { totpEncryption: keyring, invitationHmac: keyring, recoveryHmac: keyring, csrfHmac: keyring }
 };
 
@@ -38,7 +39,11 @@ function services(login = vi.fn(async () => ({ next: "mfa" as const, challengeTo
     administration: { listUsers: vi.fn(), setUserStatus: vi.fn(), updateMembership: vi.fn(),
       revokeUserSessions: vi.fn(), retryDeadJob: vi.fn(), getDiagnostics: vi.fn(), listBackups: vi.fn(),
       listAudit: vi.fn() },
-    printArchive: { record: vi.fn(), list: vi.fn() }
+    printArchive: { record: vi.fn(), list: vi.fn() },
+    webDavSync: { getSummary: vi.fn(), listConnections: vi.fn(), createConnection: vi.fn(),
+      updateConnection: vi.fn(), testConnection: vi.fn(), listMappings: vi.fn(), createMapping: vi.fn(),
+      updateMapping: vi.fn(), triggerScan: vi.fn(), listSyncItems: vi.fn(), retrySyncItem: vi.fn(),
+      listConflicts: vi.fn(), resolveConflict: vi.fn() }
   };
 }
 

@@ -22,6 +22,7 @@ const AUDIT_COLUMNS = `id, occurred_at, actor_user_id, actor_type, action, targe
 const AUDIT_METADATA_KEYS = new Set<AuditMetadataKey>([
   "reason", "ipPrefix", "userAgent", "projectId", "documentId", "revisionId", "approvalId",
   "issueId", "partId", "sessionId", "jobId", "backupRunId", "mfaMethod", "reviewerRole",
+  "connectionId", "mappingId", "syncItemId", "conflictId", "remotePath", "resolution",
   "oldStatus", "newStatus", "provider", "count"
 ]);
 

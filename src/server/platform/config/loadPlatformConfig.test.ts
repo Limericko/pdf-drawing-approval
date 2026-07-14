@@ -164,6 +164,21 @@ describe("loadPlatformConfig target composition", () => {
       path: path.resolve(".cache", "mounted-webdav-credentials.json") });
   });
 
+  it("loads the same exact WebDAV endpoint allowlist for web and worker", () => {
+    const hosts = "dav.company.com,files.company.com";
+    expect(loadPlatformConfig(webEnv({ PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: hosts }), "web").webdavAllowedHosts)
+      .toEqual(["dav.company.com", "files.company.com"]);
+    expect(loadPlatformConfig(workerEnv({ PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: hosts }), "worker").webdavAllowedHosts)
+      .toEqual(["dav.company.com", "files.company.com"]);
+  });
+
+  it.each(["*.company.com", "dav.company.com,dav.company.com", "https://dav.company.com", "dav.company.com:443"])(
+    "rejects the unsafe WebDAV allowed host list %s", (value) => {
+      expect(() => loadPlatformConfig(webEnv({ PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: value }), "web"))
+        .toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS");
+    }
+  );
+
   it("requires only the migration database for migration", () => {
     const config = loadPlatformConfig(
       {

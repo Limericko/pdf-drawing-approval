@@ -87,6 +87,7 @@ export type WebPlatformConfig = BasePlatformConfig<"web"> & {
   publicBaseUrl: string;
   trustedProxy: TrustedProxyConfig;
   session: PlatformSessionConfig;
+  webdavAllowedHosts: readonly string[];
   keyrings: {
     totpEncryption: VersionedKeyring;
     invitationHmac: VersionedKeyring;
@@ -100,6 +101,7 @@ export type WorkerPlatformConfig = BasePlatformConfig<"worker"> & {
   smtp: PlatformSmtpConfig;
   publicBaseUrl: string;
   worker: PlatformWorkerConfig;
+  webdavAllowedHosts: readonly string[];
   webdavCredentials: WebDavCredentialSourceConfig;
   keyrings: {
     invitationHmac: VersionedKeyring;

@@ -13,6 +13,7 @@ export const webDavSyncDirectionSchema = z.enum(["inbound", "outbound"]);
 export const webDavSyncStatusSchema = z.enum([
   "discovered", "downloading", "validating", "imported", "pending_upload", "uploading", "verifying",
   "succeeded", "conflict", "remote_missing", "failed"
+  , "skipped"
 ]);
 export const webDavConflictStatusSchema = z.enum(["open", "resolved"]);
 export const webDavConflictResolutionSchema = z.enum([
@@ -158,6 +159,18 @@ export const webDavSyncItemResponseSchema = z.object({
   createdAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   completedAt: isoDateTimeSchema.nullable()
+}).strict();
+
+export const webDavSyncItemListQuerySchema = paginationQuerySchema.extend({
+  projectId: uuidV7Schema.optional(),
+  mappingId: uuidV7Schema.optional(),
+  direction: webDavSyncDirectionSchema.optional(),
+  status: webDavSyncStatusSchema.optional()
+}).strict();
+
+export const webDavSyncItemListResponseSchema = z.object({
+  items: z.array(webDavSyncItemResponseSchema),
+  page: pageInfoSchema
 }).strict();
 
 const conflictSideRemoteSchema = z.object({
