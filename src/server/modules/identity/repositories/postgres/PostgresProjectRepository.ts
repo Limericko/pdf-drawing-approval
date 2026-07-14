@@ -7,6 +7,7 @@ import type {
   CreateProjectInput,
   CreateProjectResult,
   ProjectAccessRecord,
+  ProjectMemberSummary,
   ProjectRepository
 } from "../projectRepository.ts";
 
@@ -46,6 +47,11 @@ type ProjectAccessRow = QueryResultRow & {
   membership_status: ProjectMemberStatus;
   membership_created_at: Date;
   membership_updated_at: Date;
+};
+
+type ProjectMemberSummaryRow = QueryResultRow & {
+  membership_id: string; user_id: string; email_normalized: string; display_name: string;
+  role: ProjectMemberRole; status: ProjectMemberStatus; updated_at: Date;
 };
 
 function mapProjectMember(row: ProjectMemberRow): ProjectMember {
@@ -160,6 +166,22 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async findByIdForMember(projectId: string, requesterUserId: string) {
     return (await this.findAccessByIdForMember(projectId, requesterUserId))?.project;
+  }
+
+  async listMembers(projectId: string): Promise<readonly ProjectMemberSummary[]> {
+    const result = await this.executor.query<ProjectMemberSummaryRow>(
+      `SELECT membership.id AS membership_id,membership.user_id,user_account.email_normalized,
+         user_account.display_name,membership.role,membership.status,membership.updated_at
+       FROM platform.project_members membership
+       INNER JOIN platform.users user_account ON user_account.id=membership.user_id
+       WHERE membership.project_id=$1 AND user_account.status='active'
+       ORDER BY CASE membership.role WHEN 'manager' THEN 1 WHEN 'designer' THEN 2
+         WHEN 'supervisor' THEN 3 WHEN 'process' THEN 4 ELSE 5 END,user_account.display_name,membership.id`,
+      [projectId]
+    );
+    return result.rows.map((row) => ({ membershipId: row.membership_id, userId: row.user_id,
+      emailNormalized: row.email_normalized, displayName: row.display_name, role: row.role,
+      status: row.status, updatedAt: row.updated_at }));
   }
 
   async lockActiveProjectForInvitation(projectId: string, inviterUserId: string) {

@@ -19,17 +19,34 @@ const ids = {
 } as const;
 
 const expectedTables = [
+  "admin_mutation_requests",
+  "annotations",
+  "approval_cases",
   "audit_events",
+  "backup_runs",
+  "documents",
+  "drawing_revisions",
   "invitations",
+  "issue_events",
+  "issues",
   "jobs",
   "mfa_challenges",
   "mfa_enrollments",
   "outbox_events",
+  "part_revision_links",
+  "part_usages",
+  "parts",
+  "pdm_mutation_requests",
+  "print_archive_events",
   "project_members",
   "projects",
   "recovery_codes",
+  "render_artifacts",
+  "review_decisions",
   "security_rate_limit_buckets",
   "sessions",
+  "signature_assets",
+  "signature_placements",
   "storage_objects",
   "totp_credentials",
   "users",
@@ -41,7 +58,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 7, verified: 0, total: 7 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 8, verified: 0, total: 8 });
     await run(database, migration);
   });
 }
@@ -132,7 +149,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 7, total: 7 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 8, total: 8 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -143,7 +160,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 4, file_name: "0004_worker_outbox_publish.sql" },
         { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" },
         { version: 6, file_name: "0006_storage_cleanup_leases.sql" },
-        { version: 7, file_name: "0007_worker_health.sql" }
+        { version: 7, file_name: "0007_worker_health.sql" },
+        { version: 8, file_name: "0008_business_approval_pdm_admin.sql" }
       ]);
     });
   });
@@ -786,11 +804,15 @@ describe("Phase 1 PostgreSQL platform schema", () => {
             (id, job_type, payload_version, payload, idempotency_key, status, attempt_count, max_attempts, next_run_at)
            VALUES ('01890f1e-9b4a-7cc2-8f00-000000000012', 'web.test', 1, '{}'::jsonb, 'web-job',
              'pending', 0, 5, clock_timestamp())`
-        ]
+        ],
+        ["UPDATE platform.jobs SET status='pending',updated_at=clock_timestamp() WHERE false"]
       ]);
       await expectDenied(web, "DELETE FROM platform.audit_events");
       await expectDenied(web, "UPDATE platform.audit_events SET result = 'failure'");
-      await expectDenied(web, "UPDATE platform.jobs SET status = 'running'");
+      await expectDenied(web, "UPDATE platform.jobs SET payload = '{\"tampered\":true}'::jsonb");
+      await expect(migration.query(
+        "SELECT has_table_privilege('platform_web','platform.jobs','UPDATE') AS full_update"
+      )).resolves.toMatchObject({ rows: [{ full_update: false }] });
       for (const statement of [
         "UPDATE platform.users SET id = '01890f1e-9b4a-7cc2-8f00-000000000014'",
         "UPDATE platform.users SET created_at = clock_timestamp()",
@@ -923,7 +945,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["bootstrap", bootstrap]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 7
+          rowCount: 8
         });
         await expectDenied(
           pool,

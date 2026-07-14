@@ -1,12 +1,19 @@
 import type { RequestHandler } from "express";
 import { HttpProblem } from "../http/problemResponse.ts";
 
-export function createOriginGuard(options: { readonly publicBaseUrl: string }): RequestHandler {
+export function createOriginGuard(options: { readonly publicBaseUrl: string; readonly contentTypes?: readonly string[] }): RequestHandler {
   const trustedOrigin = trustedPublicOrigin(options?.publicBaseUrl);
+  const customContentTypes = options.contentTypes !== undefined;
+  const allowedContentTypes = options.contentTypes ?? ["application/json"];
+  if (!Array.isArray(allowedContentTypes) || allowedContentTypes.length === 0 ||
+      allowedContentTypes.some((value) => typeof value !== "string" || !/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(value))) {
+    throw new Error("ORIGIN_GUARD_CONTENT_TYPES_INVALID");
+  }
   return (request, _response, next) => {
-    const contentType = request.get("content-type") ?? "";
-    if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
-      next(new HttpProblem(415, "JSON_CONTENT_TYPE_REQUIRED", "JSON content type required"));
+    const contentType = request.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    if (!allowedContentTypes.includes(contentType)) {
+      next(new HttpProblem(415, customContentTypes ? "CONTENT_TYPE_REQUIRED" : "JSON_CONTENT_TYPE_REQUIRED",
+        customContentTypes ? "Supported content type required" : "JSON content type required"));
       return;
     }
     const origin = request.get("origin");

@@ -1,4 +1,6 @@
 import { apiUrl, normalizeServerBaseUrl } from "./clientConfig.ts";
+import type { SignaturePlacement, SignaturePlacementRole } from "./widgets/signaturePlacementTypes.ts";
+export type { SignaturePlacement, SignaturePlacementRole } from "./widgets/signaturePlacementTypes.ts";
 
 export type User = {
   id: number;
@@ -91,17 +93,6 @@ export type Approval = {
   pdmPublishError?: string | null;
   history?: Approval[];
   relatedVersions?: Approval[];
-};
-
-export type SignaturePlacementRole = "designer" | "supervisor" | "process";
-
-export type SignaturePlacement = {
-  role: SignaturePlacementRole;
-  pageNumber: number;
-  xRatio: number;
-  yRatio: number;
-  widthRatio: number;
-  heightRatio: number;
 };
 
 export type SignatureTemplate = {

@@ -49,6 +49,8 @@ describe("AuthorizationService", () => {
       expect.objectContaining({ id: first.project.id, name: "Turbine", role: "manager",
         capabilities: expect.arrayContaining(["project.read", "project.invitations.create"]) })
     ]);
+    await expect(service().getProjectAccess({ projectId: first.project.id, userId: admin.id }))
+      .resolves.toMatchObject({ members: [{ userId: admin.id, displayName: "context-admin", role: "manager", status: "active" }] });
   });
 
   it("uses the same not-found result for missing projects, non-members and disabled memberships", async () => {

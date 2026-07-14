@@ -80,6 +80,7 @@ export interface StorageObjectRepository {
   markReady(id: string, content: ReadyStorageObjectContent): Promise<StorageObject>;
   markDeletePending(id: string, requestedAt: Date): Promise<StorageObject>;
   listStaleStaging(createdBefore: Date, limit: number): Promise<StorageObject[]>;
+  listReadyOrphans?(readyBefore: Date, limit: number): Promise<StorageObject[]>;
   listDeletePending(dueAt: Date, limit: number): Promise<StorageObject[]>;
   prepareCleanup(input: PrepareStorageCleanup): Promise<StorageObject | undefined>;
   completeCleanup(input: CompleteStorageCleanup): Promise<StorageObject | undefined>;

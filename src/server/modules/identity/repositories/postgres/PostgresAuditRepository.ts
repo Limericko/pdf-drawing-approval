@@ -20,7 +20,9 @@ type AuditRow = QueryResultRow & {
 const AUDIT_COLUMNS = `id, occurred_at, actor_user_id, actor_type, action, target_type,
   target_id, request_id, result, metadata`;
 const AUDIT_METADATA_KEYS = new Set<AuditMetadataKey>([
-  "reason", "ipPrefix", "userAgent", "projectId", "documentId", "sessionId", "mfaMethod"
+  "reason", "ipPrefix", "userAgent", "projectId", "documentId", "revisionId", "approvalId",
+  "issueId", "partId", "sessionId", "jobId", "backupRunId", "mfaMethod", "reviewerRole",
+  "oldStatus", "newStatus", "provider", "count"
 ]);
 
 function validateAndCopyMetadata(metadata: AuditMetadata): AuditMetadata {

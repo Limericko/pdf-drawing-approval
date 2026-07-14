@@ -165,6 +165,23 @@ export class PostgresStorageObjectRepository implements StorageObjectRepository 
     return result.rows.map(mapStorageObject);
   }
 
+  async listReadyOrphans(readyBefore: Date, limit: number) {
+    const cutoff = ownDate(readyBefore);
+    assertLimit(limit);
+    const result = await this.executor.query<StorageObjectRow>(
+      `SELECT ${COLUMNS.replaceAll(/\b(id|status|driver|object_key|size_bytes|sha256|media_type|last_error|created_at|updated_at|ready_at|delete_requested_at|deleted_at|upload_expires_at|cleanup_tombstone|cleanup_generation|cleanup_not_before|cleanup_lease_owner|cleanup_lease_token|cleanup_lease_expires_at)\b/g, "object.$1")}
+       FROM platform.storage_objects object
+       WHERE object.status='ready' AND object.ready_at <= $1
+         AND NOT EXISTS (SELECT 1 FROM platform.drawing_revisions revision WHERE revision.original_object_id=object.id)
+         AND NOT EXISTS (SELECT 1 FROM platform.signature_assets signature WHERE signature.object_id=object.id)
+         AND NOT EXISTS (SELECT 1 FROM platform.render_artifacts artifact WHERE artifact.object_id=object.id)
+         AND NOT EXISTS (SELECT 1 FROM platform.print_archive_events archive WHERE archive.object_id=object.id)
+       ORDER BY object.ready_at,object.id LIMIT $2 FOR UPDATE OF object SKIP LOCKED`,
+      [cutoff, limit]
+    );
+    return result.rows.map(mapStorageObject);
+  }
+
   async listDeletePending(dueAt: Date, limit: number) {
     ownDate(dueAt);
     assertLimit(limit);

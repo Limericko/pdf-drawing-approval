@@ -23,7 +23,8 @@ import {
   type PrepareInvitationRequest
 } from "../../shared/contracts/identity.ts";
 import type { z } from "zod";
-import { PlatformRequestAbortError, PlatformRequestError, platformRequest } from "./platformRequest.ts";
+import { PlatformRequestAbortError, PlatformRequestError, platformRequest,
+  type PlatformRequestOptions } from "./platformRequest.ts";
 
 type SessionResponse = z.infer<typeof sessionResponseSchema>;
 export type PlatformSessionContext = Omit<SessionResponse, "csrfToken">;
@@ -114,6 +115,17 @@ export function listProjects(signal?: AbortSignal) {
 export function getProjectAccess(projectId: string, signal?: AbortSignal) {
   const parsed = parseInput(projectIdParamsSchema, { projectId });
   return request(`/api/v2/projects/${parsed.projectId}/access`, { responseSchema: projectAccessResponseSchema, signal });
+}
+
+export function platformSessionRequest<T>(
+  target: string,
+  options: Omit<PlatformRequestOptions<T>, "csrfToken"> = {}
+) {
+  const mutating = options.method !== undefined && options.method !== "GET";
+  return request(target, {
+    ...options,
+    ...(mutating ? { csrfToken: requireCsrf() } : {})
+  });
 }
 
 export function disposeIdentityClient() {

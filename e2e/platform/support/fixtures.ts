@@ -49,7 +49,8 @@ export async function publishPlatformE2EState(state: PlatformE2EState) {
     mailpitUrl: state.mailpitUrl,
     seed: {
       adminEmail: state.seed.adminEmail,
-      unauthorizedProjectId: state.seed.unauthorizedProjectId
+      unauthorizedProjectId: state.seed.unauthorizedProjectId,
+      businessProjectId: state.seed.businessProjectId
     }
   };
   await mkdir(path.dirname(platformStateFile), { recursive: true });
@@ -75,7 +76,7 @@ function isPlatformE2EState(value: unknown): value is PlatformE2EState {
     typeof state.storageCleanupRoot === "string" &&
     typeof state.storagePrefix === "string" && typeof state.webUrl === "string" &&
     typeof state.apiUrl === "string" && typeof state.mailpitUrl === "string" &&
-    Boolean(state.seed?.adminEmail && state.seed.unauthorizedProjectId);
+    Boolean(state.seed?.adminEmail && state.seed.unauthorizedProjectId && state.seed.businessProjectId);
 }
 
 export { expect };

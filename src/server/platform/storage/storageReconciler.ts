@@ -9,6 +9,7 @@ type StorageReconcilerOptions = {
   readonly reapTombstone?: (signal: AbortSignal) => Promise<unknown>;
   readonly clock?: () => Date;
   readonly batchSize: number;
+  readonly orphanReadyGraceMs?: number;
 };
 
 export class StorageReconciler {
@@ -18,6 +19,7 @@ export class StorageReconciler {
   private readonly publisher: CleanupIntentPublisher;
   private readonly reapTombstone: ((signal: AbortSignal) => Promise<unknown>) | undefined;
   private readonly batchSize: number;
+  private readonly orphanReadyGraceMs: number | undefined;
   private nextSinglePriority: "staging" | "delete_pending" = "staging";
 
   constructor(options: StorageReconcilerOptions) {
@@ -33,6 +35,11 @@ export class StorageReconciler {
     }
     this.reapTombstone = options.reapTombstone;
     this.batchSize = options.batchSize;
+    if (options.orphanReadyGraceMs !== undefined && (!Number.isSafeInteger(options.orphanReadyGraceMs) ||
+        options.orphanReadyGraceMs < 3_600_000 || options.orphanReadyGraceMs > 30 * 24 * 60 * 60_000)) {
+      throw new Error("INVALID_STORAGE_ORPHAN_GRACE_MS");
+    }
+    this.orphanReadyGraceMs = options.orphanReadyGraceMs;
   }
 
   async runOnce(signal: AbortSignal = new AbortController().signal) {
@@ -48,19 +55,29 @@ export class StorageReconciler {
         : await selectFairBatch(repository, now, this.batchSize);
       const stale = selected.filter((object) => object.status === "staging");
       const pending = selected.filter((object) => object.status === "delete_pending");
+      const orphanCutoff = this.orphanReadyGraceMs === undefined ? undefined :
+        new Date(now.getTime() - this.orphanReadyGraceMs);
+      const orphans = orphanCutoff && repository.listReadyOrphans
+        ? await repository.listReadyOrphans(orphanCutoff, this.batchSize) : [];
       for (const object of stale) {
         await this.publisher.publish(executor, createCleanupIntent(object, "staging"));
       }
       for (const object of pending) {
         await this.publisher.publish(executor, createCleanupIntent(object, "delete_pending"));
       }
-      return { published: stale.length + pending.length };
+      for (const orphan of orphans) {
+        const pendingOrphan = await repository.markDeletePending(orphan.id, now);
+        await this.publisher.publish(executor, createCleanupIntent(pendingOrphan, "delete_pending"));
+      }
+      return { published: stale.length + pending.length + orphans.length, orphaned: orphans.length };
     });
     if (this.batchSize === 1) {
       this.nextSinglePriority = singlePriority === "staging" ? "delete_pending" : "staging";
     }
     if (!signal.aborted && this.reapTombstone) await this.reapTombstone(signal);
-    return { published: result.published };
+    return this.orphanReadyGraceMs === undefined
+      ? { published: result.published }
+      : { published: result.published, orphaned: result.orphaned };
   }
 }
 

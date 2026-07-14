@@ -15,7 +15,10 @@ import { CleanupIntentOutboxPublisher, PostgresOutboxPublisher } from "./outboxP
 import { OutboxDispatcher } from "./dispatcher.ts";
 import { createDeleteStorageObjectHandler } from "./handlers/deleteStorageObject.ts";
 import { createSendInvitationEmailHandler } from "./handlers/sendInvitationEmail.ts";
-import { invitationEmailEventRegistration, JobRegistry, storageCleanupEventRegistration } from "./jobRegistry.ts";
+import { createFinalizeApprovedDrawingHandler } from "./handlers/finalizeApprovedDrawing.ts";
+import { createPdmService } from "../../modules/pdm/pdmService.ts";
+import { approvalCompletedEventRegistration, invitationEmailEventRegistration, JobRegistry,
+  storageCleanupEventRegistration } from "./jobRegistry.ts";
 import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
 import { PostgresOutboxRepository } from "./postgres/PostgresOutboxRepository.ts";
 import { createRetryPolicy } from "./retryPolicy.ts";
@@ -105,11 +108,16 @@ async function runConfiguredWorkers(
     const invitationHandler = createSendInvitationEmailHandler({
       pool, transport: mail, keyring: config.keyrings.invitationHmac, publicBaseUrl: config.publicBaseUrl
     });
+    const finalizeApprovalHandler = createFinalizeApprovedDrawingHandler({
+      pool, storage, pdm: createPdmService({ pool }), clock
+    });
     const registry = new JobRegistry(
-      [storageCleanupEventRegistration(config.worker.maxAttempts), invitationEmailEventRegistration(config.worker.maxAttempts)],
+      [storageCleanupEventRegistration(config.worker.maxAttempts), invitationEmailEventRegistration(config.worker.maxAttempts),
+        approvalCompletedEventRegistration(config.worker.maxAttempts)],
       [
         { jobType: "storage_object_cleanup", payloadVersion: 1, handler: cleanupHandler },
-        { jobType: "invitation.email", payloadVersion: 1, handler: invitationHandler }
+        { jobType: "invitation.email", payloadVersion: 1, handler: invitationHandler },
+        { jobType: "approval.finalize", payloadVersion: 1, handler: finalizeApprovalHandler }
       ]
     );
     const startedAt = clock();
@@ -140,7 +148,8 @@ async function runConfiguredWorkers(
         publisher: outboxPublisher,
         reapTombstone: (signal) => tombstoneReaper.reap({ signal }),
         clock,
-        batchSize: RECONCILE_BATCH_SIZE
+        batchSize: RECONCILE_BATCH_SIZE,
+        orphanReadyGraceMs: 24 * 60 * 60_000
       });
       const promise = runWorker({
         workerId,

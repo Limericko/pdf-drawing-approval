@@ -23,7 +23,22 @@ function services(login = vi.fn(async () => ({ next: "mfa" as const, challengeTo
     authentication: { login, completeMfa: vi.fn() },
     sessions: { authenticate: vi.fn(), revokeCurrent: vi.fn() },
     invitations: { createInvitation: vi.fn(), prepare: vi.fn(), complete: vi.fn() },
-    authorization: { getSessionContext: vi.fn(), listProjects: vi.fn(), getProjectAccess: vi.fn(), createProject: vi.fn() }
+    authorization: { getSessionContext: vi.fn(), listProjects: vi.fn(), getProjectAccess: vi.fn(), createProject: vi.fn() },
+    approvals: {
+      createDraft: vi.fn(), submitRevision: vi.fn(), decide: vi.fn(), getApproval: vi.fn(), listApprovals: vi.fn()
+    },
+    tasks: { listMyTasks: vi.fn() },
+    pdm: { listParts: vi.fn(), getPart: vi.fn(), updateMetadata: vi.fn(), retryPublish: vi.fn(),
+      voidRevision: vi.fn(), publishApprovedRevision: vi.fn() },
+    storageObjects: { create: vi.fn(), openRead: vi.fn() },
+    storageAccess: { open: vi.fn() },
+    signatures: { getActive: vi.fn(), setActive: vi.fn() },
+    issues: { createIssue: vi.fn(), startIssue: vi.fn(), submitIssue: vi.fn(), reviewIssue: vi.fn(),
+      forceCloseIssue: vi.fn(), getIssue: vi.fn(), listIssues: vi.fn() },
+    administration: { listUsers: vi.fn(), setUserStatus: vi.fn(), updateMembership: vi.fn(),
+      revokeUserSessions: vi.fn(), retryDeadJob: vi.fn(), getDiagnostics: vi.fn(), listBackups: vi.fn(),
+      listAudit: vi.fn() },
+    printArchive: { record: vi.fn(), list: vi.fn() }
   };
 }
 

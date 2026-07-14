@@ -93,6 +93,9 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("adapts the app shell and core work surfaces for phone widths", () => {
+    const mobileShell = mediaBlockFor("(max-width: 32.5rem)", appShellStyles);
+    const mobileUserPanel = ruleForIn(mobileShell, '.userPanel, .shell[data-collapsed="true"] .userPanel');
+    const mobileLogout = ruleForIn(mobileShell, '.logout, .shell[data-collapsed="true"] .logout');
     const mobileData = mediaBlockFor("(max-width: 48rem)", dataStyles);
     const approvalRow = ruleForIn(mobileData, ".dataTable tbody tr");
     const approvalCell = ruleForIn(mobileData, ".dataTable td");
@@ -102,6 +105,9 @@ describe("approval detail PDF placement styles", () => {
 
     expect(appShellStyles).toContain("@media (max-width: 32.5rem)");
     expect(appShellStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(mobileUserPanel).toContain("display: flex");
+    expect(mobileUserPanel).not.toContain("display: none");
+    expect(mobileLogout).toContain("min-height: var(--control-height-touch)");
     expect(navigationStyles).toContain("overflow-x: auto");
     expect(navigationStyles).toContain("flex: 0 0 auto");
     expect(approvalRow).toContain("display: grid");

@@ -105,6 +105,22 @@ export function invitationEmailEventRegistration(maxAttempts: number): EventRegi
   });
 }
 
+export function approvalCompletedEventRegistration(maxAttempts: number): EventRegistration {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 100) throw invalidRegistration();
+  return Object.freeze({
+    eventType: "approval.completed", payloadVersion: 1, handlerVersion: "v1",
+    jobType: "approval.finalize", jobPayloadVersion: 1, maxAttempts,
+    mapPayload(event) {
+      const { projectId, approvalId, revisionId } = event.payload;
+      if (Object.keys(event.payload).sort().join(",") !== "approvalId,projectId,revisionId" ||
+          typeof projectId !== "string" || typeof approvalId !== "string" || typeof revisionId !== "string") {
+        throw invalidRegistration();
+      }
+      return { projectId, approvalId };
+    }
+  });
+}
+
 function validateEventRegistration(value: EventRegistration) {
   if (!value || typeof value !== "object") throw invalidRegistration();
   assertName(value.eventType, 128);

@@ -1,6 +1,6 @@
 import { z } from "zod";
+import { uuidV7Schema } from "./common.ts";
 
-const uuidV7Schema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 const utf8Encoder = new TextEncoder();
 const boundedSecret = (minimumBytes: number, maximumBytes: number) => z.string().refine((value) => {
   const bytes = utf8Encoder.encode(value).byteLength;
@@ -84,8 +84,18 @@ export const projectMembershipResponseSchema = z.object({ id: uuidV7Schema, proj
 export const createProjectResponseSchema = z.object({ project: projectResponseSchema,
   membership: projectMembershipResponseSchema, capabilities: z.array(projectCapabilitySchema) }).strict();
 export const projectListResponseSchema = z.object({ projects: z.array(projectSummaryResponseSchema) }).strict();
+export const projectMemberSummaryResponseSchema = z.object({
+  membershipId: uuidV7Schema,
+  userId: uuidV7Schema,
+  emailNormalized: z.string().email().max(254),
+  displayName: z.string().min(1),
+  role: projectMemberRoleSchema,
+  status: z.enum(["active", "disabled"]),
+  updatedAt: z.string().datetime()
+}).strict();
 export const projectAccessResponseSchema = z.object({ project: projectResponseSchema,
-  membership: projectMembershipResponseSchema, capabilities: z.array(projectCapabilitySchema) }).strict();
+  membership: projectMembershipResponseSchema, capabilities: z.array(projectCapabilitySchema),
+  members: z.array(projectMemberSummaryResponseSchema).default([]) }).strict();
 
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 export type MfaCompleteRequest = z.infer<typeof mfaCompleteRequestSchema>;

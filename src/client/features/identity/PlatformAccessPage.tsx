@@ -7,6 +7,7 @@ import {
   type PlatformSessionContext
 } from "../../api/identityClient.ts";
 import type { CreateInvitationRequest, CreateProjectRequest } from "../../../shared/contracts/identity.ts";
+import { updateAdminMembership } from "../../api/administrationClient.ts";
 import { Button } from "../../ui/actions/index.tsx";
 import { Select, TextInput } from "../../ui/forms/index.tsx";
 import { EmptyState, ErrorState, InlineAlert, Skeleton } from "../../ui/feedback/index.tsx";
@@ -15,6 +16,7 @@ import { focusPlatformError } from "./platformFocus.ts";
 
 type ProjectSummary = PlatformSessionContext["projects"][number];
 type ProjectAccess = Awaited<ReturnType<typeof requestProjectAccess>>;
+export type ProjectMember = NonNullable<ProjectAccess["members"]>[number];
 export type PlatformAccessContext = Pick<PlatformSessionContext, "globalCapabilities" | "projects">;
 
 export type ProjectAccessLoadState<T> =
@@ -174,12 +176,14 @@ export function PlatformAccessPage({
   context,
   logoutBusy = false,
   logoutError = "",
+  embedded = false,
   onLogout
 }: {
   readonly user: PlatformSessionContext["user"];
   readonly context: PlatformAccessContext;
   readonly logoutBusy?: boolean;
   readonly logoutError?: string;
+  readonly embedded?: boolean;
   readonly onLogout: () => void | Promise<void>;
 }) {
   const controller = useMemo(() => createPlatformAccessController(context), [context]);
@@ -195,6 +199,7 @@ export function PlatformAccessPage({
   const [feedback, setFeedback] = useState("");
   const [projectBusy, setProjectBusy] = useState(false);
   const [invitationBusy, setInvitationBusy] = useState(false);
+  const [memberBusy, setMemberBusy] = useState("");
   const accessRoot = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -282,6 +287,22 @@ export function PlatformAccessPage({
     }
   }
 
+  async function submitMemberUpdate(event: FormEvent<HTMLFormElement>, member: ProjectMember) {
+    event.preventDefault(); setError(""); setFeedback("");
+    const data = new FormData(event.currentTarget); const reason = String(data.get("reason") ?? "").trim();
+    if (!reason) { setError("调整项目成员角色或状态必须填写原因。"); return; }
+    setMemberBusy(member.membershipId);
+    try {
+      await updateAdminMembership(selectedProjectId, member.membershipId, {
+        role: String(data.get("role") ?? member.role) as NonNullable<CreateInvitationRequest["projectRole"]>,
+        status: String(data.get("status") ?? member.status) as "active" | "disabled",
+        expectedUpdatedAt: member.updatedAt, reason, idempotencyKey: `membership:${member.membershipId}:${crypto.randomUUID()}`
+      });
+      setFeedback("项目成员权限已更新并写入审计。"); accessLoader.retry();
+    } catch { setError("成员权限更新失败。请确认管理员权限和成员版本仍然有效。"); }
+    finally { setMemberBusy(""); }
+  }
+
   return <section className="platform-access" aria-labelledby="platform-access-heading" ref={accessRoot}>
     <header className="platform-access__header">
       <div>
@@ -289,16 +310,16 @@ export function PlatformAccessPage({
         <h1 id="platform-access-heading" tabIndex={-1}>可访问项目</h1>
         <p>当前身份：{user.displayName} · {user.emailNormalized}</p>
       </div>
-      <Button variant="secondary" disabled={logoutBusy} loading={logoutBusy} loadingLabel="正在退出"
-        onClick={() => void onLogout()}>退出登录</Button>
+      {!embedded ? <Button variant="secondary" disabled={logoutBusy} loading={logoutBusy} loadingLabel="正在退出"
+        onClick={() => void onLogout()}>退出登录</Button> : null}
     </header>
 
     {logoutError ? <InlineAlert tone="danger">{logoutError}</InlineAlert> : null}
 
-    <dl className="platform-access__identity">
+    {!embedded ? <dl className="platform-access__identity">
       <div><dt>平台角色</dt><dd>{user.platformRole === "admin" ? "管理员" : "成员"}</dd></div>
       <div><dt>可执行操作</dt><dd>{globalLabels.length ? globalLabels.join(" · ") : "使用已授权项目"}</dd></div>
-    </dl>
+    </dl> : null}
 
     {feedback ? <InlineAlert tone="success">{feedback}</InlineAlert> : null}
     {error ? <ErrorState title="项目列表加载失败" onRetry={() => location.reload()}>{error}</ErrorState> : null}
@@ -327,6 +348,8 @@ export function PlatformAccessPage({
             <ul className="platform-capability-list">
               {projectLabels.map((label) => <li key={label}>{label}</li>)}
             </ul>
+            {user.platformRole === "admin" && access.members?.length ? <ProjectMemberDirectory members={access.members}
+              busyMembershipId={memberBusy} onSubmit={submitMemberUpdate} /> : null}
           </> : <p>请选择项目。</p>}
         </article>
       </div>}
@@ -350,5 +373,30 @@ export function PlatformAccessPage({
         <Button type="submit" loading={invitationBusy} loadingLabel="正在创建">创建邀请</Button>
       </form> : null}
     </div> : null}
+  </section>;
+}
+
+export function ProjectMemberDirectory({ members, busyMembershipId, onSubmit }: {
+  readonly members: readonly ProjectMember[];
+  readonly busyMembershipId: string;
+  readonly onSubmit: (event: FormEvent<HTMLFormElement>, member: ProjectMember) => void | Promise<void>;
+}) {
+  return <section className="platform-member-directory" aria-label="项目成员目录">
+    <div className="platform-section-heading"><div><p className="platform-eyebrow">成员与角色</p><h3>项目成员</h3></div>
+      <span>{members.length} 人</span></div>
+    <div className="platform-member-list">{members.map((member) => <form key={member.membershipId}
+      onSubmit={(event) => void onSubmit(event, member)} aria-busy={busyMembershipId === member.membershipId}>
+      <div><strong>{member.displayName}</strong><small>{member.emailNormalized}</small></div>
+      <Select id={`member-role-${member.membershipId}`} name="role" label="角色" hideLabel defaultValue={member.role}
+        options={[{ value: "designer", label: "设计人员" }, { value: "supervisor", label: "主管审阅" },
+          { value: "process", label: "工艺复核" }, { value: "manager", label: "项目经理" },
+          { value: "viewer", label: "只读成员" }]} />
+      <Select id={`member-status-${member.membershipId}`} name="status" label="状态" hideLabel defaultValue={member.status}
+        options={[{ value: "active", label: "启用" }, { value: "disabled", label: "停用" }]} />
+      <TextInput id={`member-reason-${member.membershipId}`} name="reason" label="原因" hideLabel
+        placeholder="调整原因" required />
+      <Button type="submit" size="sm" loading={busyMembershipId === member.membershipId}
+        loadingLabel="保存中">保存</Button>
+    </form>)}</div>
   </section>;
 }

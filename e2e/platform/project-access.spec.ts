@@ -37,7 +37,7 @@ async function login(page: Page, platform: {
   await page.getByRole("button", { name: "继续验证" }).click();
   await page.getByLabel("6 位动态验证码").fill(currentTotpFromHex(platformE2EAdminTotpSecret.toString("hex")));
   await page.getByRole("button", { name: "确认并登录" }).click();
-  await expect(page.getByRole("heading", { name: "可访问项目" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 }
 
 async function jsonRequest(page: Page, path: string, method: string, body?: unknown, csrfToken?: string) {

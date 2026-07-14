@@ -26,7 +26,7 @@
     "platform:bootstrap-admin": "node --env-file=infra/local/.env.example --import tsx src/server/commands/bootstrapAdmin.ts",
     "platform:jobs": "node --env-file=infra/local/.env.example --import tsx src/server/platform/jobs/jobDiagnosticsCli.ts",
     "test:platform:unit": "node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/platform src/server/modules/identity src/shared/contracts",
-    "test:platform:integration": "node scripts/run-with-timeout.mjs 60000 node --env-file=infra/local/.env.example node_modules/vitest/vitest.mjs run --config vitest.platform.integration.config.ts",
+    "test:platform:integration": "node scripts/run-with-timeout.mjs 180000 node --env-file=infra/local/.env.example node_modules/vitest/vitest.mjs run --config vitest.platform.integration.config.ts",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest",
     "icons:generate": "node scripts/generateAppIcons.mjs",

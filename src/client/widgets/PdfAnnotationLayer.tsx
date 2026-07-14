@@ -3,7 +3,8 @@ import type {
   ApprovalAnnotation,
   ApprovalAnnotationColor,
   ApprovalAnnotationInput
-} from "../api.ts";
+} from "../features/pdf-studio/annotationTypes.ts";
+import type { ApprovalAnnotationId } from "../features/pdf-studio/annotationTypes.ts";
 import type { AnnotationResizeHandle, AnnotationTool } from "./PdfAnnotationWorkspace.tsx";
 import {
   annotationBounds,
@@ -66,7 +67,7 @@ export function PdfAnnotationLayer({
   readOnly: boolean;
   onDraftAnnotation?: (annotation: ApprovalAnnotationInput, anchor: AnnotationDraftAnchor) => void;
   onSelectAnnotation?: (annotation: ApprovalAnnotation) => void;
-  selectedAnnotationId?: number | null;
+  selectedAnnotationId?: ApprovalAnnotationId | null;
   onUpdateAnnotationGeometry?: (annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) => void;
 }) {
   const layerRef = useRef<HTMLDivElement | null>(null);

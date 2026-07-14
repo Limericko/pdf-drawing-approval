@@ -30,12 +30,14 @@ test("平台身份、安全激活和一次性恢复码形成完整闭环", async
   await page.getByRole("button", { name: "确认并登录" }).click();
   const mfaResponse = await mfaResponsePromise;
   expectNoStore(mfaResponse);
-  await expect(page.getByRole("heading", { name: "可访问项目" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "暂无可访问项目" })).toBeVisible();
   expect((await page.context().cookies()).some(({ name, httpOnly, sameSite }) =>
     name === "platform_session" && httpOnly && sameSite === "Lax")).toBe(true);
   await expectCriticalAxeClean(page);
   await expectNoHorizontalOverflow(page);
 
+  await page.getByRole("link", { name: "项目与成员" }).click();
+  await expect(page.getByRole("heading", { name: "可访问项目" })).toBeVisible();
   const projectName = `E2E 精密图纸 ${platform.runId.slice(0, 8)}`;
   const projectResponsePromise = waitForPost(page, "/api/v2/projects");
   await page.getByLabel("项目名称").fill(projectName);
@@ -129,6 +131,9 @@ async function completeUiLogin(page: Page, email: string, password: string, code
   const response = waitForPost(page, "/api/v2/auth/mfa/complete");
   await page.getByRole("button", { name: "确认并登录" }).click();
   expect((await response).status()).toBe(200);
+  await page.evaluate(() => { location.hash = "#/workspace"; });
+  await expect(page.getByRole("heading", { name: "任务中心" })).toBeVisible();
+  await page.getByRole("link", { name: "项目与成员" }).click();
   await expect(page.getByRole("heading", { name: "可访问项目" })).toBeVisible();
 }
 

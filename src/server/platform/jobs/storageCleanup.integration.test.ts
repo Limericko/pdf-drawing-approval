@@ -32,7 +32,7 @@ beforeAll(async () => {
   web = createPlatformPool({ connectionString: database.urls.web, poolMax: 2, connectTimeoutMs: 2_000, queryTimeoutMs: 2_000, lockTimeoutMs: 1_000, transactionTimeoutMs: 5_000 }, "late-upload-test");
 });
 afterAll(async () => { await web?.end(); await worker?.end(); await database?.dispose(); });
-beforeEach(async () => { await migration.query("TRUNCATE platform.storage_objects"); });
+beforeEach(async () => { await migration.query("TRUNCATE platform.storage_objects CASCADE"); });
 
 describe("storage cleanup handler", () => {
   it("moves stale staging to delete_pending before external delete and is reentrant when the object is missing", async () => {

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 const configArgs = ["test", "--config", "playwright.platform.config.ts"];
 const defaultGroups = Object.freeze([
   ["--project=desktop-chromium", "e2e/platform/identity-security.spec.ts"],
-  ["--project=desktop-chromium", "e2e/platform/session-csrf.spec.ts", "e2e/platform/project-access.spec.ts"],
+  ["--project=desktop-chromium", "e2e/platform/session-csrf.spec.ts", "e2e/platform/project-access.spec.ts",
+    "e2e/platform/business-workflow.spec.ts"],
   ["--project=mobile-chromium", "e2e/platform/identity-security.spec.ts"]
 ]);
 const READY_MARKER = "PLATFORM_E2E_READY ";

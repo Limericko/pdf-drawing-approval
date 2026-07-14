@@ -1,5 +1,23 @@
 export type AuditResult = "success" | "failure" | "denied" | "error";
-export type AuditMetadataKey = "reason" | "ipPrefix" | "userAgent" | "projectId" | "documentId" | "sessionId" | "mfaMethod";
+export type AuditMetadataKey =
+  | "reason"
+  | "ipPrefix"
+  | "userAgent"
+  | "projectId"
+  | "documentId"
+  | "revisionId"
+  | "approvalId"
+  | "issueId"
+  | "partId"
+  | "sessionId"
+  | "jobId"
+  | "backupRunId"
+  | "mfaMethod"
+  | "reviewerRole"
+  | "oldStatus"
+  | "newStatus"
+  | "provider"
+  | "count";
 export type AuditMetadataValue = string | number | boolean | null;
 export type AuditMetadata = Readonly<Partial<Record<AuditMetadataKey, AuditMetadataValue>>>;
 

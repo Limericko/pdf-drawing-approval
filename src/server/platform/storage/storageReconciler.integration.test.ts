@@ -43,7 +43,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await migration.query(
-    "TRUNCATE platform.test_storage_refs, platform.test_cleanup_intents, platform.storage_objects"
+    "TRUNCATE platform.test_storage_refs, platform.test_cleanup_intents, platform.storage_objects CASCADE"
   );
 });
 
@@ -80,6 +80,24 @@ async function insertObject(status: "staging" | "ready" | "delete_pending", crea
 }
 
 describe("StorageReconciler", () => {
+  it("quarantines only aged ready objects with no business reference", async () => {
+    const orphan = await insertObject("ready", new Date("2026-07-10T00:00:00.000Z"));
+    const recent = await insertObject("ready", new Date("2026-07-11T18:00:00.000Z"));
+    const publisher = new RecordingPublisher();
+    const reconciler = new StorageReconciler({ transactionRunner,
+      createRepository: (executor) => new PostgresStorageObjectRepository(executor), publisher,
+      clock: () => new Date("2026-07-12T00:00:00.000Z"), batchSize: 10,
+      orphanReadyGraceMs: 24 * 60 * 60_000 });
+
+    await expect(reconciler.runOnce()).resolves.toMatchObject({ published: 1, orphaned: 1 });
+    await expect(new PostgresStorageObjectRepository(web).findById(orphan))
+      .resolves.toMatchObject({ status: "delete_pending" });
+    await expect(new PostgresStorageObjectRepository(web).findById(recent))
+      .resolves.toMatchObject({ status: "ready" });
+    expect(publisher.intents).toEqual([expect.objectContaining({ storageObjectId: orphan,
+      expectedStatus: "delete_pending" })]);
+  });
+
   it("alternates staging and delete_pending priority when batchSize is one", async () => {
     await insertObject("staging", new Date("2026-01-01T00:00:00.000Z"));
     await insertObject("delete_pending", new Date("2026-01-01T00:00:00.000Z"));

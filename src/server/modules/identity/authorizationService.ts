@@ -45,7 +45,8 @@ export function createAuthorizationService(options: { readonly pool: PlatformPoo
       try {
         const access = await new PostgresProjectRepository(options.pool).findAccessByIdForMember(projectId, userId);
         if (!access) throw notFound();
-        return Object.freeze(projectAccess(access));
+        const members = await new PostgresProjectRepository(options.pool).listMembers(projectId);
+        return Object.freeze({ ...projectAccess(access), members });
       } catch (error) {
         if (error instanceof AuthorizationServiceError) throw error;
         throw dependencyUnavailable(error);

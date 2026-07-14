@@ -16,7 +16,8 @@ import { currentBrowserIdentityRoute, disposeBrowserIdentityRoute } from "./iden
 import { initialIdentityState, transitionIdentity, type IdentityEvent, type IdentityState } from "./identityState.ts";
 import { InvitationAcceptancePage, type InvitationQrCode } from "./InvitationAcceptancePage.tsx";
 import { MfaChallengePage } from "./MfaChallengePage.tsx";
-import { PlatformAccessPage, type PlatformAccessContext } from "./PlatformAccessPage.tsx";
+import type { PlatformAccessContext } from "./PlatformAccessPage.tsx";
+import { PlatformWorkspace } from "../workspace/PlatformWorkspace.tsx";
 import { PlatformLoginPage } from "./PlatformLoginPage.tsx";
 import { RecoveryCodesPage } from "./RecoveryCodesPage.tsx";
 import { focusPlatformError, focusPlatformHeading } from "./platformFocus.ts";
@@ -107,8 +108,7 @@ export async function createInvitationQrCode(
     return QRCode.toDataURL(value, {
     errorCorrectionLevel: "M",
     margin: 2,
-    width: 220,
-    color: { dark: "#121d26", light: "#ffffff" }
+    width: 220
     });
   }
 ): Promise<InvitationQrCode> {
@@ -317,6 +317,11 @@ export function PlatformIdentityApp() {
     });
   }
 
+  if (state.status === "signedIn" && accessContext) {
+    return <PlatformWorkspace user={state.user} context={accessContext} logoutBusy={busy}
+      logoutError={error} onLogout={signOut} />;
+  }
+
   return <PlatformFrame step={stepForState(state)} surfaceRef={surfaceRef}>
     {state.status === "loading" ? <div className="platform-panel platform-panel--narrow" aria-busy="true">
       <p className="platform-kicker">安全入口</p><h1 tabIndex={-1}>正在确认身份</h1><p>请稍候，正在读取安全会话。</p></div> : null}
@@ -330,8 +335,6 @@ export function PlatformIdentityApp() {
     {state.status === "showingRecoveryCodes" ? <RecoveryCodesPage recoveryCodes={state.recoveryCodes}
       acknowledged={recoveryAcknowledged} onAcknowledgedChange={setRecoveryAcknowledged}
       onContinue={() => recoveryAcknowledged && dispatch({ type: "recoveryCodesAcknowledged" })} /> : null}
-    {state.status === "signedIn" && accessContext ? <PlatformAccessPage user={state.user} context={accessContext}
-      logoutBusy={busy} logoutError={error} onLogout={signOut} /> : null}
     {state.status === "fatalError" ? <div className="platform-panel platform-panel--narrow">
       <p className="platform-kicker">安全入口</p><h1 tabIndex={-1}>暂时无法继续</h1>
       <InlineAlert tone="danger">安全流程未能完成。请刷新页面重试，持续失败时联系管理员。</InlineAlert>

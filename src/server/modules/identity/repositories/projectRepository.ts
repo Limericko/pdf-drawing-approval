@@ -23,11 +23,22 @@ export type ProjectAccessRecord = {
   readonly membership: ProjectMember;
 };
 
+export type ProjectMemberSummary = {
+  readonly membershipId: string;
+  readonly userId: string;
+  readonly emailNormalized: string;
+  readonly displayName: string;
+  readonly role: ProjectMemberRole;
+  readonly status: ProjectMemberStatus;
+  readonly updatedAt: Date;
+};
+
 export interface ProjectRepository {
   create(input: CreateProjectInput): Promise<CreateProjectResult>;
   addMember(input: AddProjectMemberInput): Promise<ProjectMember>;
   listForMember(requesterUserId: string): Promise<readonly ProjectAccessRecord[]>;
   findAccessByIdForMember(projectId: string, requesterUserId: string): Promise<ProjectAccessRecord | undefined>;
   findByIdForMember(projectId: string, requesterUserId: string): Promise<Project | undefined>;
+  listMembers(projectId: string): Promise<readonly ProjectMemberSummary[]>;
   lockActiveProjectForInvitation(projectId: string, inviterUserId: string): Promise<boolean>;
 }

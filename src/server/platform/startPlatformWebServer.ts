@@ -5,14 +5,25 @@ import type { QueryConfig, QueryResultRow } from "pg";
 import { createAuthenticationService } from "../modules/identity/authenticationService.ts";
 import { createAuthorizationService } from "../modules/identity/authorizationService.ts";
 import { createInvitationService } from "../modules/identity/invitationService.ts";
+import { createApprovalService } from "../modules/approvals/approvalService.ts";
+import { createTaskService } from "../modules/tasks/taskService.ts";
+import { createPdmService } from "../modules/pdm/pdmService.ts";
+import { createSignatureService } from "../modules/signatures/signatureService.ts";
+import { createIssueService } from "../modules/issues/issueService.ts";
+import { createAdministrationService } from "../modules/administration/administrationService.ts";
+import { createPrintArchiveService } from "../modules/approvals/printArchiveService.ts";
 import { createSessionService } from "./security/sessionService.ts";
 import { loadPlatformConfig } from "./config/loadPlatformConfig.ts";
 import type { WebPlatformConfig } from "./config/types.ts";
 import { loadMigrationFiles, type MigrationFile } from "./database/migrationFiles.ts";
 import { createPlatformPool, type PlatformPool } from "./database/pool.ts";
 import type { QueryExecutor } from "./database/queryExecutor.ts";
+import { withTransaction } from "./database/transaction.ts";
 import { assertExpectedSchema } from "./database/schemaVersion.ts";
 import { createStorage } from "./storage/createStorage.ts";
+import { StorageObjectService } from "./storage/storageObjectService.ts";
+import { PostgresStorageObjectRepository } from "./storage/postgres/PostgresStorageObjectRepository.ts";
+import { createStorageAccessService } from "./storage/storageAccessService.ts";
 import type { StorageAdapter } from "./storage/storageAdapter.ts";
 import { createPlatformEmergencySink, createPlatformSecurityLogger, createPlatformServer,
   type CreatePlatformServerOptions } from "./server.ts";
@@ -57,7 +68,8 @@ type StartPlatformDependencies = {
     readonly queryTimeoutMs: number;
   }) => Promise<void>;
   readonly createStorage: (config: WebPlatformConfig["storage"]) => StorageAdapter;
-  readonly createServices: (config: WebPlatformConfig, pool: PlatformPool, logger: PlatformLogger) => PlatformServices;
+  readonly createServices: (config: WebPlatformConfig, pool: PlatformPool, logger: PlatformLogger,
+    storage: StorageAdapter) => PlatformServices;
   readonly createApp: (options: CreatePlatformServerOptions) => Express;
 };
 
@@ -97,7 +109,7 @@ export async function startPlatformWebServer(
     );
     storage = dependencies.createStorage(config.storage);
     await runStartupGate((signal) => storage!.checkHealth({ signal }), "PLATFORM_STARTUP_STORAGE_TIMEOUT");
-    const services = dependencies.createServices(config, pool, logger);
+    const services = dependencies.createServices(config, pool, logger, storage);
     const app = dependencies.createApp({
       config,
       services,
@@ -148,8 +160,23 @@ const defaultDependencies: StartPlatformDependencies = {
   createApp: createPlatformServer
 };
 
-function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: PlatformLogger): PlatformServices {
+function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: PlatformLogger,
+  storage: StorageAdapter): PlatformServices {
+  const storageObjects = new StorageObjectService({
+    storage,
+    transactionRunner: (callback) => withTransaction(pool, callback),
+    createRepository: (executor) => new PostgresStorageObjectRepository(executor)
+  });
   return Object.freeze({
+    approvals: createApprovalService({ pool }),
+    tasks: createTaskService({ pool }),
+    pdm: createPdmService({ pool }),
+    signatures: createSignatureService({ pool }),
+    issues: createIssueService({ pool }),
+    administration: createAdministrationService({ pool, storageHealth: () => storage.checkHealth() }),
+    printArchive: createPrintArchiveService({ pool }),
+    storageObjects,
+    storageAccess: createStorageAccessService({ pool, storageObjects }),
     authentication: createAuthenticationService({
       pool,
       keyrings: { totpEncryption: config.keyrings.totpEncryption, recoveryHmac: config.keyrings.recoveryHmac },

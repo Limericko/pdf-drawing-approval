@@ -11,7 +11,8 @@ import type {
   ApprovalAnnotationColor,
   ApprovalAnnotationInput,
   ApprovalAnnotationKind
-} from "../api.ts";
+} from "../features/pdf-studio/annotationTypes.ts";
+import type { ApprovalAnnotationId } from "../features/pdf-studio/annotationTypes.ts";
 import { PdfAnnotationLayer, type AnnotationDraftAnchor, type RatioPoint } from "./PdfAnnotationLayer.tsx";
 import {
   createPdfViewportWheelHandler,
@@ -75,7 +76,7 @@ export function PdfAnnotationWorkspace({
   readOnly?: boolean;
   onDraftAnnotation?: (annotation: ApprovalAnnotationInput, anchor: AnnotationDraftAnchor) => void;
   onSelectAnnotation?: (annotation: ApprovalAnnotation) => void;
-  selectedAnnotationId?: number | null;
+  selectedAnnotationId?: ApprovalAnnotationId | null;
   annotationScrollRequest?: number;
   onUpdateAnnotationGeometry?: (annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) => void;
   onPageCountChange?: (pageCount: number) => void;
@@ -347,7 +348,7 @@ export function PdfAnnotationWorkspace({
   );
 }
 
-export function scrollAnnotationIntoView(workspace: HTMLElement | null, annotationId: number | null) {
+export function scrollAnnotationIntoView(workspace: HTMLElement | null, annotationId: ApprovalAnnotationId | null) {
   if (!workspace || annotationId === null) return;
   const marker = workspace.querySelector<HTMLElement>(`[data-annotation-id="${annotationId}"]`);
   if (!marker) return;
@@ -647,7 +648,7 @@ function PdfAnnotationPage({
   renderCanvas: boolean;
   onDraftAnnotation?: (annotation: ApprovalAnnotationInput, anchor: AnnotationDraftAnchor) => void;
   onSelectAnnotation?: (annotation: ApprovalAnnotation) => void;
-  selectedAnnotationId: number | null;
+  selectedAnnotationId: ApprovalAnnotationId | null;
   onUpdateAnnotationGeometry?: (annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);

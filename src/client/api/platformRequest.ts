@@ -29,6 +29,8 @@ export class PlatformRequestAbortError extends PlatformRequestError {
 export type PlatformRequestOptions<T> = {
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly json?: unknown;
+  readonly body?: BodyInit;
+  readonly contentType?: string;
   readonly csrfToken?: string;
   readonly responseSchema?: z.ZodType<T>;
   readonly signal?: AbortSignal;
@@ -36,9 +38,13 @@ export type PlatformRequestOptions<T> = {
 
 export async function platformRequest<T = undefined>(target: string, options: PlatformRequestOptions<T> = {}): Promise<T> {
   validateTarget(target);
+  if (options.json !== undefined && options.body !== undefined) {
+    throw new PlatformRequestError(0, "REQUEST_INPUT_INVALID", "", "Invalid request input");
+  }
   if (options.signal?.aborted) throw new PlatformRequestAbortError();
   const headers = new Headers({ Accept: "application/json" });
   if (options.json !== undefined) headers.set("Content-Type", "application/json");
+  if (options.body !== undefined) headers.set("Content-Type", options.contentType ?? "application/octet-stream");
   if (options.csrfToken) headers.set("X-CSRF-Token", options.csrfToken);
 
   let response: Response;
@@ -48,6 +54,7 @@ export async function platformRequest<T = undefined>(target: string, options: Pl
       credentials: "same-origin",
       headers: Object.fromEntries(headers.entries()),
       ...(options.json === undefined ? {} : { body: JSON.stringify(options.json) }),
+      ...(options.body === undefined ? {} : { body: options.body }),
       ...(options.signal ? { signal: options.signal } : {})
     });
   } catch (error) {

@@ -109,9 +109,9 @@ describe("SessionService", () => {
     const user = await createUser("active@example.test");
     const rawToken = "active-session-token";
     const session = await createSession(user.id, rawToken);
-    await migration.query(`UPDATE platform.sessions SET created_at=clock_timestamp()-interval '1 hour',
-      last_activity_at=clock_timestamp()-interval '6 minutes',last_touch_at=clock_timestamp()-interval '6 minutes'
-      WHERE id=$1`, [session.id]);
+    await migration.query(`UPDATE platform.sessions SET created_at=seed.now-interval '1 hour',
+      last_activity_at=seed.now-interval '6 minutes',last_touch_at=seed.now-interval '6 minutes'
+      FROM (SELECT clock_timestamp() AS now) seed WHERE id=$1`, [session.id]);
     const before = await sessionTimes(session.id);
 
     const results = await Promise.all([

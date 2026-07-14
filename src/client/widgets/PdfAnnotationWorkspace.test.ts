@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { ApprovalAnnotation } from "../api.ts";
+import type { ApprovalAnnotation } from "../features/pdf-studio/annotationTypes.ts";
 import {
   annotationBounds,
   annotationsForPage,

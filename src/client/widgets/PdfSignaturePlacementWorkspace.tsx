@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import type { SignaturePlacement, SignaturePlacementRole } from "../api.ts";
+import type { SignaturePlacement, SignaturePlacementRole } from "./signaturePlacementTypes.ts";
 import type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,

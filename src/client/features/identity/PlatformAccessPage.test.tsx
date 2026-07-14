@@ -4,6 +4,7 @@ import type { PlatformSessionContext } from "../../api/identityClient.ts";
 import * as platformAccessExports from "./PlatformAccessPage.tsx";
 import {
   PlatformAccessPage,
+  ProjectMemberDirectory,
   accessSuccessMessage,
   createProjectAccessLoader,
   createPlatformAccessController,
@@ -94,6 +95,23 @@ describe("PlatformAccessPage", () => {
   it("uses stable user-facing feedback after successful project and invitation actions", () => {
     expect(accessSuccessMessage("projectCreated")).toBe("项目已创建。");
     expect(accessSuccessMessage("invitationCreated")).toBe("邀请已创建并进入发送队列。");
+  });
+
+  it("renders auditable project member role and status controls for administrators", () => {
+    const membershipId = "01890f1e-9b4a-7cc2-8f00-000000000011";
+    const html = renderToStaticMarkup(<ProjectMemberDirectory busyMembershipId="" onSubmit={vi.fn()} members={[{
+      membershipId, userId: "01890f1e-9b4a-7cc2-8f00-000000000012", displayName: "工艺审核员",
+      emailNormalized: "process@example.test", role: "process", status: "active",
+      updatedAt: "2026-07-14T08:00:00.000Z"
+    }]} />);
+    expect(html).toContain("项目成员目录");
+    expect(html).toContain("工艺审核员");
+    expect(html).toContain('name="role"');
+    expect(html).toContain('value="process" selected=""');
+    expect(html).toContain('name="status"');
+    expect(html).toContain('name="reason"');
+    expect(html).toMatch(/<input[^>]*required=""[^>]*name="reason"/);
+    expect(html).toContain("保存");
   });
 
   it("surfaces a v2 project failure without invoking another request path or clearing the session", async () => {

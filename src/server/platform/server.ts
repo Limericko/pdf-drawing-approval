@@ -1,7 +1,16 @@
 import { writeSync } from "node:fs";
 import path from "node:path";
 import express, { type RequestHandler } from "express";
+import { createCsrfProtection } from "./security/csrf.ts";
 import { createIdentityRoutes } from "../modules/identity/routes/identityRoutes.ts";
+import { createApprovalRoutes } from "../modules/approvals/routes/approvalRoutes.ts";
+import { createTaskRoutes } from "../modules/tasks/routes/taskRoutes.ts";
+import { createPdmRoutes } from "../modules/pdm/routes/pdmRoutes.ts";
+import { createStorageRoutes } from "./storage/storageRoutes.ts";
+import { createSignatureRoutes } from "../modules/signatures/routes/signatureRoutes.ts";
+import { createIssueRoutes } from "../modules/issues/routes/issueRoutes.ts";
+import { createAdministrationRoutes } from "../modules/administration/routes/administrationRoutes.ts";
+import { createPrintArchiveRoutes } from "../modules/approvals/routes/printArchiveRoutes.ts";
 import { createErrorMiddleware, type EmergencySink } from "./http/errorMiddleware.ts";
 import { HttpProblem } from "./http/problemResponse.ts";
 import { requestContext } from "./http/requestContext.ts";
@@ -9,11 +18,30 @@ import { createPlatformHealthRouter, type PlatformHealthOptions } from "./health
 import type { WebPlatformConfig } from "./config/types.ts";
 
 type IdentityServices = Parameters<typeof createIdentityRoutes>[0]["services"];
+type ApprovalService = Parameters<typeof createApprovalRoutes>[0]["approvals"];
+type TaskService = Parameters<typeof createTaskRoutes>[0]["tasks"];
+type PdmService = Parameters<typeof createPdmRoutes>[0]["pdm"];
+type StorageObjectService = Parameters<typeof createStorageRoutes>[0]["storageObjects"];
+type StorageAccessService = Parameters<typeof createStorageRoutes>[0]["storageAccess"];
+type SignatureService = Parameters<typeof createSignatureRoutes>[0]["signatures"];
+type IssueService = Parameters<typeof createIssueRoutes>[0]["issues"];
+type AdministrationService = Parameters<typeof createAdministrationRoutes>[0]["administration"];
+type PrintArchiveService = Parameters<typeof createPrintArchiveRoutes>[0]["printArchive"];
 type SecurityLogger = Parameters<typeof createErrorMiddleware>[0]["logger"];
 
 export type CreatePlatformServerOptions = {
   readonly config: WebPlatformConfig;
-  readonly services: IdentityServices;
+  readonly services: IdentityServices & {
+    readonly approvals: ApprovalService;
+    readonly tasks: TaskService;
+    readonly pdm: PdmService;
+    readonly storageObjects: StorageObjectService;
+    readonly storageAccess: StorageAccessService;
+    readonly signatures: SignatureService;
+    readonly issues: IssueService;
+    readonly administration: AdministrationService;
+    readonly printArchive: PrintArchiveService;
+  };
   readonly health: PlatformHealthOptions;
   readonly logger: SecurityLogger;
   readonly emergencySink: EmergencySink;
@@ -60,6 +88,85 @@ export function createPlatformServer(options: CreatePlatformServerOptions) {
     csrfKeyring: options.config.keyrings.csrfHmac,
     services: options.services,
     logger: options.logger
+  }));
+  app.use("/api/v2/projects", createApprovalRoutes({
+    approvals: options.services.approvals,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/tasks", createTaskRoutes({
+    tasks: options.services.tasks,
+    sessions: options.services.sessions,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    }
+  }));
+  app.use("/api/v2/storage", createStorageRoutes({
+    storageObjects: options.services.storageObjects,
+    storageAccess: options.services.storageAccess,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/signature", createSignatureRoutes({
+    signatures: options.services.signatures,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/projects", createIssueRoutes({
+    issues: options.services.issues,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/administration", createAdministrationRoutes({
+    administration: options.services.administration,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/projects", createPrintArchiveRoutes({
+    printArchive: options.services.printArchive,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
+  }));
+  app.use("/api/v2/projects", createPdmRoutes({
+    pdm: options.services.pdm,
+    sessions: options.services.sessions,
+    publicBaseUrl: options.config.publicBaseUrl,
+    cookie: {
+      name: options.config.environment === "production" ? "__Host-pdf_approval_session" : "platform_session",
+      secure: options.config.session.cookieSecure
+    },
+    csrf: createCsrfProtection({ keyring: options.config.keyrings.csrfHmac })
   }));
   app.use("/api", (_request, _response, next) => {
     next(new HttpProblem(404, "ROUTE_NOT_FOUND", "Not found"));

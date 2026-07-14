@@ -15,7 +15,7 @@ describe("platform E2E command matrix", () => {
     expect(resolvePlatformE2ECommands([])).toEqual([
       [...prefix, "--project=desktop-chromium", "e2e/platform/identity-security.spec.ts"],
       [...prefix, "--project=desktop-chromium", "e2e/platform/session-csrf.spec.ts",
-        "e2e/platform/project-access.spec.ts"],
+        "e2e/platform/project-access.spec.ts", "e2e/platform/business-workflow.spec.ts"],
       [...prefix, "--project=mobile-chromium", "e2e/platform/identity-security.spec.ts"]
     ]);
   });

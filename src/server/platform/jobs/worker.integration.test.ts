@@ -34,7 +34,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await migration.query("TRUNCATE platform.jobs, platform.outbox_events, platform.worker_heartbeats, platform.storage_objects, platform.audit_events");
+  await migration.query("TRUNCATE platform.jobs, platform.outbox_events, platform.worker_heartbeats, platform.storage_objects, platform.audit_events CASCADE");
 });
 
 describe("leased worker", () => {
