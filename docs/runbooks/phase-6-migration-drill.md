@@ -25,6 +25,16 @@
 2. 旧 SQLite 配置中存在明文 SMTP 应用密码。正式上线前必须在邮件服务商侧撤销旧密码、生成新应用密码，并只写入 KMS Secrets Manager。
 3. 正式切换前重新创建在线快照并执行 `inventory`、文件 `preflight`、全量 `import`、`verify` 和最终 `delta`；本次结果只是演练基线。
 
+## 2026-07-14 迁移闭环实现进展
+
+- PostgreSQL 已增加迁移运行、稳定旧 ID 映射和文件版本映射表。
+- `legacy-migration` 容器入口已串联 `inventory → file preflight → import/delta → verify`。
+- 文件导入在登记数据库前执行写入结果、HEAD 大小和 GET 全量 SHA-256 回读校验。
+- 同一快照重复导入会复用稳定对象与业务 ID；本地 PostgreSQL + 文件对象存储的 `import → delta` 集成演练已通过。
+- 旧密码只用于生成不可登录的禁用标记，不作为公网密码迁移；账号以 `disabled`、MFA 未启用状态进入新平台。
+
+真实旧库仍因 3 个活动账号缺少已确认邮箱而禁止正式 import。代码和本地脱敏演练完成不等于真实数据迁移完成。
+
 ## 命令
 
 ```powershell

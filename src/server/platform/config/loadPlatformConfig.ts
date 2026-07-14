@@ -129,6 +129,14 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
   return config;
 }
 
+export function loadMigrationStorageConfig(env: NodeJS.ProcessEnv): PlatformStorageConfig {
+  const resolved = resolveSecretFileEnvironment(env, "migration");
+  const environment = resolveEnvironment(resolved.NODE_ENV);
+  const storage = loadStorageConfig(resolved);
+  if (environment === "production") assertProductionStorage(storage, resolved);
+  return storage;
+}
+
 function resolveEnvironment(value: string | undefined): PlatformEnvironment {
   if (value === undefined) return "development";
   if (value === "development" || value === "test" || value === "production") return value;

@@ -16,6 +16,9 @@ case "$target" in
   migration)
     exec node --import tsx src/server/platform/database/migrateCli.ts "$@"
     ;;
+  legacy-migration)
+    exec node --import tsx src/server/platform/migration/legacyMigrationCli.ts "$@"
+    ;;
   bootstrap-admin)
     exec node --import tsx src/server/commands/bootstrapAdmin.ts "$@"
     ;;
@@ -24,4 +27,3 @@ case "$target" in
     exit 64
     ;;
 esac
-

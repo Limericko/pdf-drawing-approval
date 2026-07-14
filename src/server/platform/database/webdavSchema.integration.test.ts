@@ -26,7 +26,7 @@ describe("Phase 5 WebDAV schema", () => {
   it("creates restricted connection, mapping, item and conflict relations", async () => {
     await withPlatformTestDatabase(async (database) => {
       const migration = database.createPool("migration");
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 9, verified: 0, total: 9 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 10, verified: 0, total: 10 });
       const tables = await migration.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables
          WHERE table_schema='platform' AND table_name=ANY($1::text[]) ORDER BY table_name`, [webDavTables]

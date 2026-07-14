@@ -16,7 +16,7 @@ describe("production secret materialization", () => {
     const result = await materializeProductionSecrets({ bundle: validBundle(), root,
       uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 });
 
-    expect(result).toEqual({ root, files: 17 });
+    expect(result).toEqual({ root, files: 19 });
     await expect(readFile(path.join(root, "web", "database-url.secret"), "utf8"))
       .resolves.toBe("postgresql://platform_web:strong-password@db.example/platform");
     await expect(readFile(path.join(root, "worker", "webdav-credentials.json"), "utf8"))
@@ -26,6 +26,8 @@ describe("production secret materialization", () => {
     await expect(stat(path.join(root, "web", "oss-access-key.secret"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(path.join(root, "web", "smtp-password.secret"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(path.join(root, "worker", "csrf-hmac-keyring.secret"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(path.join(root, "migration", "s3-secret-key.secret"), "utf8"))
+      .resolves.toBe("production-secret-key");
   });
 
   it("atomically replaces a complete bundle during rotation", async () => {

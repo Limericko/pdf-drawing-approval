@@ -26,7 +26,7 @@ const secretFields: Readonly<Record<PlatformProcessTarget, readonly string[]>> =
     "PDF_APPROVAL_SMTP_PASSWORD",
     "PDF_APPROVAL_INVITATION_HMAC_KEYRING"
   ]),
-  migration: Object.freeze(["PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL"]),
+  migration: Object.freeze(["PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL", ...commonStorageSecrets]),
   "bootstrap-admin": Object.freeze([
     "PDF_APPROVAL_PLATFORM_BOOTSTRAP_DATABASE_URL",
     "PDF_APPROVAL_TOTP_KEYRING",

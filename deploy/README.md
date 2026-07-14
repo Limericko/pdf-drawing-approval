@@ -27,7 +27,7 @@
 
 生产构建必须通过 `--build-arg NODE_IMAGE=node:24.12.0-bookworm-slim@sha256:<verified-digest>` 锁定基础镜像，并将最终镜像推入任意 OCI Registry。部署只接受 `repository@sha256:digest`，不接受可变标签。
 
-当前工作站无法稳定连接 Docker Hub，因此基础镜像 digest 锁定与真实容器门禁仍是上线前必做项；可使用任意可信 Registry 镜像缓存，不限定 ACR。
+默认 Node 基础镜像已经锁定到 2026-07-14 验证的 digest。生产镜像已在本地 Docker Desktop 完成真实构建，并验证 Web、Worker 和 migration 入口以 UID 10001、只读根文件系统、capability 全删除方式运行。正式发布仍须把应用镜像推送到可信 Registry、签名并以最终应用镜像 digest 部署；Registry 不限定 ACR。
 
 ## 对象存储
 
@@ -58,6 +58,30 @@ docker compose --env-file /etc/pdf-approval/production.env -f deploy/compose.pro
 ```
 
 反向代理或负载均衡只探测 `/health/ready`。主机 8080 端口只允许来自受控入口网络，不得直接暴露公网；Worker 不开放端口。
+
+## 旧系统迁移容器
+
+生产迁移使用同一镜像的 `legacy-migration` 入口。准备四个受控目录：
+
+- `database/legacy.sqlite`：在线一致快照，目录只读挂载。
+- `files/`：与快照同一时点的旧文件副本，目录只读挂载。
+- `config/roots.json`：旧绝对路径到容器 `/migration/input/files` 的映射。
+- `config/emails.json`：以旧用户数字 ID 为键的已确认正式邮箱；不得猜测或生成占位邮箱。
+- 每次运行使用一个新的空 `reports/run-NNN/` 输出目录。
+
+`roots.json` 示例：
+
+```json
+[{"legacyRoot":"E:\\PDF服务端\\pdf-approval","snapshotRoot":"/migration/input/files"}]
+```
+
+确认 `production.env` 中 `PDF_APPROVAL_LEGACY_*` 路径和稳定 `SOURCE_ID` 后执行：
+
+```sh
+docker compose --env-file /etc/pdf-approval/production.env -f deploy/compose.production.yaml --profile tools run --rm legacy-migration
+```
+
+首次使用 `PDF_APPROVAL_LEGACY_MODE=import`；最终停写快照使用 `delta`。工具会执行 SQLite 盘点、文件解析、上传、HEAD/GET 哈希回读、稳定 ID 映射、PostgreSQL 导入和计数校验。报告未显示 `eligibleForCutover=true` 时禁止切换。
 
 ## 编排平台映射
 

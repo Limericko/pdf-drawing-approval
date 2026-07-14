@@ -173,7 +173,8 @@ async function reserveArtifact(pool: PlatformPool, payload: FinalizePayload, id:
 
 async function markArtifactReady(pool: PlatformPool, artifactId: string, objectId: string, readyAt: Date) {
   const result = await pool.query(
-    `UPDATE platform.render_artifacts SET status='ready',object_id=$2,error_code=NULL,ready_at=$3,updated_at=$3
+    `UPDATE platform.render_artifacts SET status='ready',object_id=$2,error_code=NULL,
+       ready_at=GREATEST(created_at,$3),updated_at=GREATEST(created_at,$3)
      WHERE id=$1 AND status='processing'`, [artifactId, objectId, readyAt]
   );
   if (result.rowCount !== 1) throw transient("RENDER_STATE_CONFLICT");

@@ -14,6 +14,7 @@ describe("production deployment boundary", () => {
     expect(entrypoint).toMatch(/web\)[\s\S]*exec node --import tsx src\/server\/index\.ts/);
     expect(entrypoint).toMatch(/worker\)[\s\S]*exec node --import tsx src\/server\/platform\/jobs\/workerMain\.ts/);
     expect(entrypoint).toMatch(/migration\)[\s\S]*exec node --import tsx src\/server\/platform\/database\/migrateCli\.ts/);
+    expect(entrypoint).toMatch(/legacy-migration\)[\s\S]*exec node --import tsx src\/server\/platform\/migration\/legacyMigrationCli\.ts/);
     expect(entrypoint).toMatch(/bootstrap-admin\)[\s\S]*exec node --import tsx src\/server\/commands\/bootstrapAdmin\.ts/);
   });
 
@@ -30,6 +31,8 @@ describe("production deployment boundary", () => {
     expect(compose).toContain("PDF_APPROVAL_BOOTSTRAP_SECRET_DIR");
     expect(compose).toContain("PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS");
     expect(compose).toContain("s3-access-key.secret");
+    expect(compose).toContain("legacy-migration");
+    expect(compose).toContain("PDF_APPROVAL_LEGACY_SOURCE_ID");
     expect(compose).not.toContain("oss-access-key.secret");
     expect(compose).not.toContain("cn-hongkong");
     expect(healthcheck).toContain("/health/ready");

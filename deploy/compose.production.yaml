@@ -106,6 +106,50 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m
 
+  legacy-migration:
+    <<: *runtime
+    profiles: ["tools"]
+    restart: "no"
+    command:
+      - legacy-migration
+      - --database
+      - /migration/input/db/legacy.sqlite
+      - --source-id
+      - ${PDF_APPROVAL_LEGACY_SOURCE_ID:?set the stable legacy source id}
+      - --roots
+      - /migration/config/roots.json
+      - --emails
+      - /migration/config/emails.json
+      - --mode
+      - ${PDF_APPROVAL_LEGACY_MODE:-import}
+      - --output
+      - /migration/output/migration-report.json
+    environment:
+      <<: *common-environment
+      PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_MIGRATION_SECRET_DIR:?set the absolute migration secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_DATABASE_DIR:?set the directory containing legacy.sqlite}
+        target: /migration/input/db
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_FILES_DIR:?set the legacy file snapshot directory}
+        target: /migration/input/files
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_CONFIG_DIR:?set the directory containing roots.json and emails.json}
+        target: /migration/config
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_OUTPUT_DIR:?set a new empty report output directory}
+        target: /migration/output
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=1g
+
   bootstrap-admin:
     <<: *runtime
     profiles: ["tools"]

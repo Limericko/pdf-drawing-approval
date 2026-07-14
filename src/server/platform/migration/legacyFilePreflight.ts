@@ -8,7 +8,7 @@ import { PDFDocument } from "pdf-lib";
 const MAX_PDF_BYTES = 256 * 1024 * 1024;
 const MAX_PNG_BYTES = 8 * 1024 * 1024;
 
-type RootMapping = { readonly legacyRoot: string; readonly snapshotRoot: string };
+export type RootMapping = { readonly legacyRoot: string; readonly snapshotRoot: string };
 type Reference = { readonly table: string; readonly rowId: number; readonly column: string;
   readonly sourcePath: string; readonly mediaType: "application/pdf" | "image/png" };
 
@@ -21,6 +21,7 @@ export type LegacyFilePreflightReport = {
   readonly totalBytes: number;
   readonly files: readonly {
     readonly sourcePathSha256: string;
+    readonly rootIndex: number;
     readonly relativePath: string;
     readonly mediaType: "application/pdf" | "image/png";
     readonly sizeBytes: number;
@@ -100,7 +101,8 @@ export async function preflightLegacyFiles(input: {
       issues.push({ code: "FILE_MEDIA_INVALID", sourcePathSha256, referenceCount });
       continue;
     }
-    files.push({ sourcePathSha256, relativePath: mapped.relativePath, mediaType, sizeBytes: metadata.size,
+    files.push({ sourcePathSha256, rootIndex: mapped.rootIndex, relativePath: mapped.relativePath,
+      mediaType, sizeBytes: metadata.size,
       sha256: await hashFile(mapped.absolutePath), ...(validated.pageCount ? { pageCount: validated.pageCount } : {}),
       referenceCount });
   }
@@ -145,8 +147,9 @@ function discoverReferences(database: DatabaseSync) {
 
 async function validateRoots(value: unknown) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) invalid("roots");
-  const roots: { legacyRoot: string; snapshotRoot: string; flavor: typeof path.win32 | typeof path.posix }[] = [];
-  for (const candidate of value) {
+  const roots: { legacyRoot: string; snapshotRoot: string;
+    flavor: typeof path.win32 | typeof path.posix; rootIndex: number }[] = [];
+  for (const [rootIndex, candidate] of value.entries()) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
         Object.keys(candidate).sort().join(",") !== "legacyRoot,snapshotRoot") invalid("roots");
     const { legacyRoot, snapshotRoot } = candidate as Record<string, unknown>;
@@ -156,7 +159,7 @@ async function validateRoots(value: unknown) {
     if (!flavor) invalid("roots");
     const metadata = await lstat(snapshotRoot).catch(() => null);
     if (!metadata?.isDirectory() || metadata.isSymbolicLink()) invalid("roots");
-    roots.push({ legacyRoot: flavor.normalize(legacyRoot), snapshotRoot: path.normalize(snapshotRoot), flavor });
+    roots.push({ legacyRoot: flavor.normalize(legacyRoot), snapshotRoot: path.normalize(snapshotRoot), flavor, rootIndex });
   }
   return roots.sort((left, right) => right.legacyRoot.length - left.legacyRoot.length);
 }
@@ -171,7 +174,7 @@ function resolveMappedPath(sourcePath: string, roots: Awaited<ReturnType<typeof 
     const absolutePath = path.resolve(root.snapshotRoot, ...segments);
     const hostRelative = path.relative(root.snapshotRoot, absolutePath);
     if (!hostRelative || hostRelative === ".." || hostRelative.startsWith(`..${path.sep}`) || path.isAbsolute(hostRelative)) continue;
-    return { absolutePath, relativePath: segments.join("/") };
+    return { absolutePath, relativePath: segments.join("/"), rootIndex: root.rootIndex };
   }
   return null;
 }

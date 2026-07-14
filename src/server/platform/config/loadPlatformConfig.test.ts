@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadPlatformConfig } from "./loadPlatformConfig.ts";
+import { loadMigrationStorageConfig, loadPlatformConfig } from "./loadPlatformConfig.ts";
 import { PlatformConfigError } from "./types.ts";
 
 const webDatabaseUrl = "postgresql://platform_web:p%40ss%3Aword@db.example:5432/platform";
@@ -85,6 +85,19 @@ function productionWorkerEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessE
 }
 
 describe("loadPlatformConfig target composition", () => {
+  it("loads migration object storage without requiring worker SMTP settings", () => {
+    expect(loadMigrationStorageConfig({
+      NODE_ENV: "development",
+      PDF_APPROVAL_STORAGE_DRIVER: "s3",
+      PDF_APPROVAL_STORAGE_S3_ENDPOINT: "http://127.0.0.1:59000",
+      PDF_APPROVAL_STORAGE_S3_REGION: "us-east-1",
+      PDF_APPROVAL_STORAGE_S3_BUCKET: "pdf-approval",
+      PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "migration-access",
+      PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "migration-secret",
+      PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "true"
+    })).toEqual(expect.objectContaining({ driver: "s3", bucket: "pdf-approval" }));
+  });
+
   it("loads a filesystem-backed web config with secure session defaults", () => {
     const config = loadPlatformConfig(webEnv(), "web");
 

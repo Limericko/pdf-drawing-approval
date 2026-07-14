@@ -50,6 +50,8 @@ function validateBundle(input) {
     "worker/invitation-hmac-keyring.secret": JSON.stringify(keyrings.invitation),
     "worker/webdav-credentials.json": JSON.stringify(webdavCredentials),
     "migration/database-url.secret": database.migrationUrl,
+    "migration/s3-access-key.secret": storageAccessKey,
+    "migration/s3-secret-key.secret": storageSecretKey,
     "bootstrap/database-url.secret": database.bootstrapUrl,
     "bootstrap/totp-keyring.secret": JSON.stringify(keyrings.totp),
     "bootstrap/recovery-hmac-keyring.secret": JSON.stringify(keyrings.recovery)
