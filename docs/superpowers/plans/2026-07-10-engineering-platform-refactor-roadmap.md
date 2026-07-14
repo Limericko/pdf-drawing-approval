@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 将现有 Windows 局域网 PDF 审批系统分阶段重构为香港云端高可用的工程图纸协同平台，并在每个阶段交付可运行、可验证、可回退的软件。
+**Goal:** 将现有 Windows 局域网 PDF 审批系统分阶段重构为可部署到任意标准 Docker/OCI 环境的高可用工程图纸协同平台，并在每个阶段交付可运行、可验证、可回退的软件。中国香港是首选生产区域，不是应用技术约束。
 
 **Architecture:** 保留 React、TypeScript、Express 和 Electron，采用模块化单体、后台 Worker、PostgreSQL 和对象存储。重构按垂直业务链推进，旧系统持续服务到正式切换窗口；每条新链路通过测试和迁移门禁后删除对应旧分支。
 
@@ -19,20 +19,17 @@
 
 总规格包含七个可以独立交付的子系统。为避免一份数千行计划在前置重构后失真，详细计划按阶段生成：前一阶段验收通过后，读取真实代码和验证结果，再锁定下一阶段的文件与函数签名。
 
-当前已完成并可直接执行的详细计划：
+Phase 0–6 的详细计划均已生成并实施：
 
 - `docs/superpowers/plans/2026-07-10-refactor-phase-0-quality-baseline.md`
+- `docs/plans/2026-07-10-phase-1-cloud-data-security.md`
+- `docs/plans/2026-07-13-phase-2-ui-design-system-app-shell.md`
+- `docs/plans/2026-07-14-phase-3-pdf-review-workbench.md`
+- `docs/plans/2026-07-14-phase-4-approval-pdm-administration.md`
+- `docs/plans/2026-07-14-phase-5-webdav-controlled-bidirectional-sync.md`
+- `docs/plans/2026-07-14-phase-6-hong-kong-cloud-migration-cutover.md`
 
-后续计划文件在对应门禁处创建，文件名固定为：
-
-- `2026-07-10-refactor-phase-1-cloud-data-security.md`
-- `2026-07-10-refactor-phase-2-ui-system-app-shell.md`
-- `2026-07-10-refactor-phase-3-pdf-review-workbench.md`
-- `2026-07-10-refactor-phase-4-approval-pdm-modules.md`
-- `2026-07-10-refactor-phase-5-webdav-sync.md`
-- `2026-07-10-refactor-phase-6-migration-deployment-cutover.md`
-
-这不是“以后再想”的占位方式。每份后续计划有明确输入、输出和生成门禁；只有前置代码落地后，才可能给出可靠的精确行号、类型和测试命令。
+当前完成状态、最新验证证据和生产外部门禁统一记录在 `docs/refactor-completion-audit.md`。
 
 ## 2. Program Invariants
 
@@ -109,7 +106,7 @@
 
 ### Phase 1: Cloud, Data, and Security Foundation
 
-**Plan creation input:** Phase 0 已提供真实关键路径和测试 fixtures；用户已选择具体香港云供应商或明确只执行本地容器阶段。
+**Plan creation input:** Phase 0 已提供真实关键路径和测试 fixtures；平台基础保持云厂商中立，并先在本地容器依赖栈完成验证。
 
 **Deliverable:**
 
@@ -233,6 +230,6 @@
 - 高危安全问题未清零。
 - 故障演练无法达到已确认的 RPO/RTO。
 
-## 8. Immediate Execution
+## 8. Current Execution State
 
-下一步只执行 `2026-07-10-refactor-phase-0-quality-baseline.md`。Phase 0 不改变业务规则、数据库类型、认证方式或生产部署，只为后续重构建立可验证底座。
+Phase 0–5 已完成代码、自动化和真实浏览器门禁。Phase 6 已完成仓库内的通用镜像、Compose、密钥注入和迁移工具，并通过本地容器运行验收；正式生产资源、域名、镜像签名、迁移演练、滚动发布、故障切换和备份恢复仍必须在目标环境取得证据后，才能把 Phase 6 标记为“生产切换完成”。

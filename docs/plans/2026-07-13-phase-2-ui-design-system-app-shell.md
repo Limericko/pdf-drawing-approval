@@ -25,7 +25,7 @@
 
 - PDF Studio 画布、三栏工作台和问题状态机重构。
 - 审批、PDM、WebDAV 领域数据迁移。
-- SQLite 正式数据迁移、香港云资源创建或生产切换。
+- SQLite 正式数据迁移、目标云资源创建或生产切换。
 - Tailwind、shadcn、CSS-in-JS 或其他运行时 UI 框架。
 
 ## 不可破坏约束
