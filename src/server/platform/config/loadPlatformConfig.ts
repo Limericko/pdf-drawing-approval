@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { isTrustedProductionS3EndpointHostname } from "./trustedProductionS3Endpoint.ts";
 import { PlatformConfigError } from "./types.ts";
+import { resolveSecretFileEnvironment } from "./secretFileEnv.ts";
 import type {
   BootstrapPlatformConfig,
   FilesystemStorageConfig,
@@ -50,6 +51,7 @@ export function loadPlatformConfig<TTarget extends PlatformProcessTarget>(
 ): Extract<PlatformConfig, { target: TTarget }>;
 export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProcessTarget): PlatformConfig {
   if (!Object.hasOwn(databaseFields, target)) configInvalid("target");
+  env = resolveSecretFileEnvironment(env, target);
   const environment = resolveEnvironment(env.NODE_ENV);
   const database = loadDatabaseConfig(env, target);
 
