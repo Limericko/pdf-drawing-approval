@@ -77,14 +77,16 @@ export function createWebDavWorkerHandlers(options: {
       const capabilities = await client.probe();
       await options.pool.query(
         `UPDATE platform.webdav_connections SET credential_available=true,status='active',capabilities=$2,
-          last_checked_at=$3,last_error_code=NULL,version=version+1,updated_at=$3 WHERE id=$1`,
+          last_checked_at=GREATEST($3,created_at),last_error_code=NULL,version=version+1,
+          updated_at=GREATEST($3,created_at) WHERE id=$1`,
         [connectionId, capabilities, ownDate(clock())]
       );
     } catch (error) {
       const owned = asJobError(error, "WEBDAV_CONNECTION_TEST_FAILED");
       await options.pool.query(
-        `UPDATE platform.webdav_connections SET credential_available=$2,status='error',last_checked_at=$3,
-          last_error_code=$4,version=version+1,updated_at=$3 WHERE id=$1`,
+        `UPDATE platform.webdav_connections SET credential_available=$2,status='error',
+          last_checked_at=GREATEST($3,created_at),last_error_code=$4,version=version+1,
+          updated_at=GREATEST($3,created_at) WHERE id=$1`,
         [connectionId, !(error instanceof WebDavCredentialError), ownDate(clock()), owned.code]
       ).catch(() => undefined);
       throw owned;

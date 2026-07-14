@@ -261,7 +261,9 @@ function parsePayload(payload: unknown): FinalizePayload {
 
 function ownRenderError(error: unknown) {
   if (error instanceof JobHandlerError) return error;
-  return transient("PDF_RENDER_DEPENDENCY_UNAVAILABLE");
+  const owned = transient("PDF_RENDER_DEPENDENCY_UNAVAILABLE");
+  Object.defineProperty(owned, "cause", { value: error, enumerable: false });
+  return owned;
 }
 
 function permanent(code: string) {

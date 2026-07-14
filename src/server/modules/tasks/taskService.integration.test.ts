@@ -124,8 +124,8 @@ async function seedTasks() {
   );
   await migration.query(
     `INSERT INTO platform.drawing_revisions
-      (id,project_id,document_id,revision_code,original_object_id,status,material_code,created_by_user_id,submitted_at)
-     VALUES ($1,$2,$3,'A01',$4,'submitted','QT450-10',$5,clock_timestamp())`,
+      (id,project_id,document_id,revision_code,original_object_id,status,material_code,created_by_user_id,submitted_at,created_at)
+     VALUES ($1,$2,$3,'A01',$4,'submitted','QT450-10',$5,clock_timestamp(),clock_timestamp() - interval '1 second')`,
     [ids.revision, ids.project, ids.document, ids.storage, ids.designer]
   );
   await migration.query(

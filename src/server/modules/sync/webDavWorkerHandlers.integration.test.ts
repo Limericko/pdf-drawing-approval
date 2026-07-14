@@ -37,6 +37,27 @@ afterEach(async () => {
 });
 
 describe("Phase 5 WebDAV worker real HTTP loop", () => {
+  it("records a connection check even when the application clock is behind the database row", async () => {
+    await withHarness(async ({ migration, handlers }) => {
+      await migration.query(
+        `UPDATE platform.webdav_connections
+         SET created_at=clock_timestamp()+interval '1 second',
+             updated_at=clock_timestamp()+interval '1 second'
+         WHERE id=$1`,
+        [ids.connection]
+      );
+
+      await handlers.testConnection(job({ connectionId: ids.connection }));
+
+      await expect(migration.query(
+        `SELECT last_checked_at>=created_at AS valid_checked_at,
+                updated_at>=created_at AS valid_updated_at
+         FROM platform.webdav_connections WHERE id=$1`,
+        [ids.connection]
+      )).resolves.toMatchObject({ rows: [{ valid_checked_at: true, valid_updated_at: true }] });
+    });
+  });
+
   it("resumes an inbound PDF, imports once, and never propagates remote deletion", async () => {
     await withHarness(async ({ migration, handlers, fixture, stagingRoot, scheduler }) => {
       const pdf = await pdfBytes("inbound");
