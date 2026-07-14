@@ -28,6 +28,10 @@ describe("production deployment boundary", () => {
     expect(compose).toContain("PDF_APPROVAL_WORKER_SECRET_DIR");
     expect(compose).toContain("PDF_APPROVAL_MIGRATION_SECRET_DIR");
     expect(compose).toContain("PDF_APPROVAL_BOOTSTRAP_SECRET_DIR");
+    expect(compose).toContain("PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS");
+    expect(compose).toContain("s3-access-key.secret");
+    expect(compose).not.toContain("oss-access-key.secret");
+    expect(compose).not.toContain("cn-hongkong");
     expect(healthcheck).toContain("/health/ready");
     expect(compose).not.toMatch(/^\s+PDF_APPROVAL_(?:PLATFORM_.*DATABASE_URL|STORAGE_S3_SECRET_KEY|SMTP_PASSWORD):/m);
   });
@@ -41,6 +45,17 @@ describe("production deployment boundary", () => {
     expect(combined).not.toMatch(/postgresql:\/\/[^:\s]+:[^@\s]*[A-Za-z0-9]{16,}@/);
     expect(combined).not.toMatch(/AKID[A-Za-z0-9]{12,}/);
     expect(combined).not.toMatch(/-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/);
+  });
+
+  it("keeps the production package independent from a cloud vendor", async () => {
+    const combined = [
+      await source("deploy/compose.production.yaml"),
+      await source("deploy/production.env.example"),
+      await source("deploy/README.md")
+    ].join("\n");
+    expect(combined).not.toMatch(/registry\.cn-hongkong\.aliyuncs\.com|oss-cn-hongkong\.aliyuncs\.com/);
+    expect(combined).toContain("Docker/OCI");
+    expect(combined).toContain("S3");
   });
 });
 

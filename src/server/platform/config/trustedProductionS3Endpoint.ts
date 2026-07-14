@@ -25,14 +25,49 @@ const trustedS3ProviderPatterns: readonly TrustedS3ProviderPattern[] = [
 ];
 
 export function isTrustedProductionS3EndpointHostname(rawHostname: string) {
+  return isTrustedProductionS3EndpointHostnameWithAllowlist(rawHostname, []);
+}
+
+export function isTrustedProductionS3EndpointHostnameWithAllowlist(
+  rawHostname: string,
+  allowedHostnames: readonly string[]
+) {
   if (!isPublicEndpointHostname(rawHostname)) return false;
   const hostname = normalizePublicHostname(rawHostname);
-  if (isIP(hostname) !== 0) return true;
+  if (isIP(hostname) !== 0) return false;
   const asciiHostname = domainToASCII(hostname).toLowerCase();
-  return trustedS3ProviderPatterns.some(
+  return allowedHostnames.includes(asciiHostname) || trustedS3ProviderPatterns.some(
     ({ hostnamePattern, forbiddenHostnamePattern }) =>
       hostnamePattern.test(asciiHostname) && !forbiddenHostnamePattern.test(asciiHostname)
   );
+}
+
+export function parseProductionS3AllowedHostnames(rawValue: string | undefined) {
+  if (rawValue === undefined || rawValue.trim() === "") return [];
+  const rawHostnames = rawValue.split(",");
+  if (rawHostnames.length > 32) return null;
+  const hostnames: string[] = [];
+  for (const rawHostname of rawHostnames) {
+    const hostname = rawHostname.trim();
+    if (
+      hostname === "" ||
+      hostname !== rawHostname ||
+      hostname.includes("*") ||
+      hostname.includes(":") ||
+      hostname.includes("/") ||
+      hostname.includes("?") ||
+      hostname.includes("#") ||
+      hostname.endsWith(".") ||
+      isIP(hostname) !== 0 ||
+      !isPublicEndpointHostname(hostname)
+    ) {
+      return null;
+    }
+    const asciiHostname = domainToASCII(hostname).toLowerCase();
+    if (!asciiHostname || hostnames.includes(asciiHostname)) return null;
+    hostnames.push(asciiHostname);
+  }
+  return hostnames;
 }
 
 function normalizePublicHostname(hostname: string) {

@@ -629,6 +629,8 @@ describe("production security gates", () => {
     "https://not-s3.aliyuncs.com",
     "https://ec2.amazonaws.com",
     "https://bucket.vpce-0123456789abcdef.s3.ap-east-1.vpce.amazonaws.com",
+    "https://8.8.8.8",
+    "https://[2606:4700:4700::1111]",
     "https://[::1]",
     "https://[::ffff:127.0.0.1]",
     "https://[fc00::1]",
@@ -657,9 +659,7 @@ describe("production security gates", () => {
     "https://s3-ap-east-1.amazonaws.com",
     "https://oss-cn-hongkong.aliyuncs.com",
     "https://bucket.oss-cn-hongkong.aliyuncs.com",
-    "https://oss-accelerate.aliyuncs.com",
-    "https://8.8.8.8",
-    "https://[2606:4700:4700::1111]"
+    "https://oss-accelerate.aliyuncs.com"
   ])("accepts the public HTTPS production S3 endpoint %s", (endpoint) => {
     const config = loadPlatformConfig(
       workerEnv({
@@ -679,6 +679,56 @@ describe("production security gates", () => {
     expect(config.storage).toEqual(
       expect.objectContaining({ endpoint })
     );
+  });
+
+  it("accepts an exact allowlisted HTTPS hostname for any S3-compatible provider", () => {
+    const endpoint = "https://objects.vendor-storage.com";
+    const config = loadPlatformConfig(
+      workerEnv({
+        NODE_ENV: "production",
+        PDF_APPROVAL_SMTP_HOST: "smtp.example",
+        PDF_APPROVAL_SMTP_PORT: "465",
+        PDF_APPROVAL_SMTP_SECURE: "true",
+        PDF_APPROVAL_SMTP_USER: "mailer",
+        PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+        PDF_APPROVAL_STORAGE_S3_ENDPOINT: endpoint,
+        PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS: "objects.vendor-storage.com",
+        PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+        PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+      }),
+      "worker"
+    );
+
+    expect(config.storage).toEqual(expect.objectContaining({ endpoint }));
+  });
+
+  it.each([
+    "*.vendor-storage.com",
+    "https://objects.vendor-storage.com",
+    "objects.vendor-storage.com:443",
+    "objects.vendor-storage.com/path",
+    "127.0.0.1",
+    "10.0.0.10",
+    "objects.vendor-storage.com, objects2.vendor-storage.com",
+    "objects.vendor-storage.com,objects.vendor-storage.com"
+  ])("rejects invalid production S3 allowlist value %s", (allowedHosts) => {
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          NODE_ENV: "production",
+          PDF_APPROVAL_SMTP_HOST: "smtp.example",
+          PDF_APPROVAL_SMTP_PORT: "465",
+          PDF_APPROVAL_SMTP_SECURE: "true",
+          PDF_APPROVAL_SMTP_USER: "mailer",
+          PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+          PDF_APPROVAL_STORAGE_S3_ENDPOINT: "https://objects.vendor-storage.com",
+          PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS: allowedHosts,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "12345678",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "1234567890abcdef"
+        }),
+        "worker"
+      )
+    ).toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS");
   });
 
   it("enforces minimum S3 credential lengths in production", () => {

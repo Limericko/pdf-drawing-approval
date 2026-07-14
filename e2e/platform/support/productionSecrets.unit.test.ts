@@ -21,6 +21,9 @@ describe("production secret materialization", () => {
       .resolves.toBe("postgresql://platform_web:strong-password@db.example/platform");
     await expect(readFile(path.join(root, "worker", "webdav-credentials.json"), "utf8"))
       .resolves.toBe("{}");
+    await expect(readFile(path.join(root, "web", "s3-access-key.secret"), "utf8"))
+      .resolves.toBe("production-access-key");
+    await expect(stat(path.join(root, "web", "oss-access-key.secret"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(path.join(root, "web", "smtp-password.secret"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(path.join(root, "worker", "csrf-hmac-keyring.secret"))).rejects.toMatchObject({ code: "ENOENT" });
   });
@@ -83,4 +86,3 @@ function validBundle() {
 function keyring(byte: number) {
   return { currentVersion: "v1", keys: { v1: Buffer.alloc(32, byte).toString("base64") } };
 }
-

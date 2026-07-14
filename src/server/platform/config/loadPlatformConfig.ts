@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
-import { isTrustedProductionS3EndpointHostname } from "./trustedProductionS3Endpoint.ts";
+import {
+  isTrustedProductionS3EndpointHostnameWithAllowlist,
+  parseProductionS3AllowedHostnames
+} from "./trustedProductionS3Endpoint.ts";
 import { PlatformConfigError } from "./types.ts";
 import { resolveSecretFileEnvironment } from "./secretFileEnv.ts";
 import type {
@@ -97,7 +100,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       webdavCredentials: loadWebDavCredentials(env, environment),
       keyrings: { invitationHmac: invitationHmac.value }
     };
-    assertProductionWorker(config, invitationHmac);
+    assertProductionWorker(config, invitationHmac, env);
     return config;
   }
 
@@ -122,7 +125,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       csrfHmac: csrfHmac.value
     }
   };
-  assertProductionWeb(config, parsedKeyrings);
+  assertProductionWeb(config, parsedKeyrings, env);
   return config;
 }
 
@@ -384,16 +387,20 @@ function assertDistinctKeyrings(keyrings: ParsedKeyring[]) {
   }
 }
 
-function assertProductionWeb(config: WebPlatformConfig, keyrings: ParsedKeyring[]) {
+function assertProductionWeb(config: WebPlatformConfig, keyrings: ParsedKeyring[], env: NodeJS.ProcessEnv) {
   if (config.environment !== "production") return;
   if (!config.session.cookieSecure) insecure("PDF_APPROVAL_COOKIE_SECURE");
   if (!config.publicBaseUrl.startsWith("https://")) insecure("PDF_APPROVAL_PUBLIC_BASE_URL");
   assertProductionDatabase(config.database, databaseFields.web);
-  assertProductionStorage(config.storage);
+  assertProductionStorage(config.storage, env);
   assertProductionKeyrings(keyrings);
 }
 
-function assertProductionWorker(config: WorkerPlatformConfig, invitationHmac: ParsedKeyring) {
+function assertProductionWorker(
+  config: WorkerPlatformConfig,
+  invitationHmac: ParsedKeyring,
+  env: NodeJS.ProcessEnv
+) {
   if (config.environment !== "production") return;
   const host = config.smtp.host.toLowerCase();
   if (["127.0.0.1", "localhost", "::1", "mailpit"].includes(host) || [1025, 51025, 8025, 58025].includes(config.smtp.port)) {
@@ -406,7 +413,7 @@ function assertProductionWorker(config: WorkerPlatformConfig, invitationHmac: Pa
   if (isUnsafeText(config.smtp.password)) insecure("PDF_APPROVAL_SMTP_PASSWORD");
   if (!config.publicBaseUrl.startsWith("https://")) insecure("PDF_APPROVAL_PUBLIC_BASE_URL");
   assertProductionDatabase(config.database, databaseFields.worker);
-  assertProductionStorage(config.storage);
+  assertProductionStorage(config.storage, env);
   assertProductionKeyrings([invitationHmac]);
 }
 
@@ -415,10 +422,15 @@ function assertProductionDatabase(database: PlatformDatabaseConfig, field: strin
   if (isUnsafeText(database.connectionString) || isUnsafeText(safeDecode(url.password))) insecure(field);
 }
 
-function assertProductionStorage(storage: PlatformStorageConfig) {
+function assertProductionStorage(storage: PlatformStorageConfig, env: NodeJS.ProcessEnv) {
   if (storage.driver !== "s3") return;
   const endpoint = new URL(storage.endpoint);
-  if (endpoint.protocol !== "https:" || !isTrustedProductionS3EndpointHostname(endpoint.hostname)) {
+  const allowedHostnames = parseProductionS3AllowedHostnames(env.PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS);
+  if (allowedHostnames === null) configInvalid("PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS");
+  if (
+    endpoint.protocol !== "https:" ||
+    !isTrustedProductionS3EndpointHostnameWithAllowlist(endpoint.hostname, allowedHostnames)
+  ) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
   if (

@@ -20,12 +20,13 @@ x-common-environment: &common-environment
   PDF_APPROVAL_RUNTIME_MODE: platform
   PDF_APPROVAL_PUBLIC_BASE_URL: ${PDF_APPROVAL_PUBLIC_BASE_URL:?set the canonical HTTPS URL}
   PDF_APPROVAL_STORAGE_DRIVER: s3
-  PDF_APPROVAL_STORAGE_S3_ENDPOINT: ${PDF_APPROVAL_STORAGE_S3_ENDPOINT:-https://oss-cn-hongkong.aliyuncs.com}
-  PDF_APPROVAL_STORAGE_S3_REGION: cn-hongkong
-  PDF_APPROVAL_STORAGE_S3_BUCKET: ${PDF_APPROVAL_STORAGE_S3_BUCKET:?set the private OSS bucket}
-  PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "false"
-  PDF_APPROVAL_STORAGE_S3_ACCESS_KEY_FILE: /run/secrets/pdf-approval/oss-access-key.secret
-  PDF_APPROVAL_STORAGE_S3_SECRET_KEY_FILE: /run/secrets/pdf-approval/oss-secret-key.secret
+  PDF_APPROVAL_STORAGE_S3_ENDPOINT: ${PDF_APPROVAL_STORAGE_S3_ENDPOINT:?set the HTTPS S3-compatible endpoint}
+  PDF_APPROVAL_STORAGE_S3_REGION: ${PDF_APPROVAL_STORAGE_S3_REGION:?set the S3-compatible region}
+  PDF_APPROVAL_STORAGE_S3_BUCKET: ${PDF_APPROVAL_STORAGE_S3_BUCKET:?set the private S3-compatible bucket}
+  PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "${PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE:?set true or false for the provider}"
+  PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS: ${PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS:-}
+  PDF_APPROVAL_STORAGE_S3_ACCESS_KEY_FILE: /run/secrets/pdf-approval/s3-access-key.secret
+  PDF_APPROVAL_STORAGE_S3_SECRET_KEY_FILE: /run/secrets/pdf-approval/s3-secret-key.secret
   PDF_APPROVAL_INVITATION_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/invitation-hmac-keyring.secret
   PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: ${PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS:-}
 
@@ -122,4 +123,3 @@ services:
         read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m
-

@@ -181,13 +181,14 @@
 
 ### Phase 6: Migration, Deployment, and Cutover
 
-**Plan creation input:** 所有 v2 业务链路完成；香港云供应商、域名、预算、WebDAV 端点和维护窗口已确定。
+**Plan creation input:** 所有 v2 业务链路完成；目标 Docker/OCI 平台、区域、域名、预算、PostgreSQL、S3、WebDAV 端点和维护窗口已确定。
 
 **Deliverable:**
 
 - 可重复的 SQLite/PostgreSQL 与文件/对象存储迁移工具。
 - 数据计数、外键、哈希、PDF 可读性和异常报告。
-- 两可用区应用、负载均衡、托管 PostgreSQL、对象存储、WAF 和密钥管理。
+- 云厂商无关的镜像与 Compose，可运行在普通云服务器、托管容器或 Kubernetes；阿里云香港仅为可选适配层。
+- 两故障域应用、HTTPS 入口、高可用 PostgreSQL、S3 兼容对象存储、可选 WAF 和密钥管理。
 - 签名镜像、逐实例滚动发布和回退。
 - 迁移演练、故障演练、1 至 2 小时正式切换和稳定观察期。
 

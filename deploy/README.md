@@ -1,6 +1,20 @@
-# 中国香港生产运行包
+# 通用生产运行包
 
-本目录用于 Phase 6 阿里云中国香港部署。生产运行只有 PostgreSQL 和 OSS 两个业务真相；容器本地目录只保存可丢弃的临时数据。
+本目录是 Phase 6 的云厂商无关部署入口，可运行在任何符合标准的 Linux Docker/OCI 容器环境，包括普通云服务器、托管容器平台和 Kubernetes。中国香港仍可作为首选部署区域，阿里云只是可选适配方案，不是应用依赖。
+
+生产业务真相由 PostgreSQL 和 S3 兼容对象存储承载；容器本地目录只保存可丢弃的临时数据。SMTP、WebDAV 和 HTTPS 通过标准协议接入。
+
+## 可移植性边界
+
+运行环境只需提供：
+
+- 支持只读根文件系统、非 root 用户和健康检查的 Docker/OCI 运行时。
+- PostgreSQL 兼容数据库。
+- 具有 HTTPS 端点的 S3 兼容私有对象存储。
+- SMTP 服务、可选 WebDAV 服务及 HTTPS 入口。
+- 能把秘密以只读文件或标准输入交给容器的密钥管理方案。
+
+应用不要求阿里云 SDK、OSS 专属 API、ACR、KMS 或特定负载均衡。云厂商专属模板只允许放在 `deploy/providers/`，不得成为 Compose、镜像或迁移工具的必需路径。
 
 ## 镜像
 
@@ -11,15 +25,21 @@
 - `migration`：只执行 PostgreSQL expand/contract schema migration。
 - `bootstrap-admin`：仅空库首次管理员引导。
 
-生产构建必须通过 `--build-arg NODE_IMAGE=node:24.12.0-bookworm-slim@sha256:<verified-digest>` 锁定基础镜像，并将最终镜像推入阿里云香港 ACR。部署只接受 `repository@sha256:digest`，不接受可变标签。
+生产构建必须通过 `--build-arg NODE_IMAGE=node:24.12.0-bookworm-slim@sha256:<verified-digest>` 锁定基础镜像，并将最终镜像推入任意 OCI Registry。部署只接受 `repository@sha256:digest`，不接受可变标签。
 
-当前工作站无法连接 Docker Hub，因此仓库默认值暂时是固定版本标签；在 ACR 镜像缓存可用后，镜像 digest 锁定与真实容器门禁仍是上线前必做项。
+当前工作站无法稳定连接 Docker Hub，因此基础镜像 digest 锁定与真实容器门禁仍是上线前必做项；可使用任意可信 Registry 镜像缓存，不限定 ACR。
+
+## 对象存储
+
+`PDF_APPROVAL_STORAGE_S3_ENDPOINT`、`REGION`、`BUCKET` 和 `FORCE_PATH_STYLE` 都必须按实际 S3 兼容服务填写。AWS S3 与阿里云 OSS 公网域名内置识别；其他供应商必须把端点的精确 DNS 主机名加入 `PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS`。
+
+白名单只接受逗号分隔的精确公网 DNS 主机名，不接受通配符、URL、端口、路径、IP 地址、重复项或带额外空格的条目。生产端点始终要求 HTTPS。
 
 ## 密钥
 
-KMS Secrets Manager 中保存一个 JSON secret bundle，结构见 `secret-bundle.example.json`。不要把真实副本写入仓库、Terraform 变量或普通磁盘。
+在任意 Secrets Manager、Vault、KMS 配套密钥服务或受控主机流程中保存一个 JSON secret bundle，结构见 `secret-bundle.example.json`。不要把真实副本写入仓库、基础设施变量、普通磁盘或 Terraform state。
 
-受控主机初始化流程把 `GetSecretValue` 的 `SecretData` 直接通过标准输入传给：
+将秘密 JSON 通过标准输入传给：
 
 ```sh
 node deploy/materialize-secrets.mjs --root /run/pdf-approval-secrets --uid 10001 --gid 10001
@@ -37,10 +57,17 @@ docker compose --env-file /etc/pdf-approval/production.env -f deploy/compose.pro
 docker compose --env-file /etc/pdf-approval/production.env -f deploy/compose.production.yaml up -d web worker
 ```
 
-ALB 只探测 `/health/ready`。主机 8080 端口的安全组只能接受 ALB 安全组，不得直接暴露公网。Worker 不开放端口。
+反向代理或负载均衡只探测 `/health/ready`。主机 8080 端口只允许来自受控入口网络，不得直接暴露公网；Worker 不开放端口。
+
+## 编排平台映射
+
+- 普通云服务器：直接使用本目录的 Compose。
+- Kubernetes、Nomad、云厂商托管容器：把同一镜像、四个进程入口、环境变量和只读秘密挂载映射到平台原生对象。
+- 高可用生产：至少两个无状态 Web 实例、独立 Worker、托管 PostgreSQL、高可用 S3 兼容存储和 HTTPS 入口。
+
+应用镜像和数据库迁移不因编排平台或云厂商变化而改变。
 
 ## 已知外部门禁
 
-- Docker Hub 在当前工作站不可达，基础镜像尚未取得 digest；使用阿里云 ACR 缓存后补齐。
-- 正式域名、证书、阿里云账号、SMTP、WebDAV 和维护时间尚未提供。
-- 未完成真实阿里云资源创建、费用确认、KMS 拉取、镜像签名、滚动发布或故障演练前，禁止把本目录视为已上线证据。
+- 正式域名、证书、容器平台、PostgreSQL、S3、SMTP、WebDAV 和维护时间尚未提供。
+- 未完成目标环境资源创建、费用确认、秘密拉取、镜像签名、滚动发布或故障演练前，禁止把本目录视为已上线证据。
