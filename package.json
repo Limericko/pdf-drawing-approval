@@ -25,6 +25,8 @@
     "platform:worker": "node --env-file=infra/local/.env.example --import tsx src/server/platform/jobs/workerMain.ts",
     "platform:bootstrap-admin": "node --env-file=infra/local/.env.example --import tsx src/server/commands/bootstrapAdmin.ts",
     "platform:jobs": "node --env-file=infra/local/.env.example --import tsx src/server/platform/jobs/jobDiagnosticsCli.ts",
+    "migration:legacy:inventory": "node --import tsx scripts/migrate/legacyInventoryCli.ts",
+    "migration:legacy:snapshot": "node --import tsx scripts/migrate/legacySnapshotCli.ts",
     "test:platform:unit": "node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/platform src/server/modules/identity src/shared/contracts",
     "test:platform:integration": "node scripts/run-with-timeout.mjs 180000 node --env-file=infra/local/.env.example node_modules/vitest/vitest.mjs run --config vitest.platform.integration.config.ts",
     "test": "vitest run --config vitest.config.ts",
