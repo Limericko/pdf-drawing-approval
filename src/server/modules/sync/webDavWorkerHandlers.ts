@@ -20,6 +20,7 @@ import type { StorageAdapter } from "../../platform/storage/storageAdapter.ts";
 import { StorageObjectService } from "../../platform/storage/storageObjectService.ts";
 import { createWebDavClient, WebDavClientError } from "./webDavClient.ts";
 import { WebDavCredentialError, type WebDavCredentialProvider } from "./webDavCredentialProvider.ts";
+import { WebDavNetworkGuardError } from "./webDavNetworkGuard.ts";
 
 const MAX_PDF_BYTES = 256 * 1024 * 1024;
 const SCAN_LEASE_MS = 5 * 60 * 1000;
@@ -56,6 +57,7 @@ export function createWebDavWorkerHandlers(options: {
   readonly createId?: () => string;
   readonly clock?: () => Date;
   readonly fetch?: typeof fetch;
+  readonly validateEndpoint?: (url: URL) => Promise<void>;
 }) {
   if (!options?.pool || !options.storage || !options.credentials || !options.publisher ||
       typeof options.endpointPolicy !== "function" || !path.isAbsolute(options.stagingRoot)) {
@@ -537,7 +539,8 @@ async function clientFor(options: Parameters<typeof createWebDavWorkerHandlers>[
   try { endpoint = new URL(row.endpoint_url); } catch { throw permanent("WEBDAV_ENDPOINT_FORBIDDEN"); }
   if (!options.endpointPolicy(endpoint)) throw permanent("WEBDAV_ENDPOINT_FORBIDDEN");
   const credential = await options.credentials.get(row.credential_ref);
-  return createWebDavClient({ endpointUrl: row.endpoint_url, credential, fetch: options.fetch });
+  return createWebDavClient({ endpointUrl: row.endpoint_url, credential, fetch: options.fetch,
+    validateTarget: options.validateEndpoint });
 }
 
 async function findRevision(pool: PlatformPool, projectId: string, documentCode: string, revisionCode: string) {
@@ -699,6 +702,10 @@ function asJobError(error: unknown, fallback: string) {
   if (error instanceof WebDavClientError) return new JobHandlerError(error.kind, error.code, safeMessage(error.code));
   if (error instanceof WebDavCredentialError) {
     const kind = error.code === "WEBDAV_CREDENTIAL_SOURCE_UNAVAILABLE" ? "transient" : "permanent";
+    return new JobHandlerError(kind, error.code, safeMessage(error.code));
+  }
+  if (error instanceof WebDavNetworkGuardError) {
+    const kind = error.code === "WEBDAV_DNS_UNAVAILABLE" ? "transient" : "permanent";
     return new JobHandlerError(kind, error.code, safeMessage(error.code));
   }
   return transient(fallback, error);

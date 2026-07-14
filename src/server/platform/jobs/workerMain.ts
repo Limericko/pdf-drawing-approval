@@ -22,6 +22,7 @@ import { createWebDavEndpointPolicy } from "../../modules/sync/webDavEndpointPol
 import { createWebDavWorkerHandlers } from "../../modules/sync/webDavWorkerHandlers.ts";
 import { webDavEventRegistrations, webDavHandlerRegistrations } from "../../modules/sync/webDavJobRegistry.ts";
 import { WebDavScanScheduler } from "../../modules/sync/webDavScanScheduler.ts";
+import { createWebDavNetworkGuard } from "../../modules/sync/webDavNetworkGuard.ts";
 import { approvalCompletedEventRegistration, invitationEmailEventRegistration, JobRegistry,
   storageCleanupEventRegistration } from "./jobRegistry.ts";
 import { PostgresJobRepository } from "./postgres/PostgresJobRepository.ts";
@@ -120,7 +121,8 @@ async function runConfiguredWorkers(
     const webDavHandlers = createWebDavWorkerHandlers({ pool, storage,
       credentials: createWebDavCredentialProvider(config.webdavCredentials), publisher: postgresOutboxPublisher,
       endpointPolicy: createWebDavEndpointPolicy({ environment: config.environment,
-        allowedHosts: config.webdavAllowedHosts }), stagingRoot: config.webdavStagingRoot, clock });
+        allowedHosts: config.webdavAllowedHosts }), validateEndpoint: createWebDavNetworkGuard({
+          environment: config.environment }), stagingRoot: config.webdavStagingRoot, clock });
     const registry = new JobRegistry(
       [storageCleanupEventRegistration(config.worker.maxAttempts), invitationEmailEventRegistration(config.worker.maxAttempts),
         approvalCompletedEventRegistration(config.worker.maxAttempts), ...webDavEventRegistrations(config.worker.maxAttempts)],

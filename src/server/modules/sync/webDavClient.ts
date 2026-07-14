@@ -33,6 +33,7 @@ export function createWebDavClient(options: {
   readonly fetch?: typeof fetch;
   readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
+  readonly validateTarget?: (url: URL) => Promise<void>;
 }) {
   const base = ownEndpoint(options?.endpointUrl);
   const credential = ownCredential(options?.credential);
@@ -47,6 +48,7 @@ export function createWebDavClient(options: {
     for (let redirects = 0; redirects <= 3; redirects += 1) {
       let response: Response;
       try {
+        await options.validateTarget?.(target);
         response = await timedFetch(fetchImpl, target, {
           ...init,
           method,
