@@ -1,6 +1,6 @@
 import { Activity, ArrowUpRight, Circle, ClipboardCheck, Cloud, FileText, FolderKanban, MapPin,
-  MousePointer2, PackageSearch, Pencil, PenLine, Settings, Square, TriangleAlert, Type } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+  MousePointer2, PackageSearch, Pencil, PenLine, Settings, Square, TriangleAlert, Type, FolderSync } from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { getProjectAccess, type PlatformSessionContext } from "../../api/identityClient.ts";
 import { decideApproval, getApproval, listApprovals, submitDrawingRevision, uploadDocumentDraft } from "../../api/approvalClient.ts";
 import { createIssue, forceCloseIssue, getIssue, listIssues, reviewIssue, startIssue, submitIssue } from "../../api/issueClient.ts";
@@ -28,9 +28,11 @@ import { platformAnnotationToWorkspace, workspaceAnnotationToPlatform } from "..
 import { getDesktopPrintSettings, isDesktopClient, printSignedPdfWithDesktop } from "../../clientConfig.ts";
 import { toDesktopPrintOptions } from "../../printSettings.ts";
 
-type Route = { name: "tasks" | "drawings" | "issues" | "pdm" | "signature" | "projects" | "administration" } |
+type Route = { name: "tasks" | "drawings" | "issues" | "pdm" | "signature" | "projects" | "sync" | "administration" } |
   { name: "approval" | "issue" | "part"; id: string };
 type Project = PlatformSessionContext["projects"][number];
+const SyncCenterPage = lazy(() => import("../../pages/SyncCenterPage.tsx")
+  .then((module) => ({ default: module.SyncCenterPage })));
 const ANNOTATION_TOOLS: ReadonlyArray<{ value: AnnotationTool; label: string; icon: typeof MousePointer2 }> = [
   { value: "select", label: "选择", icon: MousePointer2 }, { value: "pin", label: "定位", icon: MapPin },
   { value: "rect", label: "矩形", icon: Square }, { value: "arrow", label: "箭头", icon: ArrowUpRight },
@@ -68,6 +70,7 @@ export function PlatformWorkspace({ user, context, logoutBusy, logoutError, onLo
     { id: "pdm", href: "#/workspace/pdm", label: "PDM 零件库", icon: PackageSearch },
     { id: "signature", href: "#/workspace/signature", label: "我的签名", icon: PenLine },
     { id: "projects", href: "#/workspace/projects", label: "项目与成员", icon: FolderKanban },
+    ...(admin ? [{ id: "sync", href: "#/workspace/sync", label: "同步中心", icon: FolderSync }] : []),
     ...(admin ? [{ id: "administration", href: "#/workspace/administration", label: "系统管理", icon: Settings }] : [])
   ];
   const current = route.name === "approval" || route.name === "issues" || route.name === "issue" ? "drawings" : route.name === "part" ? "pdm" : route.name;
@@ -89,9 +92,12 @@ export function PlatformWorkspace({ user, context, logoutBusy, logoutError, onLo
       {route.name === "projects" ? <PlatformAccessPage user={user} context={context} embedded
         logoutBusy={logoutBusy} logoutError={logoutError} onLogout={onLogout} /> : null}
       {route.name === "administration" && admin ? <AdministrationPage /> : null}
-      {route.name !== "projects" && route.name !== "administration" && !project ?
+      {route.name === "sync" && admin ? <Suspense fallback={<Skeleton lines={8} label="正在加载同步中心" />}>
+        <SyncCenterPage projects={context.projects} currentProjectId={projectId} />
+      </Suspense> : null}
+      {route.name !== "projects" && route.name !== "sync" && route.name !== "administration" && !project ?
         <EmptyState title="暂无可访问项目">请先在“项目与成员”创建项目，或联系管理员分配项目权限。</EmptyState> : null}
-      {route.name !== "projects" && route.name !== "administration" && project ? <>
+      {route.name !== "projects" && route.name !== "sync" && route.name !== "administration" && project ? <>
         {route.name === "tasks" ? <TaskPage project={project} /> : null}
         {route.name === "drawings" ? <DrawingPage project={project} /> : null}
         {route.name === "approval" ? <ApprovalPage project={project} approvalId={route.id} user={user} /> : null}
@@ -611,7 +617,8 @@ export function workspaceRoute(hash: string): Route {
   const part = /^\/workspace\/pdm\/([0-9a-f-]+)$/.exec(path); if (part) return { name: "part", id: part[1] };
   if (path === "/workspace/issues") return { name: "issues" };
   if (path === "/workspace/drawings") return { name: "drawings" }; if (path === "/workspace/pdm") return { name: "pdm" };
-  if (path === "/workspace/signature") return { name: "signature" }; if (path === "/workspace/administration") return { name: "administration" };
+  if (path === "/workspace/signature") return { name: "signature" }; if (path === "/workspace/sync") return { name: "sync" };
+  if (path === "/workspace/administration") return { name: "administration" };
   if (path === "/workspace/projects") return { name: "projects" };
   return { name: "tasks" };
 }
