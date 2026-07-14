@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApprovalIssue, User } from "../../api.ts";
-import { availableIssueActions, issueStatusLabels } from "./issuePresentation.ts";
+import { availableIssueActions, filterApprovalIssues, issueFilterPageNumbers, issueStatusLabels } from "./issuePresentation.ts";
 
 const issue = {
   id: 1,
@@ -32,6 +32,11 @@ function user(id: number, role: User["role"]): User {
 }
 
 describe("PDF Studio issue presentation", () => {
+  it("offers every PDF page while preserving annotation pages before the document is ready", () => {
+    expect(issueFilterPageNumbers(4, { 11: 2, 12: 7 })).toEqual([1, 2, 3, 4, 7]);
+    expect(issueFilterPageNumbers(0, { 12: 7 })).toEqual([7]);
+  });
+
   it("uses the four-stage Chinese lifecycle", () => {
     expect(Object.values(issueStatusLabels)).toEqual(["待处理", "处理中", "待复核", "已关闭"]);
   });
@@ -44,5 +49,24 @@ describe("PDF Studio issue presentation", () => {
 
   it("gives administrators the audited force-close path", () => {
     expect(availableIssueActions({ ...issue, status: "open" }, user(30, "admin"))).toEqual(["start", "force_close"]);
+  });
+
+  it("filters by lifecycle, severity, assignee and linked PDF page", () => {
+    const first = { ...issue, id: 1, status: "open" as const, severity: "high" as const, assigneeUserId: 20, annotationId: 101 };
+    const second = { ...issue, id: 2, status: "review" as const, severity: "medium" as const, assigneeUserId: 21, annotationId: 102 };
+    const pages = { 101: 1, 102: 7 };
+
+    expect(filterApprovalIssues([first, second], {
+      status: "review",
+      severity: "medium",
+      assigneeUserId: 21,
+      pageNumber: 7
+    }, pages)).toEqual([second]);
+    expect(filterApprovalIssues([first, second], {
+      status: "all",
+      severity: "high",
+      assigneeUserId: "all",
+      pageNumber: 7
+    }, pages)).toEqual([]);
   });
 });

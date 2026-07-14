@@ -14,6 +14,7 @@ test("PDF Studio satisfies all five responsive contracts and accessibility gate"
   test.skip(testInfo.project.name !== "desktop-chromium", "Five explicit widths are exercised in one desktop browser session.");
   test.setTimeout(90_000);
   await loginAs(page, "supervisor");
+  await page.evaluate(() => localStorage.removeItem("pdf-studio.inspector-width"));
   await page.getByRole("row", { name: /E2E项目.*E2E轴承座/ }).getByRole("link", { name: "查看" }).click();
   await expect(page.locator('canvas[aria-label^="PDF 第"]').first()).toBeVisible();
 
@@ -43,4 +44,28 @@ test("PDF Studio satisfies all five responsive contracts and accessibility gate"
       await page.getByTitle("关闭审阅检查器").click();
     }
   }
+});
+
+test("desktop inspector width is keyboard adjustable, bounded and persisted", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Resizable split pane is a desktop contract.");
+  await loginAs(page, "supervisor");
+  await page.evaluate(() => localStorage.removeItem("pdf-studio.inspector-width"));
+  await page.getByRole("row", { name: /E2E项目.*E2E轴承座/ }).getByRole("link", { name: "查看" }).click();
+  const inspector = page.getByRole("complementary", { name: "审阅检查器" });
+  const separator = page.getByRole("separator", { name: "调整审阅检查器宽度" });
+  await expect.poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0)).toBe(320);
+
+  await separator.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(separator).toHaveAttribute("aria-valuenow", "336");
+  await expect.poll(async () => Math.round((await inspector.boundingBox())?.width ?? 0)).toBe(336);
+  expect(await page.evaluate(() => localStorage.getItem("pdf-studio.inspector-width"))).toBe("336");
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "E2E项目 / E2E轴承座" })).toBeVisible();
+  await expect.poll(async () => Math.round((await page.getByRole("complementary", { name: "审阅检查器" }).boundingBox())?.width ?? 0)).toBe(336);
+  const restoredSeparator = page.getByRole("separator", { name: "调整审阅检查器宽度" });
+  await restoredSeparator.focus();
+  await page.keyboard.press("Home");
+  await expect(restoredSeparator).toHaveAttribute("aria-valuenow", "280");
 });

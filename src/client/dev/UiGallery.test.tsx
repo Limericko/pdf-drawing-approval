@@ -18,6 +18,8 @@ describe("UiGallery", () => {
     expect(markup).toContain("浮层与确认");
     expect(markup).toContain("页面壳层模式");
     expect(markup).toContain("数据展示与批量操作");
+    expect(markup).toContain("PDF 审阅工作台");
+    expect(markup).toContain("PDF Studio DS5 预览");
     expect(markup).toContain("加载状态");
     expect(markup).toContain("空状态");
     expect(markup).toContain("错误状态");
@@ -30,6 +32,6 @@ describe("UiGallery", () => {
     expect(markup).toContain("<header");
     expect(markup).toContain("<main");
     expect(markup).toContain("<section");
-    expect(markup).toContain("Phase 2 · DS0–DS4");
+    expect(markup).toContain("Phase 2–3 · DS0–DS5");
   });
 });

@@ -14,10 +14,13 @@ import { Select, TextArea, TextInput } from "../../ui/forms/index.tsx";
 import { InlineAlert } from "../../ui/feedback/index.tsx";
 import {
   availableIssueActions,
+  filterApprovalIssues,
+  issueFilterPageNumbers,
   issueActionLabel,
   issueActionNeedsNote,
   issueSeverityLabels,
-  issueStatusLabels
+  issueStatusLabels,
+  type ApprovalIssueFilters
 } from "./issuePresentation.ts";
 import styles from "./IssueInspector.module.css";
 
@@ -29,6 +32,8 @@ export function IssueInspector({
   issues,
   assignees,
   selectedAnnotation,
+  annotationPageById,
+  documentPageCount,
   busyAction,
   onCreate,
   onUpdate,
@@ -40,6 +45,8 @@ export function IssueInspector({
   issues: ApprovalIssue[];
   assignees: User[];
   selectedAnnotation: ApprovalAnnotation | null;
+  annotationPageById: Readonly<Record<number, number>>;
+  documentPageCount: number;
   busyAction: string;
   onCreate: (input: ApprovalIssueInput) => Promise<void>;
   onUpdate: (issue: ApprovalIssue, input: Partial<Omit<ApprovalIssueInput, "annotationId" | "clientRequestId">>) => Promise<void>;
@@ -53,6 +60,12 @@ export function IssueInspector({
   const [transitionNote, setTransitionNote] = useState("");
   const [editDraft, setEditDraft] = useState<IssueDraft | null>(null);
   const [events, setEvents] = useState<ApprovalIssueEvent[]>([]);
+  const [filters, setFilters] = useState<ApprovalIssueFilters>({
+    status: "all",
+    severity: "all",
+    assigneeUserId: "all",
+    pageNumber: "all"
+  });
   const [draft, setDraft] = useState<IssueDraft>(() => emptyDraft(selectedAnnotation?.id ?? null));
   const selectedIssue = issues.find((issue) => issue.id === selectedIssueId) ?? null;
   const openCount = issues.filter((issue) => issue.status !== "closed").length;
@@ -65,6 +78,19 @@ export function IssueInspector({
     { value: "", label: assignees.length ? "选择负责人" : "暂无可分配设计人员", disabled: true },
     ...assignees.map((assignee) => ({ value: String(assignee.id), label: assignee.displayName }))
   ], [assignees]);
+  const filterAssigneeOptions = useMemo(() => [
+    { value: "all", label: "全部负责人" },
+    ...assignees.map((assignee) => ({ value: String(assignee.id), label: assignee.displayName }))
+  ], [assignees]);
+  const pageOptions = useMemo(() => [
+    { value: "all", label: "全部页面" },
+    ...issueFilterPageNumbers(documentPageCount, annotationPageById)
+      .map((pageNumber) => ({ value: String(pageNumber), label: `第 ${pageNumber} 页` }))
+  ], [annotationPageById, documentPageCount]);
+  const filteredIssues = useMemo(
+    () => filterApprovalIssues(issues, filters, annotationPageById),
+    [issues, filters, annotationPageById]
+  );
 
   useEffect(() => {
     if (selectedAnnotation && creating) {
@@ -159,17 +185,21 @@ export function IssueInspector({
               onChange={(event) => setDraft({ ...draft, dueAt: event.target.value ? new Date(event.target.value).toISOString() : null })} />
             <div className={styles.formActions}><Button loading={busyAction === "issue-create"} onClick={() => void createIssue()}>创建正式问题</Button></div>
           </div> : null}
+          <IssueFilters filters={filters} assigneeOptions={filterAssigneeOptions} pageOptions={pageOptions}
+            onChange={(next) => { setFilters(next); setSelectedIssueId(null); }} />
           <div className={styles.list}>
-            {issues.map((issue) => <IssueListItem key={issue.id} issue={issue} selected={issue.id === selectedIssueId}
+            {filteredIssues.map((issue) => <IssueListItem key={issue.id} issue={issue} selected={issue.id === selectedIssueId}
               onSelect={() => { setSelectedIssueId(issue.id); setTransitionAction(null); setEditDraft(null); }} />)}
-            {issues.length === 0 ? <p className={styles.empty}>尚未创建正式问题</p> : null}
+            {filteredIssues.length === 0 ? <p className={styles.empty}>{issues.length === 0 ? "尚未创建正式问题" : "没有符合筛选条件的问题"}</p> : null}
           </div>
         </section> : <section className={styles.section}>
           <h3 className={styles.sectionTitle}>问题清单</h3>
+          <IssueFilters filters={filters} assigneeOptions={filterAssigneeOptions} pageOptions={pageOptions}
+            onChange={(next) => { setFilters(next); setSelectedIssueId(null); }} />
           <div className={styles.list}>
-            {issues.map((issue) => <IssueListItem key={issue.id} issue={issue} selected={issue.id === selectedIssueId}
+            {filteredIssues.map((issue) => <IssueListItem key={issue.id} issue={issue} selected={issue.id === selectedIssueId}
               onSelect={() => { setSelectedIssueId(issue.id); setTransitionAction(null); setEditDraft(null); }} />)}
-            {issues.length === 0 ? <p className={styles.empty}>尚未创建正式问题</p> : null}
+            {filteredIssues.length === 0 ? <p className={styles.empty}>{issues.length === 0 ? "尚未创建正式问题" : "没有符合筛选条件的问题"}</p> : null}
           </div>
         </section>}
 
@@ -254,6 +284,31 @@ export function IssueInspector({
       </div>
     </section>
   );
+}
+
+function IssueFilters({
+  filters,
+  assigneeOptions,
+  pageOptions,
+  onChange
+}: {
+  filters: ApprovalIssueFilters;
+  assigneeOptions: Array<{ value: string; label: string }>;
+  pageOptions: Array<{ value: string; label: string }>;
+  onChange: (filters: ApprovalIssueFilters) => void;
+}) {
+  return <div className={styles.filters} aria-label="正式问题筛选">
+    <Select id="issue-filter-status" label="状态" value={filters.status}
+      options={[{ value: "all", label: "全部状态" }, ...Object.entries(issueStatusLabels).map(([value, label]) => ({ value, label }))]}
+      onChange={(event) => onChange({ ...filters, status: event.target.value as ApprovalIssueFilters["status"] })} />
+    <Select id="issue-filter-severity" label="严重级" value={filters.severity}
+      options={[{ value: "all", label: "全部严重级" }, ...Object.entries(issueSeverityLabels).map(([value, label]) => ({ value, label }))]}
+      onChange={(event) => onChange({ ...filters, severity: event.target.value as ApprovalIssueFilters["severity"] })} />
+    <Select id="issue-filter-assignee" label="负责人" value={String(filters.assigneeUserId)} options={assigneeOptions}
+      onChange={(event) => onChange({ ...filters, assigneeUserId: event.target.value === "all" ? "all" : Number(event.target.value) })} />
+    <Select id="issue-filter-page" label="页面" value={String(filters.pageNumber)} options={pageOptions}
+      onChange={(event) => onChange({ ...filters, pageNumber: event.target.value === "all" ? "all" : Number(event.target.value) })} />
+  </div>;
 }
 
 function IssueListItem({ issue, selected, onSelect }: { issue: ApprovalIssue; selected: boolean; onSelect: () => void }) {

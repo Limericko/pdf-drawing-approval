@@ -21,6 +21,8 @@ export type E2eSeedResult = {
   watchRoot: string;
   pdfPath: string;
   approvalId: number;
+  longPdfPath: string;
+  longApprovalId: number;
 };
 
 export async function seedE2eData(rootDir: string): Promise<E2eSeedResult> {
@@ -29,6 +31,7 @@ export async function seedE2eData(rootDir: string): Promise<E2eSeedResult> {
   const signatureDir = path.join(dataDir, "signatures");
   const databasePath = path.join(dataDir, "pdf-approval.sqlite");
   const pdfPath = path.join(watchRoot, "E2E项目", "E2E轴承座-a0A0.pdf");
+  const longPdfPath = path.join(watchRoot, "E2E项目", "E2E长文档-a0A0.pdf");
   await fs.mkdir(path.dirname(pdfPath), { recursive: true });
   await fs.mkdir(signatureDir, { recursive: true });
 
@@ -39,6 +42,16 @@ export async function seedE2eData(rootDir: string): Promise<E2eSeedResult> {
   page.drawRectangle({ x: 120, y: 180, width: 420, height: 220, borderWidth: 2 });
   const pdfBytes = await pdf.save();
   await fs.writeFile(pdfPath, pdfBytes);
+
+  const longPdf = await PDFDocument.create();
+  const longFont = await longPdf.embedFont(StandardFonts.Helvetica);
+  for (let pageNumber = 1; pageNumber <= 12; pageNumber += 1) {
+    const longPage = longPdf.addPage([842, 595]);
+    longPage.drawText(`PDF APPROVAL LONG DRAWING PAGE ${pageNumber}`, { x: 60, y: 520, size: 20, font: longFont });
+    longPage.drawRectangle({ x: 80 + pageNumber * 3, y: 150, width: 500, height: 260, borderWidth: 2 });
+  }
+  const longPdfBytes = await longPdf.save();
+  await fs.writeFile(longPdfPath, longPdfBytes);
 
   const db = createDatabase(databasePath);
   try {
@@ -81,8 +94,34 @@ export async function seedE2eData(rootDir: string): Promise<E2eSeedResult> {
       materialCode: "E2EMAT0001",
       drawingName: "E2E轴承座"
     });
+    const longApproval = approvals.create({
+      projectName: "E2E项目",
+      partName: "E2E长文档",
+      version: "a0A0",
+      minorVersion: "a0",
+      majorVersion: "A0",
+      originalFilePath: longPdfPath,
+      currentFilePath: longPdfPath,
+      submittedBy: designer.username,
+      submittedByUserId: designer.id,
+      source: "web_upload",
+      originalFileHash: createHash("sha256").update(longPdfBytes).digest("hex"),
+      signatureStatus: "not_required",
+      documentCode: "E2EDOC0012",
+      materialCode: "E2EMAT0012",
+      drawingName: "E2E长文档"
+    });
 
-    return { rootDir, dataDir, databasePath, watchRoot, pdfPath, approvalId: approval.id };
+    return {
+      rootDir,
+      dataDir,
+      databasePath,
+      watchRoot,
+      pdfPath,
+      approvalId: approval.id,
+      longPdfPath,
+      longApprovalId: longApproval.id
+    };
   } finally {
     db.close();
   }

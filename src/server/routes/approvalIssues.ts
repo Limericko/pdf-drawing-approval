@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth.ts";
+import type { DatabaseConnection } from "../db.ts";
+import { approvalAnnotationSchema } from "./approvalAnnotations.ts";
 import type { ApprovalAnnotationRepository } from "../repositories/approvalAnnotations.ts";
 import type {
   ApprovalIssue,
@@ -11,6 +13,7 @@ import type { ApprovalRepository } from "../repositories/approvals.ts";
 import type { OperationLogRepository } from "../repositories/operationLogs.ts";
 import type { UserRepository } from "../repositories/users.ts";
 import type { ApprovalIssueEventHub } from "../services/approvalIssueEventHub.ts";
+import { createLinkedApprovalIssue } from "../services/approvalIssueLinking.ts";
 
 const issueCreateSchema = z.object({
   annotationId: z.number().int().positive().optional().nullable(),
@@ -28,6 +31,10 @@ const issueUpdateSchema = issueCreateSchema
   .extend({ expectedVersion: z.number().int().positive() })
   .refine((input) => Object.keys(input).length > 0);
 
+const linkedIssueCreateSchema = issueCreateSchema.omit({ annotationId: true }).extend({
+  annotation: approvalAnnotationSchema
+});
+
 const transitionSchema = z.object({
   action: z.enum(["start", "submit_review", "return", "close", "force_close"]),
   note: z.string().trim().max(4000).optional().nullable(),
@@ -35,9 +42,10 @@ const transitionSchema = z.object({
 });
 
 export function approvalIssueRoutes(deps: {
+  db: DatabaseConnection;
   approvals: ApprovalRepository;
   approvalIssues: ApprovalIssueRepository;
-  approvalAnnotations?: ApprovalAnnotationRepository;
+  approvalAnnotations: ApprovalAnnotationRepository;
   users: UserRepository;
   operationLogs?: OperationLogRepository;
   issueEventHub?: ApprovalIssueEventHub;
@@ -82,6 +90,49 @@ export function approvalIssueRoutes(deps: {
     res.json(deps.users.list().filter((user) => user.active && user.role === "designer"));
   });
 
+  router.post("/:id/issues/linked-annotation", requireAuth(deps.jwtSecret, ["supervisor", "process", "admin"]), (req, res) => {
+    const approval = deps.approvals.getById(Number(req.params.id));
+    if (!approval) return res.status(404).json({ error: "APPROVAL_NOT_FOUND" });
+    if (isReadonlyApproval(approval.status)) return res.status(409).json({ error: "APPROVAL_READONLY" });
+    const parsed = linkedIssueCreateSchema.safeParse(req.body);
+    if (!parsed.success || !req.user) return res.status(400).json({ error: "INVALID_INPUT" });
+    if (!isActiveAssignee(deps.users, parsed.data.assigneeUserId)) {
+      return res.status(400).json({ error: "INVALID_ISSUE_ASSIGNEE" });
+    }
+
+    try {
+      const { annotation, ...issueInput } = parsed.data;
+      const result = createLinkedApprovalIssue({
+        db: deps.db,
+        approvalAnnotations: deps.approvalAnnotations,
+        approvalIssues: deps.approvalIssues
+      }, {
+        issue: {
+          approvalId: approval.id,
+          creatorUserId: req.user.id,
+          ...issueInput
+        },
+        annotation: {
+          approvalId: approval.id,
+          authorUserId: req.user.id,
+          ...annotation
+        }
+      });
+      if (result.created) {
+        logIssueAction(deps, req.user, approval.id, result.issue, "approval.issue_created", "创建了带定位批注的正式问题");
+        deps.issueEventHub?.publish({ type: "issue.changed", approvalId: approval.id, issueId: result.issue.id, version: result.issue.version });
+      }
+      res.status(result.created ? 201 : 200).json({ issue: result.issue, annotation: result.annotation });
+    } catch (error) {
+      const message = errorMessage(error);
+      if (message === "ISSUE_REQUEST_ID_CONFLICT") return res.status(409).json({ error: message });
+      if (message.startsWith("INVALID_ISSUE_") || message.startsWith("INVALID_ANNOTATION_")) {
+        return res.status(400).json({ error: message });
+      }
+      res.status(500).json({ error: "CREATE_LINKED_ISSUE_FAILED" });
+    }
+  });
+
   router.get("/:id/issues/:issueId/events", requireAuth(deps.jwtSecret), (req, res) => {
     const issue = findIssue(deps, Number(req.params.id), Number(req.params.issueId));
     if (!issue) return res.status(404).json({ error: "ISSUE_NOT_FOUND" });
@@ -98,7 +149,7 @@ export function approvalIssueRoutes(deps: {
       return res.status(400).json({ error: "INVALID_ISSUE_ASSIGNEE" });
     }
     if (parsed.data.annotationId) {
-      const annotation = deps.approvalAnnotations?.getById(parsed.data.annotationId);
+      const annotation = deps.approvalAnnotations.getById(parsed.data.annotationId);
       if (!annotation || annotation.approvalId !== approval.id) {
         return res.status(400).json({ error: "INVALID_ISSUE_ANNOTATION" });
       }

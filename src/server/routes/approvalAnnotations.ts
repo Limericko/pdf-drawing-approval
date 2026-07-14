@@ -8,7 +8,7 @@ import type { ApprovalAnnotation, ApprovalAnnotationRepository } from "../reposi
 import type { ApprovalRepository } from "../repositories/approvals.ts";
 import type { OperationLogRepository } from "../repositories/operationLogs.ts";
 
-const annotationSchema = z.object({
+export const approvalAnnotationSchema = z.object({
   kind: z.enum(["pin", "rect", "arrow", "circle", "text", "ink", "cloud"]),
   message: z.string().trim().min(1).max(1000),
   pageNumber: z.number().int().min(1),
@@ -87,7 +87,7 @@ export function approvalAnnotationRoutes(deps: {
     if (!approval) return res.status(404).json({ error: "APPROVAL_NOT_FOUND" });
     if (isReadonlyApproval(approval.status)) return res.status(409).json({ error: "APPROVAL_READONLY" });
 
-    const parsed = annotationSchema.safeParse(req.body);
+    const parsed = approvalAnnotationSchema.safeParse(req.body);
     if (!parsed.success || !req.user) return res.status(400).json({ error: "INVALID_INPUT" });
 
     try {
@@ -139,7 +139,7 @@ export function approvalAnnotationRoutes(deps: {
     if (!annotation || annotation.approvalId !== approval.id) return res.status(404).json({ error: "ANNOTATION_NOT_FOUND" });
     if (!canManageAnnotation(req.user, annotation)) return res.status(403).json({ error: "FORBIDDEN" });
 
-    const parsed = annotationSchema.safeParse(req.body);
+    const parsed = approvalAnnotationSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "INVALID_INPUT" });
 
     try {

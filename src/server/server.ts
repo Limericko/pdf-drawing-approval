@@ -218,6 +218,7 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
   app.use(
     "/api/approvals",
     approvalIssueRoutes({
+      db,
       approvals,
       approvalIssues,
       approvalAnnotations,

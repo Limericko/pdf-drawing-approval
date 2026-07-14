@@ -27,12 +27,15 @@ describe("seedE2eData", () => {
 
       const designer = users.findByUsername("designer_e2e");
       const approval = approvals.getById(seeded.approvalId);
+      const longApproval = approvals.getById(seeded.longApprovalId);
       const databaseRelativePath = path.relative(root, seeded.databasePath);
       expect(designer?.role).toBe("designer");
       expect(signatures.getActiveForUser(designer!.id)).not.toBeNull();
       expect(approval?.partName).toBe("E2E轴承座");
       expect(approval?.status).toBe("pending");
       expect(fs.readFileSync(seeded.pdfPath).subarray(0, 4).toString()).toBe("%PDF");
+      expect(longApproval?.partName).toBe("E2E长文档");
+      expect(fs.readFileSync(seeded.longPdfPath).subarray(0, 4).toString()).toBe("%PDF");
       expect(path.isAbsolute(databaseRelativePath)).toBe(false);
       expect(databaseRelativePath).not.toBe("..");
       expect(databaseRelativePath.startsWith(`..${path.sep}`)).toBe(false);

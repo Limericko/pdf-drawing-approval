@@ -1,0 +1,32 @@
+.handle {
+  position: relative;
+  z-index: var(--z-sticky);
+  width: var(--space-1);
+  min-width: var(--space-1);
+  min-height: 0;
+  padding: 0;
+  background: var(--color-border);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: var(--space-3);
+  transform: translateX(-50%);
+}
+
+.handle:hover,
+.handle:focus-visible,
+.handle[data-dragging="true"] {
+  background: var(--color-primary);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+@media (max-width: 61.25rem) {
+  .handle { display: none; }
+}

@@ -419,6 +419,10 @@ export type ApprovalIssueInput = {
   clientRequestId?: string | null;
 };
 
+export type ApprovalIssueWithAnnotationInput = Omit<ApprovalIssueInput, "annotationId"> & {
+  annotation: ApprovalAnnotationInput;
+};
+
 export type ApprovalAnnotationKind = "pin" | "rect" | "arrow" | "circle" | "text" | "ink" | "cloud";
 export type ApprovalAnnotationColor = "red" | "amber" | "blue" | "green" | "custom";
 
@@ -816,6 +820,20 @@ export async function createApprovalIssue(approvalId: number, input: ApprovalIss
     method: "POST",
     body: JSON.stringify(payload)
   });
+  try {
+    return await send();
+  } catch (error) {
+    if (!(error instanceof TypeError) || !navigator.onLine) throw error;
+    return send();
+  }
+}
+
+export async function createApprovalIssueWithAnnotation(approvalId: number, input: ApprovalIssueWithAnnotationInput) {
+  const payload = { ...input, clientRequestId: input.clientRequestId ?? crypto.randomUUID() };
+  const send = () => requestJson<{ issue: ApprovalIssue; annotation: ApprovalAnnotation }>(
+    `/api/approvals/${approvalId}/issues/linked-annotation`,
+    { method: "POST", body: JSON.stringify(payload) }
+  );
   try {
     return await send();
   } catch (error) {

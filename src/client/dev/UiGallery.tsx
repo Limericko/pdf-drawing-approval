@@ -8,6 +8,7 @@ import { Breadcrumbs, SegmentedControl, Tabs } from "../ui/navigation/index.tsx"
 import { Badge, BatchActionBar, DataTable, Pagination, StatusChip, TableFrame, type DataTableColumn } from "../ui/data/index.tsx";
 import { PageHeader } from "../patterns/PageHeader/index.tsx";
 import { FilterBar } from "../patterns/FilterBar/index.tsx";
+import { PdfStudioGalleryPreview } from "../features/pdf-studio/PdfStudioGalleryPreview.tsx";
 import styles from "./UiGallery.module.css";
 
 const semanticColors = [
@@ -69,7 +70,7 @@ export function UiGallery() {
         <h1>UI 设计系统基线</h1>
       </div>
       <div className={styles.phaseStamp}>
-        <span>Phase 2 · DS0–DS4</span>
+        <span>Phase 2–3 · DS0–DS5</span>
         <strong>精密工业</strong>
       </div>
     </header>
@@ -261,6 +262,11 @@ export function UiGallery() {
               getRowKey={(row) => row.id} error="无法读取同步记录，请检查连接。" onRetry={() => undefined} /></TableFrame>
           </div>
         </div>
+      </section>
+
+      <section className={styles.gallerySection} aria-labelledby="pdf-studio-components">
+        <SectionHeading index="11" id="pdf-studio-components" title="PDF 审阅工作台" description="DS5 固化缩略页、文档画布、问题检查器、工具状态和审核动作的组合契约。" />
+        <PdfStudioGalleryPreview />
       </section>
     </main>
     <Dialog open={dialogOpen} title="确认发布版本 A03" description="发布后，该版本将成为零件库当前有效版本。"

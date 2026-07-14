@@ -100,6 +100,11 @@ describe("approval issue routes", () => {
       .set(authorize(context.designerToken))
       .send(issueInput(context.designer.id, "low"))
       .expect(403);
+    await request(context.app)
+      .post(`/api/approvals/${context.approval.id}/issues`)
+      .set(authorize(context.supervisorToken))
+      .send(issueInput(context.supervisor.id, "low"))
+      .expect(400, { error: "INVALID_ISSUE_ASSIGNEE" });
 
     const listed = await request(context.app)
       .get(`/api/approvals/${context.approval.id}/issues`)
@@ -108,6 +113,38 @@ describe("approval issue routes", () => {
     expect(listed.body).toEqual([expect.objectContaining({ id: created.body.id, eventCount: 1, version: 2 })]);
     expect(context.operationLogs.listForTarget("approval", context.approval.id).map((log) => log.action))
       .toContain("approval.issue_created");
+  });
+
+  it("atomically creates and deduplicates a formal issue with its drawing annotation", async () => {
+    const context = await appContext();
+    const body = {
+      ...issueInput(context.designer.id),
+      clientRequestId: "linked-route-retry-001",
+      annotation: {
+        kind: "rect",
+        message: "请补充 H7 公差与基准关系。",
+        pageNumber: 1,
+        xRatio: 0.2,
+        yRatio: 0.3,
+        widthRatio: 0.2,
+        heightRatio: 0.1,
+        color: "red"
+      }
+    };
+    const url = `/api/approvals/${context.approval.id}/issues/linked-annotation`;
+    const first = await request(context.app).post(url).set(authorize(context.supervisorToken)).send(body).expect(201);
+    const retried = await request(context.app).post(url).set(authorize(context.supervisorToken)).send(body).expect(200);
+
+    expect(first.body.issue.annotationId).toBe(first.body.annotation.id);
+    expect(retried.body).toEqual(first.body);
+    const annotations = await request(context.app)
+      .get(`/api/approvals/${context.approval.id}/annotations`)
+      .set(authorize(context.supervisorToken))
+      .expect(200);
+    expect(annotations.body).toHaveLength(1);
+    expect(context.approvalIssues.listForApproval(context.approval.id)).toHaveLength(1);
+    expect(context.operationLogs.listForTarget("approval", context.approval.id)
+      .filter((log) => log.action === "approval.issue_created")).toHaveLength(1);
   });
 
   it("enforces assignee handling and independent reviewer closure", async () => {
@@ -186,6 +223,20 @@ describe("approval issue routes", () => {
       .expect(409);
     expect(blocked.body).toEqual({ error: "OPEN_HIGH_SEVERITY_ISSUES", blockingIssueCount: 1 });
     expect(context.approvals.getById(context.approval.id)?.supervisorStatus).toBe("pending");
+    await request(context.app)
+      .post(`/api/approvals/${context.approval.id}/review`)
+      .set(authorize(context.processToken))
+      .send({ role: "process", decision: "approved", comment: "工艺同意" })
+      .expect(409, { error: "OPEN_HIGH_SEVERITY_ISSUES", blockingIssueCount: 1 });
+    await request(context.app)
+      .post(`/api/approvals/${context.approval.id}/review`)
+      .set(authorize(context.adminToken))
+      .send({ role: "supervisor", decision: "approved", comment: "管理员代审" })
+      .expect(409, { error: "OPEN_HIGH_SEVERITY_ISSUES", blockingIssueCount: 1 });
+    expect(context.approvals.getById(context.approval.id)).toEqual(expect.objectContaining({
+      supervisorStatus: "pending",
+      processStatus: "pending"
+    }));
 
     context.approvalIssues.transition(issue.id, {
       action: "force_close",

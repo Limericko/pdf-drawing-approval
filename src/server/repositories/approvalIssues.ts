@@ -111,6 +111,14 @@ export class ApprovalIssueRepository {
   constructor(private readonly db: DatabaseConnection) {}
 
   create(input: CreateApprovalIssueInput): ApprovalIssue {
+    return this.createValidated(input, true);
+  }
+
+  createInCurrentTransaction(input: CreateApprovalIssueInput): ApprovalIssue {
+    return this.createValidated(input, false);
+  }
+
+  private createValidated(input: CreateApprovalIssueInput, manageTransaction: boolean): ApprovalIssue {
     const title = input.title.trim();
     const description = input.description.trim();
     const dueAt = normalizeOptionalText(input.dueAt ?? null);
@@ -125,7 +133,7 @@ export class ApprovalIssueRepository {
       if (existing) return existing;
     }
 
-    return this.withTransaction(() => {
+    const insert = () => {
       const result = this.db.prepare(
         `INSERT INTO approval_issues (
           approval_id, annotation_id, creator_user_id, assignee_user_id,
@@ -155,7 +163,8 @@ export class ApprovalIssueRepository {
         note: null
       });
       return this.getById(issueId)!;
-    });
+    };
+    return manageTransaction ? this.withTransaction(insert) : insert();
   }
 
   getById(id: number): ApprovalIssue | null {

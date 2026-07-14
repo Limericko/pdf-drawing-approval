@@ -1,5 +1,12 @@
 import type { ApprovalIssue, ApprovalIssueTransitionAction, User } from "../../api.ts";
 
+export type ApprovalIssueFilters = {
+  status: "all" | ApprovalIssue["status"];
+  severity: "all" | ApprovalIssue["severity"];
+  assigneeUserId: "all" | number;
+  pageNumber: "all" | number;
+};
+
 export const issueSeverityLabels = {
   low: "低",
   medium: "中",
@@ -40,6 +47,31 @@ export function issueActionLabel(action: ApprovalIssueTransitionAction) {
 
 export function issueActionNeedsNote(action: ApprovalIssueTransitionAction) {
   return action !== "start";
+}
+
+export function filterApprovalIssues(
+  issues: ApprovalIssue[],
+  filters: ApprovalIssueFilters,
+  annotationPageById: Readonly<Record<number, number>>
+) {
+  return issues.filter((issue) => {
+    if (filters.status !== "all" && issue.status !== filters.status) return false;
+    if (filters.severity !== "all" && issue.severity !== filters.severity) return false;
+    if (filters.assigneeUserId !== "all" && issue.assigneeUserId !== filters.assigneeUserId) return false;
+    if (filters.pageNumber !== "all" && (!issue.annotationId || annotationPageById[issue.annotationId] !== filters.pageNumber)) return false;
+    return true;
+  });
+}
+
+export function issueFilterPageNumbers(
+  pageCount: number,
+  annotationPageById: Readonly<Record<number, number>>
+): number[] {
+  const pages = new Set<number>(Object.values(annotationPageById));
+  for (let pageNumber = 1; pageNumber <= Math.max(0, Math.floor(pageCount)); pageNumber += 1) {
+    pages.add(pageNumber);
+  }
+  return [...pages].filter((pageNumber) => pageNumber > 0).sort((a, b) => a - b);
 }
 
 function lifecycleActions(issue: ApprovalIssue): ApprovalIssueTransitionAction[] {

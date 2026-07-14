@@ -33,11 +33,12 @@
 .contextStrip strong { overflow: hidden; font-size: var(--font-size-body-sm); text-overflow: ellipsis; white-space: nowrap; }
 
 .body {
+  --pdf-inspector-active-width: var(--pdf-inspector-width);
   min-width: 0;
   height: calc(100dvh - 13.5rem);
   min-height: 42rem;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--pdf-inspector-width);
+  grid-template-columns: minmax(0, 1fr) var(--space-1) var(--pdf-inspector-active-width);
   overflow: hidden;
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
@@ -61,7 +62,7 @@
 .backdrop { display: none; }
 
 @media (max-width: 80rem) and (min-width: 61.3125rem) {
-  .body { grid-template-columns: minmax(0, 1fr) 17.5rem; }
+  .body { grid-template-columns: minmax(0, 1fr) var(--space-1) var(--pdf-inspector-active-width); }
 }
 
 @media (max-width: 61.25rem) {

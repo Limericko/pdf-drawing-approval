@@ -22,6 +22,7 @@ import {
 import {
   createApprovalComment,
   createApprovalIssue,
+  createApprovalIssueWithAnnotation,
   createApprovalAnnotation,
   deleteApprovalAnnotation,
   getApproval,
@@ -99,6 +100,10 @@ import { ReviewActionBar } from "../features/pdf-studio/ReviewActionBar.tsx";
 import draftStyles from "../features/pdf-studio/AnnotationDraftPopover.module.css";
 import { ActivityInspector, type ActivityTab } from "../features/pdf-studio/ActivityInspector.tsx";
 import {
+  ResizableInspectorHandle,
+  usePersistentPdfInspectorWidth
+} from "../features/pdf-studio/ResizableInspectorPane.tsx";
+import {
   canRegenerateSignedPdf,
   canCreateAnnotation,
   canEditAnnotation,
@@ -143,6 +148,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const detailPdfStageRef = useRef<HTMLDivElement | null>(null);
   const annotationUndoStack = useRef<AnnotationHistoryEntry[]>([]);
   const annotationRedoStack = useRef<AnnotationHistoryEntry[]>([]);
+  const { width: inspectorWidth, setWidth: setInspectorWidth } = usePersistentPdfInspectorWidth();
   const [approval, setApproval] = useState<Approval | null>(null);
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
   const [approvalComments, setApprovalComments] = useState<ApprovalComment[]>([]);
@@ -153,7 +159,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [annotationMessage, setAnnotationMessage] = useState("");
   const [annotationTool, setAnnotationTool] = useState<AnnotationTool>("select");
   const [annotationColor, setAnnotationColor] = useState<ApprovalAnnotationColor>("red");
-  const [annotationCustomColor, setAnnotationCustomColor] = useState("#7c3aed");
+  const [annotationCustomColor, setAnnotationCustomColor] = useState(() => readPaletteHex("--palette-info-500"));
   const [annotationFilters, setAnnotationFilters] = useState<AnnotationFilters>({
     status: "all",
     author: "all",
@@ -171,6 +177,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [draftIssueTitle, setDraftIssueTitle] = useState("");
   const [draftIssueSeverity, setDraftIssueSeverity] = useState<ApprovalIssueSeverity>("medium");
   const [draftIssueAssigneeId, setDraftIssueAssigneeId] = useState("");
+  const [draftIssueDueAt, setDraftIssueDueAt] = useState("");
   const [collaborationMessage, setCollaborationMessage] = useState("");
   const [repairPath, setRepairPath] = useState("");
   const [voidReason, setVoidReason] = useState("");
@@ -193,6 +200,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [message, setMessage] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [pdfState, setPdfState] = useState<"checking" | "ready" | "invalid" | "missing">("checking");
+  const [pdfPageCount, setPdfPageCount] = useState(0);
   const desktopClient = isDesktopClient();
 
   async function reload(isCurrent = () => true) {
@@ -566,6 +574,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     setDraftIssueTitle("");
     setDraftIssueSeverity("medium");
     setDraftIssueAssigneeId(issueAssignees[0] ? String(issueAssignees[0].id) : "");
+    setDraftIssueDueAt("");
     setError("");
     setMessage("");
   }
@@ -587,25 +596,28 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     setError("");
     setMessage("");
     try {
-      const created = await createApprovalAnnotation(approval.id, { ...pendingAnnotationDraft.input, message });
-      recordAnnotationHistory({ kind: "create", annotationId: created.id, input: annotationToInput(created) });
       if (draftAnnotationMode === "issue") {
-        await createApprovalIssue(approval.id, {
-          annotationId: created.id,
+        const linked = await createApprovalIssueWithAnnotation(approval.id, {
           assigneeUserId: Number(draftIssueAssigneeId),
           title: draftIssueTitle.trim(),
           description: message,
           severity: draftIssueSeverity,
-          dueAt: null
+          dueAt: draftIssueDueAt ? new Date(draftIssueDueAt).toISOString() : null,
+          annotation: { ...pendingAnnotationDraft.input, message }
         });
+        const created = linked.annotation;
+        recordAnnotationHistory({ kind: "create", annotationId: created.id, input: annotationToInput(created) });
         setApprovalIssues(await listApprovalIssues(approval.id));
         setInspectorOpen(true);
         setInspectorTab("issues");
         setMessage("正式问题已定位、创建并分配。");
+        setSelectedAnnotationId(created.id);
       } else {
+        const created = await createApprovalAnnotation(approval.id, { ...pendingAnnotationDraft.input, message });
+        recordAnnotationHistory({ kind: "create", annotationId: created.id, input: annotationToInput(created) });
         setMessage("图纸说明已添加。");
+        setSelectedAnnotationId(created.id);
       }
-      setSelectedAnnotationId(created.id);
       setAnnotationScrollRequest((current) => current + 1);
       if (!continuousAnnotationMode) setAnnotationTool("select");
       setPendingAnnotationDraft(null);
@@ -623,6 +635,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     setPendingAnnotationDraft(null);
     setDraftAnnotationMessage("");
     setDraftIssueTitle("");
+    setDraftIssueDueAt("");
   }
 
   function selectAnnotation(annotation: ApprovalAnnotation, options: { scrollIntoView?: boolean } = {}) {
@@ -978,6 +991,10 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     if (annotation) counts[annotation.pageNumber] = (counts[annotation.pageNumber] ?? 0) + 1;
     return counts;
   }, {});
+  const annotationPageById = annotations.reduce<Record<number, number>>((pages, annotation) => {
+    pages[annotation.id] = annotation.pageNumber;
+    return pages;
+  }, {});
   const canUndoAnnotations = annotationHistoryVersion >= 0 && annotationUndoStack.current.length > 0;
   const canRedoAnnotations = annotationHistoryVersion >= 0 && annotationRedoStack.current.length > 0;
   const openFormalIssueCount = approvalIssues.filter((issue) => issue.status !== "closed").length;
@@ -1037,7 +1054,10 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
           <strong>{approval.source === "web_upload" ? "网页提交" : "目录监听"}</strong>
         </div>
       </div>
-      <div className={studioStyles.body}>
+      <div
+        className={studioStyles.body}
+        style={{ "--pdf-inspector-active-width": `${inspectorWidth}px` } as CSSProperties}
+      >
         <div className={studioStyles.canvas} ref={detailPdfStageRef}>
           {pdfState === "ready" ? (
             <Suspense fallback={<div className="pdf-frame pdf-frame--message">正在加载 PDF 工具...</div>}>
@@ -1090,6 +1110,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                     onSelectAnnotation={selectAnnotation}
                     selectedAnnotationId={selectedAnnotationId}
                     annotationScrollRequest={annotationScrollRequest}
+                    onPageCountChange={setPdfPageCount}
                     pageIssueCounts={pageIssueCounts}
                     onUpdateAnnotationGeometry={canCreateAnnotations ? updateAnnotationGeometry : undefined}
                   />
@@ -1102,6 +1123,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                       issueTitle={draftIssueTitle}
                       issueSeverity={draftIssueSeverity}
                       issueAssigneeId={draftIssueAssigneeId}
+                      issueDueAt={draftIssueDueAt}
                       issueAssignees={issueAssignees}
                       busy={busyAction === "annotation"}
                       onMessageChange={setDraftAnnotationMessage}
@@ -1109,6 +1131,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                       onIssueTitleChange={setDraftIssueTitle}
                       onIssueSeverityChange={setDraftIssueSeverity}
                       onIssueAssigneeChange={setDraftIssueAssigneeId}
+                      onIssueDueAtChange={setDraftIssueDueAt}
                       onConfirmDraftAnnotation={onConfirmDraftAnnotation}
                       onCancel={cancelDraftAnnotation}
                     />
@@ -1142,6 +1165,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
             </div>
           )}
           </div>
+        <ResizableInspectorHandle width={inspectorWidth} onWidthChange={setInspectorWidth} />
         {inspectorOpen && <button type="button" className={studioStyles.backdrop} aria-label="关闭审阅检查器" onClick={() => setInspectorOpen(false)} />}
         <aside className={studioStyles.inspector} data-open={inspectorOpen} aria-label="审阅检查器">
           <div className={studioStyles.inspectorHeader}>
@@ -1172,6 +1196,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
             issues={approvalIssues}
             assignees={issueAssignees}
             selectedAnnotation={selectedAnnotation}
+            annotationPageById={annotationPageById}
+            documentPageCount={pdfPageCount}
             busyAction={busyAction}
             onCreate={createFormalIssue}
             onUpdate={updateFormalIssue}
@@ -1503,6 +1529,7 @@ function AnnotationDraftPopover({
   issueTitle,
   issueSeverity,
   issueAssigneeId,
+  issueDueAt,
   issueAssignees,
   busy,
   onMessageChange,
@@ -1510,6 +1537,7 @@ function AnnotationDraftPopover({
   onIssueTitleChange,
   onIssueSeverityChange,
   onIssueAssigneeChange,
+  onIssueDueAtChange,
   onConfirmDraftAnnotation,
   onCancel
 }: {
@@ -1520,6 +1548,7 @@ function AnnotationDraftPopover({
   issueTitle: string;
   issueSeverity: ApprovalIssueSeverity;
   issueAssigneeId: string;
+  issueDueAt: string;
   issueAssignees: User[];
   busy: boolean;
   onMessageChange: (message: string) => void;
@@ -1527,6 +1556,7 @@ function AnnotationDraftPopover({
   onIssueTitleChange: (title: string) => void;
   onIssueSeverityChange: (severity: ApprovalIssueSeverity) => void;
   onIssueAssigneeChange: (userId: string) => void;
+  onIssueDueAtChange: (dueAt: string) => void;
   onConfirmDraftAnnotation: () => void;
   onCancel: () => void;
 }) {
@@ -1545,25 +1575,29 @@ function AnnotationDraftPopover({
       </div>
       {mode === "issue" ? <>
         <label className={draftStyles.field}>问题标题
-          <input value={issueTitle} onChange={(event) => onIssueTitleChange(event.target.value)} placeholder="例如：轴承孔公差未标注" />
+          <input id="annotation-issue-title" value={issueTitle} onChange={(event) => onIssueTitleChange(event.target.value)} placeholder="例如：轴承孔公差未标注" />
         </label>
         <div className={draftStyles.row}>
           <label className={draftStyles.field}>严重级
-            <select value={issueSeverity} onChange={(event) => onIssueSeverityChange(event.target.value as ApprovalIssueSeverity)}>
+            <select id="annotation-issue-severity" value={issueSeverity} onChange={(event) => onIssueSeverityChange(event.target.value as ApprovalIssueSeverity)}>
               <option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">严重</option>
             </select>
           </label>
           <label className={draftStyles.field}>负责人
-            <select value={issueAssigneeId} onChange={(event) => onIssueAssigneeChange(event.target.value)}>
+            <select id="annotation-issue-assignee" value={issueAssigneeId} onChange={(event) => onIssueAssigneeChange(event.target.value)}>
               <option value="" disabled>选择设计人员</option>
               {issueAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.displayName}</option>)}
             </select>
           </label>
         </div>
+        <label className={draftStyles.field}>到期时间
+          <input id="annotation-issue-due-at" type="datetime-local" value={issueDueAt} onChange={(event) => onIssueDueAtChange(event.target.value)} />
+        </label>
       </> : null}
       <label className={draftStyles.field}>
         {mode === "issue" ? "问题说明" : "说明内容"}
         <textarea
+          id="annotation-issue-message"
           autoFocus
           value={message}
           onChange={(event) => onMessageChange(event.target.value)}
@@ -1758,7 +1792,13 @@ function parseAnnotationStyle(styleJson: string | null): Record<string, unknown>
 }
 
 function normalizeHexColor(color: string) {
-  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : "#7c3aed";
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : readPaletteHex("--palette-info-500");
+}
+
+function readPaletteHex(token: string) {
+  if (typeof window === "undefined") return "";
+  const color = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : "";
 }
 
 function annotationColorTone(color: string) {

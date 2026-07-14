@@ -63,6 +63,7 @@ export function PdfAnnotationWorkspace({
   selectedAnnotationId = null,
   annotationScrollRequest = 0,
   onUpdateAnnotationGeometry,
+  onPageCountChange,
   pageIssueCounts = {}
 }: {
   pdfUrl: string;
@@ -77,6 +78,7 @@ export function PdfAnnotationWorkspace({
   selectedAnnotationId?: number | null;
   annotationScrollRequest?: number;
   onUpdateAnnotationGeometry?: (annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) => void;
+  onPageCountChange?: (pageCount: number) => void;
   pageIssueCounts?: Readonly<Record<number, number>>;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -117,6 +119,7 @@ export function PdfAnnotationWorkspace({
       setError("");
       setPdf(null);
       setPageCount(0);
+      onPageCountChange?.(0);
 
       try {
         const [pdfjs, worker] = await Promise.all([
@@ -139,6 +142,7 @@ export function PdfAnnotationWorkspace({
 
         setPdf(nextPdf);
         setPageCount(nextPdf.numPages);
+        onPageCountChange?.(nextPdf.numPages);
         setStatus("ready");
       } catch (err) {
         if (cancelled) return;
@@ -153,7 +157,7 @@ export function PdfAnnotationWorkspace({
       cancelled = true;
       void loadingTask?.destroy();
     };
-  }, [pdfUrl]);
+  }, [pdfUrl, onPageCountChange]);
 
   const pageNumbers = useMemo(
     () => Array.from({ length: pageCount }, (_, index) => index + 1),
