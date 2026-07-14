@@ -17,6 +17,8 @@
 
 首次盘点报告保存在工作区忽略目录 `.cache/phase6-drill/`，不进入 Git。报告只含计数、问题代码、数字 ID 样本和哈希，不含密码哈希、SMTP 密码、签名图像或 PDF 内容。
 
+文件 preflight 已对 E 盘数据目录的只读副本执行：1 个引用、1 个唯一文件、4,726 字节，路径边界、普通文件、大小、SHA-256 和 PNG 解码全部通过，阻断项为 0。当前数据库没有 PDF 引用，因此本轮没有可执行的 PDF 页面渲染证据；正式迁移样本出现 PDF 后，除 `pdf-lib` 解析外还必须使用 Poppler 对首末页及抽样页渲染检查。
+
 ## 必须整改
 
 1. 为 3 个缺邮箱的活动账号确认唯一、可收信的正式邮箱；迁移工具不会猜测或自动生成公网身份。
@@ -28,7 +30,7 @@
 ```powershell
 npm run migration:legacy:snapshot -- --source "<absolute-live-sqlite>" --target "<absolute-new-snapshot>"
 npm run migration:legacy:inventory -- --database "<absolute-snapshot>" --source-id legacy-production-e-drive --output "<absolute-new-report.json>"
+npm run migration:legacy:files -- --database "<absolute-snapshot>" --roots "<absolute-root-mapping.json>" --output "<absolute-new-file-report.json>"
 ```
 
 快照和报告目标必须不存在；工具拒绝覆盖，避免把上一轮证据静默替换。
-
