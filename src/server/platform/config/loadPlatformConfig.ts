@@ -18,6 +18,7 @@ import type {
   S3StorageConfig,
   TrustedProxyConfig,
   VersionedKeyring,
+  WebDavCredentialSourceConfig,
   WebPlatformConfig,
   WorkerPlatformConfig
 } from "./types.ts";
@@ -89,6 +90,7 @@ export function loadPlatformConfig(env: NodeJS.ProcessEnv, target: PlatformProce
       smtp: loadSmtpConfig(env),
       publicBaseUrl: parsePublicBaseUrl(env),
       worker,
+      webdavCredentials: loadWebDavCredentials(env, environment),
       keyrings: { invitationHmac: invitationHmac.value }
     };
     assertProductionWorker(config, invitationHmac);
@@ -262,6 +264,41 @@ function loadWorkerConfig(env: NodeJS.ProcessEnv): PlatformWorkerConfig {
       7 * 24 * 60 * 60 * 1_000
     )
   };
+}
+
+function loadWebDavCredentials(env: NodeJS.ProcessEnv, environment: PlatformEnvironment): WebDavCredentialSourceConfig {
+  const json = env.PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON;
+  const file = env.PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE?.trim();
+  if (json?.trim() && file) configInvalid("PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON");
+  if (file) {
+    if (!path.isAbsolute(file)) configInvalid("PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE");
+    return { driver: "file", path: path.normalize(file) };
+  }
+  if (!json?.trim()) return { driver: "none" };
+  if (environment === "production") insecure("PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON");
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { configInvalid("PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON"); }
+  if (!isRecord(parsed) || Object.keys(parsed).length > 100) configInvalid("PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON");
+  const entries = new Map<string, { username: string; password: string }>();
+  for (const [reference, value] of Object.entries(parsed)) {
+    if (!validCredentialRef(reference) || !isRecord(value) || Object.keys(value).sort().join(",") !== "password,username" ||
+        typeof value.username !== "string" || typeof value.password !== "string" ||
+        !validCredential(value.username, 254, true) || !validCredential(value.password, 1024, false)) {
+      configInvalid("PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON");
+    }
+    entries.set(reference, { username: value.username, password: value.password });
+  }
+  return { driver: "inline", entries };
+}
+
+function validCredentialRef(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{2,239}$/.test(value) &&
+    !value.split("/").some((segment) => segment === "." || segment === "..");
+}
+
+function validCredential(value: string, maximum: number, rejectColon: boolean) {
+  return value.length > 0 && value.length <= maximum && value === value.trim() &&
+    !/[\u0000-\u001f\u007f]/.test(value) && (!rejectColon || !value.includes(":"));
 }
 
 function parseKeyring(env: NodeJS.ProcessEnv, field: string, environment: PlatformEnvironment): ParsedKeyring {

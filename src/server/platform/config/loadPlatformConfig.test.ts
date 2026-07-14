@@ -136,6 +136,32 @@ describe("loadPlatformConfig target composition", () => {
       storageCleanupReapIntervalMs: 6 * 60 * 60 * 1_000
     });
     expect("session" in config).toBe(false);
+    expect(config.webdavCredentials).toEqual({ driver: "none" });
+  });
+
+  it("loads development WebDAV credentials only into the worker target", () => {
+    const json = JSON.stringify({ "secret/webdav/test": {
+      username: "designer@example.test", password: "app-password"
+    } });
+    const worker = loadPlatformConfig(workerEnv({ PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON: json }), "worker");
+    expect(worker.webdavCredentials).toMatchObject({ driver: "inline" });
+    expect(worker.webdavCredentials.driver === "inline" && worker.webdavCredentials.entries.get("secret/webdav/test"))
+      .toEqual({ username: "designer@example.test", password: "app-password" });
+    const web = loadPlatformConfig(webEnv({ PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON: "invalid-unused" }), "web");
+    expect("webdavCredentials" in web).toBe(false);
+  });
+
+  it("requires production WebDAV credentials to come from an absolute mounted secret file", () => {
+    expect(() => loadPlatformConfig(productionWorkerEnv({
+      PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON: JSON.stringify({ ref: { username: "user", password: "password" } })
+    }), "worker")).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON");
+    expect(() => loadPlatformConfig(workerEnv({ PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE: "relative.json" }), "worker"))
+      .toThrow("PLATFORM_CONFIG_INVALID:PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE");
+    const config = loadPlatformConfig(productionWorkerEnv({
+      PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE: path.resolve(".cache", "mounted-webdav-credentials.json")
+    }), "worker");
+    expect(config.webdavCredentials).toEqual({ driver: "file",
+      path: path.resolve(".cache", "mounted-webdav-credentials.json") });
   });
 
   it("requires only the migration database for migration", () => {

@@ -1,6 +1,6 @@
 import { PlatformConfigError } from "./types.ts";
 
-const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|ACCESS_KEY|DATABASE_URL)/i;
+const sensitiveFieldPattern = /(PASSWORD|SECRET|TOKEN|KEYRING|CREDENTIAL|ACCESS_KEY|DATABASE_URL)/i;
 const urlCredentialsPattern = /([a-z][a-z0-9+.-]*:\/\/[^@\s/:]*:)([^@\s/]+)@/gi;
 const defaultRedactionMarker = "[REDACTED]";
 
@@ -35,7 +35,7 @@ function collectSecrets(env: NodeJS.ProcessEnv) {
     addSecret(secrets, rawValue);
 
     if (/DATABASE_URL/i.test(field)) addDatabaseUrlSecrets(secrets, rawValue);
-    if (/KEYRING/i.test(field)) addJsonSecrets(secrets, rawValue);
+    if (/KEYRING|CREDENTIALS_JSON/i.test(field)) addJsonSecrets(secrets, rawValue);
   }
   return secrets;
 }

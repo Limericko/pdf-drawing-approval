@@ -38,6 +38,18 @@ describe("platform config redaction", () => {
     expect(output).not.toContain(keyMaterial);
   });
 
+  it("redacts WebDAV credential JSON and every nested username or password", () => {
+    const json = JSON.stringify({ "secret/webdav/test": {
+      username: "designer@example.test", password: "webdav-app-password"
+    } });
+    const output = redactConfigText(`failure ${json} designer@example.test webdav-app-password`, {
+      PDF_APPROVAL_WEBDAV_CREDENTIALS_JSON: json
+    });
+    expect(output).not.toContain(json);
+    expect(output).not.toContain("designer@example.test");
+    expect(output).not.toContain("webdav-app-password");
+  });
+
   it("rebuilds structured config errors from trusted fields instead of the message", () => {
     const error = new PlatformConfigError("PLATFORM_CONFIG_INVALID", "PDF_APPROVAL_STORAGE_DRIVER");
     error.message = "untrusted message password=local-only-password";

@@ -70,6 +70,12 @@ export type PlatformWorkerConfig = {
   storageCleanupReapIntervalMs: number;
 };
 
+export type WebDavCredential = { username: string; password: string };
+export type WebDavCredentialSourceConfig =
+  | { driver: "none" }
+  | { driver: "inline"; entries: Map<string, WebDavCredential> }
+  | { driver: "file"; path: string };
+
 type BasePlatformConfig<TTarget extends PlatformProcessTarget> = {
   target: TTarget;
   environment: PlatformEnvironment;
@@ -94,6 +100,7 @@ export type WorkerPlatformConfig = BasePlatformConfig<"worker"> & {
   smtp: PlatformSmtpConfig;
   publicBaseUrl: string;
   worker: PlatformWorkerConfig;
+  webdavCredentials: WebDavCredentialSourceConfig;
   keyrings: {
     invitationHmac: VersionedKeyring;
   };
