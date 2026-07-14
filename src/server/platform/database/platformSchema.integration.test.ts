@@ -50,6 +50,10 @@ const expectedTables = [
   "storage_objects",
   "totp_credentials",
   "users",
+  "webdav_connections",
+  "webdav_directory_mappings",
+  "webdav_sync_conflicts",
+  "webdav_sync_items",
   "worker_heartbeats"
 ] as const;
 
@@ -58,7 +62,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 8, verified: 0, total: 8 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 9, verified: 0, total: 9 });
     await run(database, migration);
   });
 }
@@ -149,7 +153,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 8, total: 8 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 9, total: 9 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -161,7 +165,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 5, file_name: "0005_storage_cleanup_tombstones.sql" },
         { version: 6, file_name: "0006_storage_cleanup_leases.sql" },
         { version: 7, file_name: "0007_worker_health.sql" },
-        { version: 8, file_name: "0008_business_approval_pdm_admin.sql" }
+        { version: 8, file_name: "0008_business_approval_pdm_admin.sql" },
+        { version: 9, file_name: "0009_webdav_controlled_sync.sql" }
       ]);
     });
   });
@@ -945,7 +950,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["bootstrap", bootstrap]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 8
+          rowCount: 9
         });
         await expectDenied(
           pool,
