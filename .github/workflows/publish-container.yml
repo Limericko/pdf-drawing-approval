@@ -38,8 +38,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:0.9.2-${{ github.sha }}
-            ghcr.io/${{ github.repository }}:0.9.2-refactor
+            ghcr.io/limericko/pdf-drawing-approval:0.9.2-${{ github.sha }}
+            ghcr.io/limericko/pdf-drawing-approval:0.9.2-refactor
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
@@ -49,5 +49,5 @@ jobs:
         run: |
           echo "### Container image" >> "$GITHUB_STEP_SUMMARY"
           echo '```text' >> "$GITHUB_STEP_SUMMARY"
-          echo "ghcr.io/${GITHUB_REPOSITORY}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/limericko/pdf-drawing-approval@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
