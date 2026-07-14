@@ -396,7 +396,7 @@ export function App() {
           {signatureCheckError && signatureSetupRequired(user) && (
             <div className="error">签名状态检查失败：{signatureCheckError}</div>
           )}
-          <RoleFlowGuide user={user} />
+          {route.name !== "detail" && <RoleFlowGuide user={user} />}
           <Suspense fallback={<PageLoadingFallback routeName={route.name} />}>
             {routeAllowed && route.name === "tasks" && <MyTasksPage user={user} />}
             {routeAllowed && route.name === "submit" && <SubmitDrawingPage />}

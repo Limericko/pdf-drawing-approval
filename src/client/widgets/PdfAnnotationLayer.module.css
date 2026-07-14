@@ -1,0 +1,100 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-base);
+  user-select: none;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.layer[data-readonly="true"] { cursor: default; }
+
+.arrowLayer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.arrow { stroke: currentColor; stroke-width: 2.4; vector-effect: non-scaling-stroke; }
+.ink { fill: none; stroke: currentColor; stroke-width: 2.8; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.cloud { fill: color-mix(in srgb, var(--color-surface) 8%, transparent); stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.draftLine { stroke-dasharray: 6 5; }
+.arrowLayer marker path { fill: currentColor; }
+
+.tone { --annotation-tone: var(--color-danger); color: var(--annotation-tone); }
+.tone[data-color="amber"] { --annotation-tone: var(--color-warning); }
+.tone[data-color="blue"] { --annotation-tone: var(--color-info); }
+.tone[data-color="green"] { --annotation-tone: var(--color-success); }
+
+.marker {
+  position: absolute;
+  padding: 0;
+  color: var(--annotation-tone);
+  background: color-mix(in srgb, var(--color-surface) 22%, transparent);
+  border: 2px solid currentColor;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-document);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.marker[data-kind="circle"] { border-radius: 50%; }
+.marker[data-kind="text"] { display: block; min-width: 2.625rem; min-height: 1.5rem; text-align: left; background: color-mix(in srgb, var(--color-surface) 10%, transparent); }
+.marker[data-kind="cloud"] { background: transparent; border-color: transparent; box-shadow: none; }
+.marker[data-kind="pin"], .marker[data-kind="arrow"] {
+  display: grid;
+  width: 1.375rem;
+  min-width: 1.375rem;
+  height: 1.375rem;
+  min-height: 1.375rem;
+  place-items: center;
+  color: var(--color-text-on-dark);
+  background: var(--annotation-tone);
+  border: 2px solid var(--color-surface);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.marker > span, .marker[data-kind="pin"], .marker[data-kind="arrow"] { font-size: 0.625rem; font-weight: 900; line-height: 1; }
+.marker > span { position: absolute; left: -2px; top: -1.125rem; display: grid; min-width: 1.125rem; height: 1rem; place-items: center; color: var(--color-text-on-dark); background: var(--annotation-tone); border-radius: var(--radius-lg); }
+.marker > em { display: none; }
+.marker[data-kind="text"] > em { position: absolute; inset: 3px; display: block; overflow: hidden; padding: 1px 3px; color: var(--annotation-tone); font-size: var(--font-size-body); font-style: normal; font-weight: 800; line-height: 1.15; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in srgb, var(--color-surface) 50%, transparent); border-radius: 2px; text-shadow: 0 1px 0 var(--color-surface); }
+.marker[data-resolved="true"] { opacity: 0.46; }
+.marker[data-selected="true"] { z-index: var(--z-sticky); background: color-mix(in srgb, var(--color-surface) 34%, transparent); box-shadow: var(--focus-ring), var(--shadow-floating); }
+
+.callout {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + var(--space-2));
+  z-index: var(--z-popover);
+  width: max-content;
+  max-width: min(16.25rem, 38vw);
+  padding: 0.4375rem 0.5625rem;
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+  border: 1px solid currentColor;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-floating);
+  font-size: var(--font-size-caption);
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.marker[data-kind="pin"] .callout, .marker[data-kind="arrow"] .callout { color: var(--color-text); }
+
+.resizeHandle { position: absolute; z-index: var(--z-sticky); width: 0.6875rem; min-width: 0.6875rem; height: 0.6875rem; min-height: 0.6875rem; padding: 0; background: var(--color-surface); border: 2px solid currentColor; border-radius: 3px; box-shadow: var(--shadow-document); }
+.resizeHandle[data-handle="nw"] { left: -7px; top: -7px; cursor: nwse-resize; }
+.resizeHandle[data-handle="ne"] { right: -7px; top: -7px; cursor: nesw-resize; }
+.resizeHandle[data-handle="sw"] { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.resizeHandle[data-handle="se"] { right: -7px; bottom: -7px; cursor: nwse-resize; }
+
+.draft { position: absolute; z-index: var(--z-base); display: block; min-width: 0.625rem; min-height: 0.625rem; color: var(--annotation-tone); background: color-mix(in srgb, var(--color-surface) 12%, transparent); border: 2px dashed currentColor; border-radius: var(--radius-sm); pointer-events: none; }
+.draft[data-kind="circle"] { border-radius: 50%; }
+.draft[data-kind="text"] { min-width: 2.625rem; min-height: 1.5rem; padding: var(--space-1); color: var(--annotation-tone); font-size: var(--font-size-body); font-weight: 800; line-height: 1.15; white-space: pre-wrap; overflow: hidden; background: color-mix(in srgb, var(--color-surface) 44%, transparent); text-shadow: 0 1px 0 var(--color-surface); }
+.arrow.draft { position: static; min-width: 0; min-height: 0; background: transparent; border: 0; stroke-dasharray: 7 5; }

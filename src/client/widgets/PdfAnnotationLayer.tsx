@@ -13,6 +13,7 @@ import {
   moveAnnotation,
   resizeAnnotation
 } from "./PdfAnnotationWorkspace.tsx";
+import styles from "./PdfAnnotationLayer.module.css";
 
 export type RatioPoint = {
   xRatio: number;
@@ -221,13 +222,14 @@ export function PdfAnnotationLayer({
   return (
     <div
       ref={layerRef}
-      className={`pdf-annotation-layer ${readOnly || tool === "select" ? "pdf-annotation-layer--readonly" : ""}`}
+      className={styles.layer}
+      data-readonly={readOnly || tool === "select"}
       onPointerDown={startDraft}
       onPointerMove={moveDraft}
       onPointerUp={completeDraft}
       onPointerCancel={() => setDrag(null)}
     >
-      <svg className="pdf-annotation-arrow-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <svg className={styles.arrowLayer} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
         <defs>
           {renderedAnnotations
             .filter((annotation) => annotation.kind === "arrow")
@@ -235,7 +237,8 @@ export function PdfAnnotationLayer({
               <marker
                 key={annotationArrowMarkerId(annotation)}
                 id={annotationArrowMarkerId(annotation)}
-                className={`pdf-annotation-tone--${annotation.color}`}
+                className={styles.tone}
+                data-color={annotation.color}
                 style={annotationToneStyle(annotation)}
                 markerWidth="8"
                 markerHeight="8"
@@ -249,7 +252,8 @@ export function PdfAnnotationLayer({
           {draftAnnotation?.kind === "arrow" && (
             <marker
               id={annotationArrowMarkerId(draftAnnotation)}
-              className={`pdf-annotation-tone--${draftAnnotation.color}`}
+              className={styles.tone}
+              data-color={draftAnnotation.color}
               style={annotationToneStyle(draftAnnotation)}
               markerWidth="8"
               markerHeight="8"
@@ -266,7 +270,8 @@ export function PdfAnnotationLayer({
           .map((annotation) => (
             <line
               key={annotation.id}
-              className={`pdf-annotation-arrow pdf-annotation-tone--${annotation.color}`}
+              className={`${styles.arrow} ${styles.tone}`}
+              data-color={annotation.color}
               style={annotationToneStyle(annotation)}
               x1={`${annotation.xRatio * 100}%`}
               y1={`${annotation.yRatio * 100}%`}
@@ -280,7 +285,8 @@ export function PdfAnnotationLayer({
           .map((annotation) => (
             <polyline
               key={annotation.id}
-              className={`pdf-annotation-ink pdf-annotation-tone--${annotation.color}`}
+              className={`${styles.ink} ${styles.tone}`}
+              data-color={annotation.color}
               style={annotationToneStyle(annotation)}
               points={pointsToPolyline(annotation.pointsJson)}
             />
@@ -290,14 +296,16 @@ export function PdfAnnotationLayer({
           .map((annotation) => (
             <path
               key={annotation.id}
-              className={`pdf-annotation-cloud pdf-annotation-tone--${annotation.color}`}
+              className={`${styles.cloud} ${styles.tone}`}
+              data-color={annotation.color}
               style={annotationToneStyle(annotation)}
               d={createCloudAnnotationPath(annotation)}
             />
           ))}
         {draftAnnotation?.kind === "arrow" && (
           <line
-            className={`pdf-annotation-arrow pdf-annotation-draft pdf-annotation-tone--${draftAnnotation.color}`}
+            className={`${styles.arrow} ${styles.draft} ${styles.tone}`}
+            data-color={draftAnnotation.color}
             style={annotationToneStyle(draftAnnotation)}
             x1={`${draftAnnotation.xRatio * 100}%`}
             y1={`${draftAnnotation.yRatio * 100}%`}
@@ -308,14 +316,16 @@ export function PdfAnnotationLayer({
         )}
         {draftAnnotation?.kind === "ink" && (
           <polyline
-            className={`pdf-annotation-ink pdf-annotation-draft-line pdf-annotation-tone--${draftAnnotation.color}`}
+            className={`${styles.ink} ${styles.draftLine} ${styles.tone}`}
+            data-color={draftAnnotation.color}
             style={annotationToneStyle(draftAnnotation)}
             points={pointsToPolyline(draftAnnotation.pointsJson)}
           />
         )}
         {draftAnnotation?.kind === "cloud" && (
           <path
-            className={`pdf-annotation-cloud pdf-annotation-draft-line pdf-annotation-tone--${draftAnnotation.color}`}
+            className={`${styles.cloud} ${styles.draftLine} ${styles.tone}`}
+            data-color={draftAnnotation.color}
             style={annotationToneStyle(draftAnnotation)}
             d={createCloudAnnotationPath(draftAnnotation)}
           />
@@ -345,11 +355,9 @@ export function PdfAnnotationLayer({
 function DraftMarker({ annotation }: { annotation: ApprovalAnnotationInput }) {
   return (
     <span
-      className={[
-        "pdf-annotation-draft",
-        `pdf-annotation-draft--${annotation.kind}`,
-        `pdf-annotation-tone--${annotation.color ?? "red"}`
-      ].join(" ")}
+      className={`${styles.draft} ${styles.tone}`}
+      data-kind={annotation.kind}
+      data-color={annotation.color ?? "red"}
       style={{
         ...annotationToneStyle(annotation),
         left: `${annotation.xRatio * 100}%`,
@@ -384,15 +392,7 @@ function AnnotationMarker({
   onMoveEdit: (event: ReactPointerEvent<HTMLElement>) => void;
   onCompleteEdit: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
-  const className = [
-    "pdf-annotation-marker",
-    `pdf-annotation-marker--${annotation.kind}`,
-    `pdf-annotation-tone--${annotation.color}`,
-    selected ? "pdf-annotation-marker--selected" : "",
-    annotation.resolved ? "pdf-annotation-marker--resolved" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const className = `${styles.marker} ${styles.tone}`;
   const isBox = isBoxAnnotation(annotation);
 
   if (annotation.kind === "pin" || annotation.kind === "arrow") {
@@ -401,6 +401,10 @@ function AnnotationMarker({
         type="button"
         data-annotation-id={annotation.id}
         className={className}
+        data-kind={annotation.kind}
+        data-color={annotation.color}
+        data-selected={selected}
+        data-resolved={annotation.resolved}
         style={{ ...annotationToneStyle(annotation), left: `${annotation.xRatio * 100}%`, top: `${annotation.yRatio * 100}%` }}
         title={annotation.message}
         onPointerDown={(event) => {
@@ -413,7 +417,7 @@ function AnnotationMarker({
         onClick={() => onSelect?.(annotation)}
       >
         {sequence}
-        {selected && <strong className="pdf-annotation-callout">{annotation.message}</strong>}
+        {selected && <strong className={styles.callout}>{annotation.message}</strong>}
       </button>
     );
   }
@@ -424,6 +428,10 @@ function AnnotationMarker({
       tabIndex={0}
       data-annotation-id={annotation.id}
       className={className}
+      data-kind={annotation.kind}
+      data-color={annotation.color}
+      data-selected={selected}
+      data-resolved={annotation.resolved}
       style={{
         ...annotationToneStyle(annotation),
         left: `${annotation.xRatio * 100}%`,
@@ -446,14 +454,15 @@ function AnnotationMarker({
     >
       <span>{sequence}</span>
       {annotation.kind === "text" && <em>{annotation.message}</em>}
-      {selected && <strong className="pdf-annotation-callout">{annotation.message}</strong>}
+      {selected && <strong className={styles.callout}>{annotation.message}</strong>}
       {selected &&
         !readOnly &&
         isBox &&
         resizeHandles.map((handle) => (
           <i
             key={handle}
-            className={`pdf-annotation-resize-handle pdf-annotation-resize-handle--${handle}`}
+            className={styles.resizeHandle}
+            data-handle={handle}
             role="button"
             tabIndex={0}
             aria-label={`调整 ${handle}`}

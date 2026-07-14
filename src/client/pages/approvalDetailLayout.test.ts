@@ -4,23 +4,31 @@ import { describe, expect, it } from "vitest";
 
 const source = fs.readFileSync(path.resolve("src/client/pages/ApprovalDetailPage.tsx"), "utf8");
 const annotationSidePanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/AnnotationSidePanel.tsx"), "utf8");
-const floatingSupportPanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/FloatingSupportPanel.tsx"), "utf8");
+const activityInspectorSource = fs.readFileSync(path.resolve("src/client/features/pdf-studio/ActivityInspector.tsx"), "utf8");
 const pdmMetadataPanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/PdmMetadataPanel.tsx"), "utf8");
 const signaturePanelSource = fs.readFileSync(path.resolve("src/client/pages/approvalDetail/SignaturePanel.tsx"), "utf8");
-const combinedSource = [source, annotationSidePanelSource, floatingSupportPanelSource, pdmMetadataPanelSource, signaturePanelSource].join("\n");
+const combinedSource = [source, annotationSidePanelSource, activityInspectorSource, pdmMetadataPanelSource, signaturePanelSource].join("\n");
 const workspaceSource = fs.readFileSync(path.resolve("src/client/widgets/PdfAnnotationWorkspace.tsx"), "utf8");
 const layerSource = fs.readFileSync(path.resolve("src/client/widgets/PdfAnnotationLayer.tsx"), "utf8");
 
 function sidePanelSource() {
-  const start = source.indexOf('<aside className="side-panel">');
+  const start = source.indexOf('<aside className={studioStyles.inspector}');
   const end = source.indexOf("</aside>", start);
   return start === -1 || end === -1 ? "" : source.slice(start, end);
 }
 
 describe("approval detail page layout structure", () => {
-  it("extracts large side, support, and signature panels into dedicated components", () => {
+  it("uses the Phase 3 document-first studio shell and responsive inspector", () => {
+    expect(source).toContain("PdfStudioLayout.module.css");
+    expect(source).toContain("studioStyles.contextStrip");
+    expect(source).toContain("studioStyles.canvas");
+    expect(source).toContain("studioStyles.inspector");
+    expect(source).toContain("打开审阅检查器");
+    expect(source).toContain("IssueInspector");
+  });
+  it("extracts large side, activity, and signature panels into dedicated components", () => {
     expect(source).toContain("AnnotationSidePanel");
-    expect(source).toContain("FloatingSupportPanel");
+    expect(source).toContain("ActivityInspector");
     expect(source).toContain("SignaturePanel");
   });
 
@@ -37,20 +45,17 @@ describe("approval detail page layout structure", () => {
     expect(effectBody).toContain("active = false;");
   });
 
-  it("opens traceability and collaboration content from side-panel floating actions", () => {
+  it("keeps traceability and collaboration inside the inspector activity tab", () => {
     const sidePanel = sidePanelSource();
 
-    expect(sidePanel).not.toContain("timeline-list");
-    expect(sidePanel).not.toContain("comment-list");
-    expect(sidePanel).toContain("support-launcher");
-    expect(sidePanel).toContain("openSupportPanel(\"comments\")");
-    expect(sidePanel).toContain("openSupportPanel(\"timeline\")");
-    expect(sidePanel).toContain("openSupportPanel(\"history\")");
+    expect(sidePanel).toContain("ActivityInspector");
+    expect(sidePanel).toContain('inspectorTab === "activity"');
+    expect(activityInspectorSource).toContain("协同与追溯");
     expect(source).toContain("const signedPdfCacheKey");
     expect(combinedSource).toContain("getSignedFileUrl(approval.id, signedPdfCacheKey)");
     expect(source).not.toContain('className="detail-support-section"');
-    expect(combinedSource).toContain('className="floating-support-panel"');
-    expect(combinedSource).toContain('className="floating-panel-header"');
+    expect(source).not.toContain("FloatingSupportPanel");
+    expect(source).not.toContain("floatingPanelPosition");
   });
 
   it("uses an in-page PDF placement workspace while editing signature positions", () => {
@@ -63,7 +68,9 @@ describe("approval detail page layout structure", () => {
   });
 
   it("uses task-focused copy for review and signed PDF output", () => {
-    expect(source).toContain("审核与签审");
+    expect(source).toContain("审阅检查器");
+    expect(source).toContain("ReviewActionBar");
+    expect(source).toContain("onApproveAndNext");
     expect(combinedSource).toContain("左侧保留原始 PDF，签后 PDF 用于正式打印。");
   });
 
@@ -113,8 +120,9 @@ describe("approval detail page layout structure", () => {
     expect(source).toContain("AnnotationDraftPopover");
     expect(source).toContain("pendingAnnotationDraft");
     expect(source).toContain("onConfirmDraftAnnotation");
-    expect(source).toContain("annotation-popover");
-    expect(source).toContain("填写批注内容");
+    expect(source).toContain("draftStyles.popover");
+    expect(source).toContain("普通说明");
+    expect(source).toContain("正式问题");
     expect(source).not.toContain("先写说明，再在左侧图纸上放置批注");
   });
 
@@ -123,7 +131,7 @@ describe("approval detail page layout structure", () => {
     const toolbarEnd = source.indexOf("const annotationColors", toolbarStart);
     const toolbarSource = toolbarStart === -1 || toolbarEnd === -1 ? "" : source.slice(toolbarStart, toolbarEnd);
 
-    expect(source).toContain('className="annotation-toolbar"');
+    expect(source).toContain("className={toolbarStyles.bar}");
     expect(source).toContain('aria-label="PDF 批注工具"');
     for (const label of ["选择", "定位", "箭头", "矩形", "圆形", "文字", "画笔", "云线", "删除"]) {
       expect(toolbarSource).toContain(label);
@@ -136,18 +144,18 @@ describe("approval detail page layout structure", () => {
     expect(source).toContain("Palette");
     expect(source).toContain("annotationCustomColor");
     expect(source).toContain('type="color"');
-    expect(source).toContain('className="annotation-color-palette"');
-    expect(source).toContain('className="annotation-color-palette__swatches"');
+    expect(source).toContain("className={toolbarStyles.colors}");
+    expect(source).toContain("className={toolbarStyles.swatch}");
     expect(source).toContain('aria-pressed={color === item.color}');
-    expect(source).toContain('className="annotation-custom-color__well"');
+    expect(source).toContain("className={toolbarStyles.customWell}");
     expect(source).toContain("annotationColorTone(customColor)");
     expect(source).toContain("annotationStyleJsonForColor(annotationColor, annotationCustomColor)");
     expect(source).toContain("Icon: MousePointer2");
-    expect(source).toContain('className="annotation-toolbar__label"');
+    expect(source).toContain("className={toolbarStyles.label}");
   });
 
   it("shows the selected annotation message on the drawing", () => {
-    expect(layerSource).toContain("pdf-annotation-callout");
+    expect(layerSource).toContain("styles.callout");
     expect(layerSource).toContain("selected &&");
     expect(layerSource).toContain("{annotation.message}");
     expect(layerSource).toContain("annotationToneStyle(annotation)");
@@ -161,8 +169,8 @@ describe("approval detail page layout structure", () => {
   });
 
   it("offers a guarded reset action for annotated review PDFs", () => {
-    const annotationPanelStart = annotationSidePanelSource.indexOf('className="annotation-panel"');
-    const annotationListStart = annotationSidePanelSource.indexOf('<ul className="annotation-list"', annotationPanelStart);
+    const annotationPanelStart = annotationSidePanelSource.indexOf("className={styles.root}");
+    const annotationListStart = annotationSidePanelSource.indexOf("<ul className={styles.list}", annotationPanelStart);
     const annotationPanelHeader =
       annotationPanelStart === -1 || annotationListStart === -1 ? "" : annotationSidePanelSource.slice(annotationPanelStart, annotationListStart);
 

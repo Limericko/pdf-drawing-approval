@@ -31,7 +31,8 @@ describe("PDF signature placement workspace page mapping", () => {
     expect(source).toContain('removeEventListener("wheel"');
     expect(source).toContain("onPointerDownCapture={startPdfPan}");
     expect(source).not.toContain("onWheel={onPdfViewportWheel}");
-    expect(source).toContain("className={pdfViewportScrollClassName");
+    expect(source).toContain("className={styles.viewport}");
+    expect(source).toContain("data-pan={viewport.panMode}");
   });
 
   it("offers page navigation without removing viewport wheel and pan wiring", () => {
@@ -42,9 +43,9 @@ describe("PDF signature placement workspace page mapping", () => {
     expect(source).toContain("scrollIntoView({ block: \"start\"");
     expect(source).toContain('aria-label="上一页"');
     expect(source).toContain('aria-label="下一页"');
-    expect(source).toContain('className="pdf-page-thumbnails"');
+    expect(source).toContain("className={styles.thumbnails}");
     expect(source).toContain('aria-label={`跳转到第 ${pageNumber} 页`');
-    expect(source).toContain("pdf-page-thumbnail--active");
+    expect(source).toContain("data-active={pageNumber === currentPage}");
     expect(source).toContain('addEventListener("wheel"');
     expect(source).toContain("onPointerDownCapture={startPdfPan}");
   });

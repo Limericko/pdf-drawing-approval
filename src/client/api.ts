@@ -367,6 +367,58 @@ export type ApprovalComment = {
   resolvedAt: string | null;
 };
 
+export type ApprovalIssueSeverity = "low" | "medium" | "high" | "critical";
+export type ApprovalIssueStatus = "open" | "in_progress" | "review" | "closed";
+export type ApprovalIssueTransitionAction = "start" | "submit_review" | "return" | "close" | "force_close";
+
+export type ApprovalIssue = {
+  id: number;
+  approvalId: number;
+  annotationId: number | null;
+  creatorUserId: number;
+  creatorDisplayName: string | null;
+  assigneeUserId: number;
+  assigneeDisplayName: string | null;
+  title: string;
+  description: string;
+  severity: ApprovalIssueSeverity;
+  status: ApprovalIssueStatus;
+  dueAt: string | null;
+  version: number;
+  resolutionSummary: string | null;
+  reviewNote: string | null;
+  forcedCloseReason: string | null;
+  submittedForReviewAt: string | null;
+  closedByUserId: number | null;
+  closedByDisplayName: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  eventCount?: number;
+};
+
+export type ApprovalIssueEvent = {
+  id: number;
+  issueId: number;
+  actorUserId: number;
+  actorDisplayName: string | null;
+  action: "created" | "started" | "submitted_review" | "returned" | "closed" | "force_closed";
+  fromStatus: ApprovalIssueStatus | null;
+  toStatus: ApprovalIssueStatus;
+  note: string | null;
+  createdAt: string;
+};
+
+export type ApprovalIssueInput = {
+  annotationId?: number | null;
+  assigneeUserId: number;
+  title: string;
+  description: string;
+  severity: ApprovalIssueSeverity;
+  dueAt?: string | null;
+  clientRequestId?: string | null;
+};
+
 export type ApprovalAnnotationKind = "pin" | "rect" | "arrow" | "circle" | "text" | "ink" | "cloud";
 export type ApprovalAnnotationColor = "red" | "amber" | "blue" | "green" | "custom";
 
@@ -744,6 +796,64 @@ export function createApprovalComment(approvalId: number, input: { kind: "commen
 
 export function resolveApprovalComment(approvalId: number, commentId: number) {
   return requestJson<ApprovalComment>(`/api/approvals/${approvalId}/comments/${commentId}/resolve`, { method: "POST" });
+}
+
+export function listApprovalIssues(approvalId: number) {
+  return requestJson<ApprovalIssue[]>(`/api/approvals/${approvalId}/issues`);
+}
+
+export function listApprovalIssueAssignees(approvalId: number) {
+  return requestJson<User[]>(`/api/approvals/${approvalId}/issues/assignees`);
+}
+
+export function listApprovalIssueEvents(approvalId: number, issueId: number) {
+  return requestJson<ApprovalIssueEvent[]>(`/api/approvals/${approvalId}/issues/${issueId}/events`);
+}
+
+export async function createApprovalIssue(approvalId: number, input: ApprovalIssueInput) {
+  const payload = { ...input, clientRequestId: input.clientRequestId ?? crypto.randomUUID() };
+  const send = () => requestJson<ApprovalIssue>(`/api/approvals/${approvalId}/issues`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  try {
+    return await send();
+  } catch (error) {
+    if (!(error instanceof TypeError) || !navigator.onLine) throw error;
+    return send();
+  }
+}
+
+export function updateApprovalIssue(approvalId: number, issueId: number, input: Partial<Omit<ApprovalIssueInput, "annotationId" | "clientRequestId">> & { expectedVersion: number }) {
+  return requestJson<ApprovalIssue>(`/api/approvals/${approvalId}/issues/${issueId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input)
+  });
+}
+
+export function transitionApprovalIssue(
+  approvalId: number,
+  issueId: number,
+  input: { action: ApprovalIssueTransitionAction; note?: string | null; expectedVersion: number }
+) {
+  return requestJson<ApprovalIssue>(`/api/approvals/${approvalId}/issues/${issueId}/transitions`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export function subscribeApprovalIssueEvents(
+  approvalId: number,
+  onIssueChanged: () => void,
+  onStatusChange?: (status: "connected" | "reconnecting") => void
+) {
+  const token = getToken();
+  const query = new URLSearchParams(token ? { token } : {});
+  const source = new EventSource(apiUrl(`/api/approvals/${approvalId}/issues/stream?${query}`));
+  source.addEventListener("ready", () => onStatusChange?.("connected"));
+  source.addEventListener("issue.changed", onIssueChanged);
+  source.onerror = () => onStatusChange?.("reconnecting");
+  return () => source.close();
 }
 
 export function listApprovalAnnotations(approvalId: number) {

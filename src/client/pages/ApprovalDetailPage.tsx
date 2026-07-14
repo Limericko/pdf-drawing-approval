@@ -1,21 +1,27 @@
-import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowUpRight,
   Check,
   Circle,
   Cloud,
+  Copy,
   MapPin,
   MousePointer2,
   Palette,
   Pencil,
+  PanelRightOpen,
+  X,
   Printer,
   Square,
   Trash2,
   Type,
+  Undo2,
+  Redo2,
   type LucideIcon
 } from "lucide-react";
 import {
   createApprovalComment,
+  createApprovalIssue,
   createApprovalAnnotation,
   deleteApprovalAnnotation,
   getApproval,
@@ -24,6 +30,9 @@ import {
   getSignedFileUrl,
   listApprovalAnnotations,
   listApprovalComments,
+  listApprovalIssueAssignees,
+  listApprovalIssues,
+  listApprovals,
   listApprovalOperationLogs,
   listSignaturePlacements,
   markPrinted,
@@ -38,6 +47,9 @@ import {
   saveApprovalPlacementsAsTemplate,
   saveSignaturePlacements,
   submitReview,
+  subscribeApprovalIssueEvents,
+  transitionApprovalIssue,
+  updateApprovalIssue,
   updateApprovalAnnotation,
   voidApproval,
   type Approval,
@@ -45,6 +57,10 @@ import {
   type ApprovalAnnotationColor,
   type ApprovalAnnotationInput,
   type ApprovalComment,
+  type ApprovalIssue,
+  type ApprovalIssueInput,
+  type ApprovalIssueSeverity,
+  type ApprovalIssueTransitionAction,
   type SignaturePlacement,
   type OperationLog,
   type User
@@ -70,13 +86,18 @@ import type { AnnotationTool } from "../widgets/PdfAnnotationWorkspace.tsx";
 import { statusLabel } from "../widgets/status.ts";
 import { StatusChip } from "../widgets/StatusChip.tsx";
 import { AnnotationSidePanel } from "./approvalDetail/AnnotationSidePanel.tsx";
-import { FloatingSupportPanel, type SupportTab } from "./approvalDetail/FloatingSupportPanel.tsx";
 import { PdmMetadataPanel, type PdmRepairDraft } from "./approvalDetail/PdmMetadataPanel.tsx";
 import { SignaturePanel } from "./approvalDetail/SignaturePanel.tsx";
-import { Button, ButtonLink } from "../ui/actions/index.tsx";
+import { Button, ButtonLink, IconButton } from "../ui/actions/index.tsx";
 import { Checkbox, NumberInput, Select, TextInput } from "../ui/forms/index.tsx";
-import { InlineAlert } from "../ui/feedback/index.tsx";
+import { ConnectionBanner, InlineAlert } from "../ui/feedback/index.tsx";
 import { Dialog } from "../ui/overlays/index.tsx";
+import { IssueInspector } from "../features/pdf-studio/IssueInspector.tsx";
+import studioStyles from "../features/pdf-studio/PdfStudioLayout.module.css";
+import toolbarStyles from "../features/pdf-studio/PdfToolbar.module.css";
+import { ReviewActionBar } from "../features/pdf-studio/ReviewActionBar.tsx";
+import draftStyles from "../features/pdf-studio/AnnotationDraftPopover.module.css";
+import { ActivityInspector, type ActivityTab } from "../features/pdf-studio/ActivityInspector.tsx";
 import {
   canRegenerateSignedPdf,
   canCreateAnnotation,
@@ -106,6 +127,10 @@ type PendingAnnotationDraft = {
   left: number;
   top: number;
 };
+type AnnotationHistoryEntry =
+  | { kind: "create"; annotationId: number | null; input: ApprovalAnnotationInput }
+  | { kind: "update"; annotationId: number; before: ApprovalAnnotationInput; after: ApprovalAnnotationInput }
+  | { kind: "delete"; annotationId: number | null; input: ApprovalAnnotationInput };
 
 const PdfAnnotationWorkspace = lazy(() =>
   import("../widgets/PdfAnnotationWorkspace.tsx").then((module) => ({ default: module.PdfAnnotationWorkspace }))
@@ -116,9 +141,13 @@ const PdfSignaturePlacementWorkspace = lazy(() =>
 
 export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const detailPdfStageRef = useRef<HTMLDivElement | null>(null);
+  const annotationUndoStack = useRef<AnnotationHistoryEntry[]>([]);
+  const annotationRedoStack = useRef<AnnotationHistoryEntry[]>([]);
   const [approval, setApproval] = useState<Approval | null>(null);
   const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
   const [approvalComments, setApprovalComments] = useState<ApprovalComment[]>([]);
+  const [approvalIssues, setApprovalIssues] = useState<ApprovalIssue[]>([]);
+  const [issueAssignees, setIssueAssignees] = useState<User[]>([]);
   const [annotations, setAnnotations] = useState<ApprovalAnnotation[]>([]);
   const [reviewComment, setReviewComment] = useState("");
   const [annotationMessage, setAnnotationMessage] = useState("");
@@ -133,10 +162,16 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [continuousAnnotationMode, setContinuousAnnotationMode] = useState(false);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<number | null>(null);
   const [annotationScrollRequest, setAnnotationScrollRequest] = useState(0);
+  const [annotationHistoryVersion, setAnnotationHistoryVersion] = useState(0);
+  const [annotationSaveStatus, setAnnotationSaveStatus] = useState<"saving" | "saved" | "error" | "offline">("saved");
+  const [issueRealtimeStatus, setIssueRealtimeStatus] = useState<"connected" | "reconnecting">("connected");
   const [pendingAnnotationDraft, setPendingAnnotationDraft] = useState<PendingAnnotationDraft | null>(null);
   const [draftAnnotationMessage, setDraftAnnotationMessage] = useState("");
+  const [draftAnnotationMode, setDraftAnnotationMode] = useState<"note" | "issue">("note");
+  const [draftIssueTitle, setDraftIssueTitle] = useState("");
+  const [draftIssueSeverity, setDraftIssueSeverity] = useState<ApprovalIssueSeverity>("medium");
+  const [draftIssueAssigneeId, setDraftIssueAssigneeId] = useState("");
   const [collaborationMessage, setCollaborationMessage] = useState("");
-  const [collaborationKind, setCollaborationKind] = useState<"comment" | "issue">("comment");
   const [repairPath, setRepairPath] = useState("");
   const [voidReason, setVoidReason] = useState("");
   const [pdmRepairDraft, setPdmRepairDraft] = useState<PdmRepairDraft>(() => emptyPdmRepairDraft());
@@ -144,11 +179,11 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const [signaturePlacements, setSignaturePlacements] = useState<SignaturePlacement[]>(() => defaultSignaturePlacements());
   const [placementEditing, setPlacementEditing] = useState(false);
   const [templateName, setTemplateName] = useState("");
-  const [supportTab, setSupportTab] = useState<SupportTab>("comments");
-  const [activeSupportPanel, setActiveSupportPanel] = useState<SupportTab | null>(null);
-  const [floatingPanelPosition, setFloatingPanelPosition] = useState({ x: 320, y: 120 });
+  const [supportTab, setSupportTab] = useState<ActivityTab>("comments");
   const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<"issues" | "annotations" | "details" | "activity">("issues");
   const [printSettings, setPrintSettings] = useState<PrintSettings>(() => defaultPrintSettings());
   const [printers, setPrinters] = useState<DesktopPrinter[]>([]);
   const [printError, setPrintError] = useState("");
@@ -162,10 +197,12 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
 
   async function reload(isCurrent = () => true) {
     setError("");
-    const [next, logs, comments, placements, annotations] = await Promise.all([
+    const [next, logs, comments, issues, assignees, placements, annotations] = await Promise.all([
       getApproval(id),
       listApprovalOperationLogs(id),
       listApprovalComments(id),
+      listApprovalIssues(id),
+      listApprovalIssueAssignees(id),
       listSignaturePlacements(id),
       listApprovalAnnotations(id)
     ]);
@@ -176,6 +213,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     setTemplateName((current) => current || `${next.projectName}-${next.partName}`);
     setOperationLogs(logs);
     setApprovalComments(comments);
+    setApprovalIssues(issues);
+    setIssueAssignees(assignees);
     setAnnotations(annotations);
     setSignaturePlacements(placements.length > 0 ? placements : defaultSignaturePlacements());
     setRepairPath((current) => current || next.currentFilePath);
@@ -184,6 +223,9 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
 
   useEffect(() => {
     let active = true;
+    annotationUndoStack.current = [];
+    annotationRedoStack.current = [];
+    setAnnotationHistoryVersion((current) => current + 1);
     reload(() => active).catch((err) => {
       if (active) setError(detailReloadErrorMessage(err));
     });
@@ -191,6 +233,47 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       active = false;
     };
   }, [id]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!approval || busyAction || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        void undoAnnotationChange();
+      } else if (event.key.toLowerCase() === "y" || (event.key.toLowerCase() === "z" && event.shiftKey)) {
+        event.preventDefault();
+        void redoAnnotationChange();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [approval?.id, busyAction]);
+
+  useEffect(() => {
+    const markOffline = () => setAnnotationSaveStatus("offline");
+    const markOnline = () => setAnnotationSaveStatus((current) => current === "offline" ? "saved" : current);
+    window.addEventListener("offline", markOffline);
+    window.addEventListener("online", markOnline);
+    if (!navigator.onLine) markOffline();
+    return () => {
+      window.removeEventListener("offline", markOffline);
+      window.removeEventListener("online", markOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!approval) return;
+    return subscribeApprovalIssueEvents(approval.id, () => {
+      void Promise.all([listApprovalIssues(approval.id), listApprovalOperationLogs(approval.id)])
+        .then(([issues, logs]) => {
+          setApprovalIssues(issues);
+          setOperationLogs(logs);
+        })
+        .catch(() => setIssueRealtimeStatus("reconnecting"));
+    }, setIssueRealtimeStatus);
+  }, [approval?.id]);
 
   useEffect(() => {
     if (!desktopClient) return;
@@ -213,19 +296,28 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     };
   }, [desktopClient]);
 
-  async function review(decision: "approved" | "rejected") {
+  async function review(decision: "approved" | "rejected", openNext = false) {
     if (user.role !== "supervisor" && user.role !== "process") return;
     setError("");
     if (decision === "rejected" && !reviewComment.trim() && !annotations.some((annotation) => !annotation.resolved)) {
       setError("驳回时请填写意见，或先在图纸上添加批注。");
       return;
     }
+    setBusyAction("review");
     try {
       const next = await submitReview(id, user.role, decision, reviewComment);
       await afterApprovalChanged(next, decision === "approved" ? "审核已通过。" : "审核已驳回。");
       setReviewComment("");
+      if (openNext) {
+        const queue = await listApprovals({ mine: true, status: "pending" });
+        const nextTask = queue.find((item) => item.id !== id);
+        window.location.hash = nextTask ? `#/approvals/${nextTask.id}` : "#/approvals";
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交失败");
+      const detail = err instanceof Error ? err.message : "提交失败";
+      setError(detail === "OPEN_HIGH_SEVERITY_ISSUES" ? "仍有高或严重级问题未关闭，暂不能通过图纸。" : detail);
+    } finally {
+      setBusyAction("");
     }
   }
 
@@ -254,10 +346,9 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     setError("");
     setMessage("");
     try {
-      await createApprovalComment(approval.id, { kind: collaborationKind, message: collaborationMessage });
+      await createApprovalComment(approval.id, { kind: "comment", message: collaborationMessage });
       setCollaborationMessage("");
-      setCollaborationKind("comment");
-      setMessage(collaborationKind === "issue" ? "问题已记录。" : "评论已记录。");
+      setMessage("讨论已添加。");
       const [logs, comments] = await Promise.all([listApprovalOperationLogs(approval.id), listApprovalComments(approval.id)]);
       setOperationLogs(logs);
       setApprovalComments(comments);
@@ -281,6 +372,70 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       setApprovalComments(comments);
     } catch (err) {
       setError(err instanceof Error ? err.message : "解决问题失败");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function createFormalIssue(input: ApprovalIssueInput) {
+    if (!approval) return;
+    setBusyAction("issue-create");
+    setError("");
+    setMessage("");
+    try {
+      await createApprovalIssue(approval.id, input);
+      const [issues, logs] = await Promise.all([listApprovalIssues(approval.id), listApprovalOperationLogs(approval.id)]);
+      setApprovalIssues(issues);
+      setOperationLogs(logs);
+      setInspectorTab("issues");
+      setMessage("正式问题已创建并分配。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "创建正式问题失败");
+      throw err;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function transitionFormalIssue(
+    issue: ApprovalIssue,
+    action: ApprovalIssueTransitionAction,
+    note?: string
+  ) {
+    if (!approval) return;
+    setBusyAction(`issue-${issue.id}-${action}`);
+    setError("");
+    setMessage("");
+    try {
+      await transitionApprovalIssue(approval.id, issue.id, { action, note, expectedVersion: issue.version });
+      const [issues, logs] = await Promise.all([listApprovalIssues(approval.id), listApprovalOperationLogs(approval.id)]);
+      setApprovalIssues(issues);
+      setOperationLogs(logs);
+      setMessage("问题状态已更新。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新问题状态失败");
+      throw err;
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function updateFormalIssue(issue: ApprovalIssue, input: Partial<Omit<ApprovalIssueInput, "annotationId" | "clientRequestId">>) {
+    if (!approval) return;
+    setBusyAction(`issue-${issue.id}-update`);
+    setError("");
+    try {
+      await updateApprovalIssue(approval.id, issue.id, { ...input, expectedVersion: issue.version });
+      const [issues, logs] = await Promise.all([listApprovalIssues(approval.id), listApprovalOperationLogs(approval.id)]);
+      setApprovalIssues(issues);
+      setOperationLogs(logs);
+      setMessage("问题字段已更新。");
+    } catch (err) {
+      setError(err instanceof Error && err.message === "ISSUE_VERSION_CONFLICT"
+        ? "问题已被其他用户更新，页面已刷新，请核对后重试。"
+        : err instanceof Error ? err.message : "更新问题失败");
+      setApprovalIssues(await listApprovalIssues(approval.id));
+      throw err;
     } finally {
       setBusyAction("");
     }
@@ -324,7 +479,80 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     ]);
     setOperationLogs(logs);
     setAnnotations(nextAnnotations);
+    setAnnotationSaveStatus("saved");
     return nextAnnotations;
+  }
+
+  function recordAnnotationHistory(entry: AnnotationHistoryEntry) {
+    annotationUndoStack.current.push(entry);
+    annotationRedoStack.current = [];
+    setAnnotationHistoryVersion((current) => current + 1);
+  }
+
+  async function undoAnnotationChange() {
+    if (!approval || busyAction) return;
+    const entry = annotationUndoStack.current.pop();
+    if (!entry) return;
+    setBusyAction("annotation-history");
+    setAnnotationSaveStatus("saving");
+    setError("");
+    try {
+      if (entry.kind === "create") {
+        if (entry.annotationId !== null) await deleteApprovalAnnotation(approval.id, entry.annotationId);
+        entry.annotationId = null;
+        setSelectedAnnotationId(null);
+      } else if (entry.kind === "update") {
+        await updateApprovalAnnotation(approval.id, entry.annotationId, entry.before);
+        setSelectedAnnotationId(entry.annotationId);
+      } else {
+        const restored = await createApprovalAnnotation(approval.id, entry.input);
+        entry.annotationId = restored.id;
+        setSelectedAnnotationId(restored.id);
+      }
+      annotationRedoStack.current.push(entry);
+      await refreshAnnotationTrace(approval.id);
+      setMessage("已撤销上一项批注修改。");
+    } catch (err) {
+      annotationUndoStack.current.push(entry);
+      setError(err instanceof Error ? `撤销失败：${err.message}` : "撤销批注修改失败");
+      setAnnotationSaveStatus("error");
+    } finally {
+      setBusyAction("");
+      setAnnotationHistoryVersion((current) => current + 1);
+    }
+  }
+
+  async function redoAnnotationChange() {
+    if (!approval || busyAction) return;
+    const entry = annotationRedoStack.current.pop();
+    if (!entry) return;
+    setBusyAction("annotation-history");
+    setAnnotationSaveStatus("saving");
+    setError("");
+    try {
+      if (entry.kind === "create") {
+        const restored = await createApprovalAnnotation(approval.id, entry.input);
+        entry.annotationId = restored.id;
+        setSelectedAnnotationId(restored.id);
+      } else if (entry.kind === "update") {
+        await updateApprovalAnnotation(approval.id, entry.annotationId, entry.after);
+        setSelectedAnnotationId(entry.annotationId);
+      } else if (entry.annotationId !== null) {
+        await deleteApprovalAnnotation(approval.id, entry.annotationId);
+        entry.annotationId = null;
+        setSelectedAnnotationId(null);
+      }
+      annotationUndoStack.current.push(entry);
+      await refreshAnnotationTrace(approval.id);
+      setMessage("已重做批注修改。");
+    } catch (err) {
+      annotationRedoStack.current.push(entry);
+      setError(err instanceof Error ? `重做失败：${err.message}` : "重做批注修改失败");
+      setAnnotationSaveStatus("error");
+    } finally {
+      setBusyAction("");
+      setAnnotationHistoryVersion((current) => current + 1);
+    }
   }
 
   function startAnnotationDraft(input: ApprovalAnnotationInput, anchor: AnnotationDraftAnchor) {
@@ -334,6 +562,10 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
 
     setPendingAnnotationDraft({ input, left, top });
     setDraftAnnotationMessage("");
+    setDraftAnnotationMode("note");
+    setDraftIssueTitle("");
+    setDraftIssueSeverity("medium");
+    setDraftIssueAssigneeId(issueAssignees[0] ? String(issueAssignees[0].id) : "");
     setError("");
     setMessage("");
   }
@@ -346,12 +578,33 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       setError("请先填写批注内容。");
       return;
     }
+    if (draftAnnotationMode === "issue" && (!draftIssueTitle.trim() || !Number(draftIssueAssigneeId))) {
+      setError("创建正式问题时，请填写问题标题并选择负责人。");
+      return;
+    }
     setBusyAction("annotation");
+    setAnnotationSaveStatus("saving");
     setError("");
     setMessage("");
     try {
       const created = await createApprovalAnnotation(approval.id, { ...pendingAnnotationDraft.input, message });
-      setMessage("图纸批注已添加。");
+      recordAnnotationHistory({ kind: "create", annotationId: created.id, input: annotationToInput(created) });
+      if (draftAnnotationMode === "issue") {
+        await createApprovalIssue(approval.id, {
+          annotationId: created.id,
+          assigneeUserId: Number(draftIssueAssigneeId),
+          title: draftIssueTitle.trim(),
+          description: message,
+          severity: draftIssueSeverity,
+          dueAt: null
+        });
+        setApprovalIssues(await listApprovalIssues(approval.id));
+        setInspectorOpen(true);
+        setInspectorTab("issues");
+        setMessage("正式问题已定位、创建并分配。");
+      } else {
+        setMessage("图纸说明已添加。");
+      }
       setSelectedAnnotationId(created.id);
       setAnnotationScrollRequest((current) => current + 1);
       if (!continuousAnnotationMode) setAnnotationTool("select");
@@ -360,6 +613,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       await refreshAnnotationTrace(approval.id);
     } catch (err) {
       setError(err instanceof Error && err.message ? `批注保存失败，请检查网络后重试。${err.message}` : "批注保存失败，请检查网络后重试。");
+      setAnnotationSaveStatus(navigator.onLine ? "error" : "offline");
     } finally {
       setBusyAction("");
     }
@@ -368,6 +622,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   function cancelDraftAnnotation() {
     setPendingAnnotationDraft(null);
     setDraftAnnotationMessage("");
+    setDraftIssueTitle("");
   }
 
   function selectAnnotation(annotation: ApprovalAnnotation, options: { scrollIntoView?: boolean } = {}) {
@@ -391,6 +646,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       return;
     }
     setBusyAction(`annotation-update-${selectedAnnotation.id}`);
+    setAnnotationSaveStatus("saving");
     setError("");
     setMessage("");
     try {
@@ -408,6 +664,12 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
         styleJson: annotationStyleJsonForColor(annotationColor, annotationCustomColor, selectedAnnotation.styleJson),
         color: annotationColor
       });
+      recordAnnotationHistory({
+        kind: "update",
+        annotationId: selectedAnnotation.id,
+        before: annotationToInput(selectedAnnotation),
+        after: annotationToInput(updated)
+      });
       setMessage("图纸批注已更新。");
       setSelectedAnnotationId(updated.id);
       setAnnotationColor(updated.color);
@@ -417,6 +679,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       await refreshAnnotationTrace(approval.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "批注更新失败");
+      setAnnotationSaveStatus(navigator.onLine ? "error" : "offline");
     } finally {
       setBusyAction("");
     }
@@ -425,6 +688,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   async function updateAnnotationGeometry(annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) {
     if (!approval || !canEditAnnotation(user, approval, annotation)) return;
     setBusyAction(`annotation-update-${annotation.id}`);
+    setAnnotationSaveStatus("saving");
     setError("");
     setMessage("");
     try {
@@ -433,6 +697,12 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
         message: annotation.message,
         color: input.color ?? annotation.color,
         styleJson: input.styleJson ?? annotation.styleJson
+      });
+      recordAnnotationHistory({
+        kind: "update",
+        annotationId: annotation.id,
+        before: annotationToInput(annotation),
+        after: annotationToInput(updated)
       });
       setMessage("图纸批注位置已更新。");
       setSelectedAnnotationId(updated.id);
@@ -445,6 +715,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       await refreshAnnotationTrace(approval.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "批注位置更新失败");
+      setAnnotationSaveStatus(navigator.onLine ? "error" : "offline");
     } finally {
       setBusyAction("");
     }
@@ -468,16 +739,40 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
 
   async function removeAnnotation(annotationId: number) {
     if (!approval) return;
+    const annotation = annotations.find((item) => item.id === annotationId);
     setBusyAction(`annotation-delete-${annotationId}`);
+    setAnnotationSaveStatus("saving");
     setError("");
     setMessage("");
     try {
       await deleteApprovalAnnotation(approval.id, annotationId);
+      if (annotation) recordAnnotationHistory({ kind: "delete", annotationId: null, input: annotationToInput(annotation) });
       setMessage("图纸批注已删除。");
       setSelectedAnnotationId((current) => (current === annotationId ? null : current));
       await refreshAnnotationTrace(approval.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "批注删除失败");
+      setAnnotationSaveStatus(navigator.onLine ? "error" : "offline");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function duplicateSelectedAnnotation() {
+    if (!approval || !selectedAnnotation) return;
+    setBusyAction(`annotation-copy-${selectedAnnotation.id}`);
+    setAnnotationSaveStatus("saving");
+    setError("");
+    try {
+      const created = await createApprovalAnnotation(approval.id, duplicateAnnotationInput(selectedAnnotation));
+      recordAnnotationHistory({ kind: "create", annotationId: created.id, input: annotationToInput(created) });
+      setSelectedAnnotationId(created.id);
+      setAnnotationMessage(created.message);
+      setMessage("批注副本已创建，可在画布中拖动到新位置。");
+      await refreshAnnotationTrace(approval.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "复制批注失败");
+      setAnnotationSaveStatus(navigator.onLine ? "error" : "offline");
     } finally {
       setBusyAction("");
     }
@@ -495,7 +790,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
       setAnnotationMessage("");
       setAnnotationTool("select");
       setPendingAnnotationDraft(null);
-      setDraftAnnotationMessage("");
+    setDraftAnnotationMessage("");
+    setDraftIssueTitle("");
       setMessage(result.deletedCount > 0 ? "已回退到初始版，批注已清空。" : "当前没有需要回退的批注。");
       await refreshAnnotationTrace(approval.id);
     } catch (err) {
@@ -655,44 +951,6 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
     }
   }
 
-  function openSupportPanel(nextPanel: SupportTab) {
-    setSupportTab(nextPanel);
-    setActiveSupportPanel(nextPanel);
-    setFloatingPanelPosition((current) => {
-      const preferred = window.innerWidth <= 680 ? { x: 12, y: 72 } : current;
-      return {
-        x: Math.min(Math.max(12, preferred.x), Math.max(12, window.innerWidth - 360)),
-        y: Math.min(Math.max(12, preferred.y), Math.max(12, window.innerHeight - 120))
-      };
-    });
-  }
-
-  function startFloatingPanelDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const origin = floatingPanelPosition;
-
-    function onPointerMove(moveEvent: PointerEvent) {
-      const maxX = Math.max(12, window.innerWidth - 360);
-      const maxY = Math.max(12, window.innerHeight - 120);
-      setFloatingPanelPosition({
-        x: Math.min(Math.max(12, origin.x + moveEvent.clientX - startX), maxX),
-        y: Math.min(Math.max(12, origin.y + moveEvent.clientY - startY), maxY)
-      });
-    }
-
-    function onPointerUp() {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-    }
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-  }
-
   if (!approval) {
     return <div className="empty">{error || "加载中"}</div>;
   }
@@ -711,6 +969,22 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const annotationReadonlyMessage = annotationReadonlyCopy(user, approval);
   const annotationStyleJson = annotationStyleJsonForColor(annotationColor, annotationCustomColor);
   const openAnnotationCount = annotations.filter((annotation) => !annotation.resolved).length;
+  const blockingIssueCount = approvalIssues.filter(
+    (issue) => issue.status !== "closed" && (issue.severity === "high" || issue.severity === "critical")
+  ).length;
+  const pageIssueCounts = approvalIssues.reduce<Record<number, number>>((counts, issue) => {
+    if (issue.status === "closed" || !issue.annotationId) return counts;
+    const annotation = annotations.find((item) => item.id === issue.annotationId);
+    if (annotation) counts[annotation.pageNumber] = (counts[annotation.pageNumber] ?? 0) + 1;
+    return counts;
+  }, {});
+  const canUndoAnnotations = annotationHistoryVersion >= 0 && annotationUndoStack.current.length > 0;
+  const canRedoAnnotations = annotationHistoryVersion >= 0 && annotationRedoStack.current.length > 0;
+  const openFormalIssueCount = approvalIssues.filter((issue) => issue.status !== "closed").length;
+  const canReviewCurrentTask = approval.status === "pending" && (
+    (user.role === "supervisor" && approval.supervisorStatus === "pending") ||
+    (user.role === "process" && approval.processStatus === "pending")
+  );
   const filteredAnnotations = filterAnnotations(annotations, {
     ...annotationFilters,
     currentUserId: user.id
@@ -722,29 +996,26 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
   const historyItems = relatedVersionsForPanel(approval);
   const visibleLogs = visibleOperationLogs(operationLogs, timelineExpanded);
   const hiddenLogCount = Math.max(0, operationLogs.length - timelinePreviewLimit);
-  const supportPanelTitles: Record<SupportTab, string> = {
-    comments: "协同记录",
-    timeline: "操作时间线",
-    history: "同零件其它版本"
-  };
-
   return (
-    <section>
-      <div className="page-heading row">
-        <div>
-          <span className="eyebrow">DRAWING REVIEW</span>
+    <section className={studioStyles.page}>
+      <div className={studioStyles.header}>
+        <div className={studioStyles.identity}>
           <h1>{approval.projectName} / {approval.partName}</h1>
-          <p>{approval.version} · {statusLabel(approval.status)}</p>
+          <p>工程图纸审阅 · {approval.version} · {statusLabel(approval.status)}</p>
         </div>
-        <div className="heading-actions">
+        <div className={studioStyles.headerActions}>
           <StatusChip status={approval.status} />
           <StatusChip status={approval.signatureStatus} context="signature" />
+          <IconButton className={studioStyles.mobileInspectorButton} label="打开审阅检查器" variant="secondary" size="sm" onClick={() => setInspectorOpen(true)}>
+            <PanelRightOpen size={16} />
+          </IconButton>
           <a className="button-link secondary-link" href="#/approvals">返回列表</a>
         </div>
       </div>
       {error && <div className="error">{error}</div>}
       {message && <div className="success">{message}</div>}
-      <div className="drawing-meta-strip">
+      {issueRealtimeStatus === "reconnecting" && <ConnectionBanner status="reconnecting">问题实时更新正在重连，当前页面仍可继续查看。</ConnectionBanner>}
+      <div className={studioStyles.contextStrip}>
         <div>
           <span>项目</span>
           <strong>{approval.projectName}</strong>
@@ -766,8 +1037,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
           <strong>{approval.source === "web_upload" ? "网页提交" : "目录监听"}</strong>
         </div>
       </div>
-      <div className="detail-layout">
-        <div className="detail-pdf-stage" ref={detailPdfStageRef}>
+      <div className={studioStyles.body}>
+        <div className={studioStyles.canvas} ref={detailPdfStageRef}>
           {pdfState === "ready" ? (
             <Suspense fallback={<div className="pdf-frame pdf-frame--message">正在加载 PDF 工具...</div>}>
               {placementEditing ? (
@@ -784,7 +1055,12 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                       color={annotationColor}
                       customColor={annotationCustomColor}
                       canDeleteSelected={Boolean(selectedAnnotation && canEditAnnotation(user, approval, selectedAnnotation))}
+                      canCopySelected={Boolean(selectedAnnotation && canEditAnnotation(user, approval, selectedAnnotation))}
                       deleteBusy={selectedAnnotation ? busyAction === `annotation-delete-${selectedAnnotation.id}` : false}
+                      copyBusy={selectedAnnotation ? busyAction === `annotation-copy-${selectedAnnotation.id}` : false}
+                      historyBusy={busyAction === "annotation-history"}
+                      canUndo={canUndoAnnotations}
+                      canRedo={canRedoAnnotations}
                       onToolChange={(nextTool) => {
                         setAnnotationTool(nextTool);
                         if (nextTool !== "select") setPendingAnnotationDraft(null);
@@ -797,6 +1073,9 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                       onDeleteSelected={() => {
                         if (selectedAnnotation) void removeAnnotation(selectedAnnotation.id);
                       }}
+                      onCopySelected={() => void duplicateSelectedAnnotation()}
+                      onUndo={() => void undoAnnotationChange()}
+                      onRedo={() => void redoAnnotationChange()}
                     />
                   )}
                   <PdfAnnotationWorkspace
@@ -811,6 +1090,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                     onSelectAnnotation={selectAnnotation}
                     selectedAnnotationId={selectedAnnotationId}
                     annotationScrollRequest={annotationScrollRequest}
+                    pageIssueCounts={pageIssueCounts}
                     onUpdateAnnotationGeometry={canCreateAnnotations ? updateAnnotationGeometry : undefined}
                   />
                   {pendingAnnotationDraft && (
@@ -818,8 +1098,17 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
                       left={pendingAnnotationDraft.left}
                       top={pendingAnnotationDraft.top}
                       message={draftAnnotationMessage}
+                      mode={draftAnnotationMode}
+                      issueTitle={draftIssueTitle}
+                      issueSeverity={draftIssueSeverity}
+                      issueAssigneeId={draftIssueAssigneeId}
+                      issueAssignees={issueAssignees}
                       busy={busyAction === "annotation"}
                       onMessageChange={setDraftAnnotationMessage}
+                      onModeChange={setDraftAnnotationMode}
+                      onIssueTitleChange={setDraftIssueTitle}
+                      onIssueSeverityChange={setDraftIssueSeverity}
+                      onIssueAssigneeChange={setDraftIssueAssigneeId}
                       onConfirmDraftAnnotation={onConfirmDraftAnnotation}
                       onCancel={cancelDraftAnnotation}
                     />
@@ -853,9 +1142,16 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
             </div>
           )}
           </div>
-        <aside className="side-panel">
-          <h2>审核与签审</h2>
-          <div className="status-summary">
+        {inspectorOpen && <button type="button" className={studioStyles.backdrop} aria-label="关闭审阅检查器" onClick={() => setInspectorOpen(false)} />}
+        <aside className={studioStyles.inspector} data-open={inspectorOpen} aria-label="审阅检查器">
+          <div className={studioStyles.inspectorHeader}>
+          <div className={studioStyles.inspectorTitle}>
+            <h2>审阅检查器</h2>
+            <div className={studioStyles.inspectorDismiss}>
+              <IconButton label="关闭审阅检查器" variant="ghost" size="sm" onClick={() => setInspectorOpen(false)}><X size={16} /></IconButton>
+            </div>
+          </div>
+          <div className={studioStyles.reviewStatus}>
             <div>
               <span>主管</span>
               <StatusChip status={approval.supervisorStatus} />
@@ -865,18 +1161,46 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
               <StatusChip status={approval.processStatus} />
             </div>
           </div>
-          <div className="support-launcher" aria-label="协同与追溯">
-            <button type="button" className="secondary-button" onClick={() => openSupportPanel("comments")}>
-              协同记录 <span>{approvalComments.length}</span>
-            </button>
-            <button type="button" className="secondary-button" onClick={() => openSupportPanel("timeline")}>
-              操作时间线 <span>{operationLogs.length}</span>
-            </button>
-            <button type="button" className="secondary-button" onClick={() => openSupportPanel("history")}>
-              其它版本 <span>{historyItems.length}</span>
-            </button>
+          <div className={studioStyles.tabs} role="tablist" aria-label="检查器内容">
+            {([['issues', `问题 ${openFormalIssueCount}`], ['annotations', `批注 ${openAnnotationCount}`], ['details', '属性'], ['activity', '记录']] as const).map(([tab, label]) =>
+              <button key={tab} type="button" role="tab" aria-selected={inspectorTab === tab} onClick={() => setInspectorTab(tab)}>{label}</button>)}
           </div>
-          <PdmMetadataPanel
+          </div>
+          {inspectorTab === "issues" && <IssueInspector
+            approvalId={approval.id}
+            user={user}
+            issues={approvalIssues}
+            assignees={issueAssignees}
+            selectedAnnotation={selectedAnnotation}
+            busyAction={busyAction}
+            onCreate={createFormalIssue}
+            onUpdate={updateFormalIssue}
+            onTransition={transitionFormalIssue}
+            onLocateAnnotation={(annotationId) => {
+              const annotation = annotations.find((item) => item.id === annotationId);
+              if (annotation) {
+                setInspectorTab("annotations");
+                selectAnnotation(annotation, { scrollIntoView: true });
+              }
+            }}
+          />}
+          {inspectorTab === "activity" && <ActivityInspector
+            tab={supportTab}
+            collaborationMessage={collaborationMessage}
+            busyAction={busyAction}
+            comments={approvalComments}
+            logs={operationLogs}
+            visibleLogs={visibleLogs}
+            hiddenLogCount={hiddenLogCount}
+            timelineExpanded={timelineExpanded}
+            historyItems={historyItems}
+            onTabChange={setSupportTab}
+            onMessageChange={setCollaborationMessage}
+            onSubmitComment={() => void submitCollaboration()}
+            onResolveLegacyIssue={(commentId) => void resolveIssue(commentId)}
+            onToggleTimeline={() => setTimelineExpanded((current) => !current)}
+          />}
+          {inspectorTab === "details" && <PdmMetadataPanel
             approval={approval}
             user={user}
             draft={pdmRepairDraft}
@@ -893,8 +1217,8 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
             }}
             onSaveRepair={savePdmMetadata}
             onRetryPublish={retryPdmPublish}
-          />
-          {showAnnotations && (
+          />}
+          {inspectorTab === "annotations" && showAnnotations && (
             <AnnotationSidePanel
               approval={approval}
               user={user}
@@ -925,6 +1249,7 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
               onResetAnnotations={resetAnnotations}
             />
           )}
+          {inspectorTab === "details" && <>
           <SignaturePanel
             approval={approval}
             signedPdfReady={signedPdfReady}
@@ -957,16 +1282,6 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
             <dt>工艺</dt>
             <dd>{statusLabel(approval.processStatus)} {approval.processComment && `- ${approval.processComment}`}</dd>
           </dl>
-          {(user.role === "supervisor" || user.role === "process") && approval.status === "pending" && (
-            <div className="review-box">
-              <h2>我的审核</h2>
-              <textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} placeholder="审核意见，驳回时必填" />
-              <div className="actions">
-                <button type="button" onClick={() => review("approved")}>通过</button>
-                <button type="button" className="danger" onClick={() => review("rejected")}>驳回</button>
-              </div>
-            </div>
-          )}
           {(user.role === "designer" || user.role === "admin") && approval.status === "approved_for_print" && (
             <div className="print-action-box">
               {canNativePrint && (
@@ -1020,33 +1335,21 @@ export function ApprovalDetailPage({ id, user }: { id: number; user: User }) {
               </button>
             </div>
           )}
+          </>}
         </aside>
       </div>
-      {activeSupportPanel && (
-        <FloatingSupportPanel
-          activeTab={activeSupportPanel}
-          title={supportPanelTitles[activeSupportPanel]}
-          position={floatingPanelPosition}
-          supportTab={supportTab}
-          collaborationKind={collaborationKind}
-          collaborationMessage={collaborationMessage}
-          busyAction={busyAction}
-          approvalComments={approvalComments}
-          operationLogs={operationLogs}
-          visibleLogs={visibleLogs}
-          hiddenLogCount={hiddenLogCount}
-          timelineExpanded={timelineExpanded}
-          historyItems={historyItems}
-          onStartDrag={startFloatingPanelDrag}
-          onClose={() => setActiveSupportPanel(null)}
-          onCollaborationKindChange={setCollaborationKind}
-          onCollaborationMessageChange={setCollaborationMessage}
-          onSubmitCollaboration={submitCollaboration}
-          onResolveIssue={resolveIssue}
-          onToggleTimelineExpanded={() => setTimelineExpanded((current) => !current)}
-          onExpandTimeline={() => setTimelineExpanded(true)}
-        />
-      )}
+      <ReviewActionBar
+        saveStatus={annotationSaveStatus}
+        openIssueCount={openFormalIssueCount}
+        blockingIssueCount={blockingIssueCount}
+        canReview={canReviewCurrentTask}
+        comment={reviewComment}
+        busy={busyAction === "review"}
+        onCommentChange={setReviewComment}
+        onApprove={() => void review("approved")}
+        onApproveAndNext={() => void review("approved", true)}
+        onReject={() => void review("rejected")}
+      />
       {printDialogOpen && approval && (
         <PrintSettingsDialog
           printers={printers}
@@ -1073,64 +1376,93 @@ function AnnotationToolbar({
   color,
   customColor,
   canDeleteSelected,
+  canCopySelected,
   deleteBusy,
+  copyBusy,
+  historyBusy,
+  canUndo,
+  canRedo,
   onToolChange,
   onColorChange,
   onCustomColorChange,
-  onDeleteSelected
+  onDeleteSelected,
+  onCopySelected,
+  onUndo,
+  onRedo
 }: {
   tool: AnnotationTool;
   color: ApprovalAnnotationColor;
   customColor: string;
   canDeleteSelected: boolean;
+  canCopySelected: boolean;
   deleteBusy: boolean;
+  copyBusy: boolean;
+  historyBusy: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
   onToolChange: (tool: AnnotationTool) => void;
   onColorChange: (color: ApprovalAnnotationColor) => void;
   onCustomColorChange: (color: string) => void;
   onDeleteSelected: () => void;
+  onCopySelected: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
 }) {
   return (
-    <div className="pdf-annotation-toolbar">
-      <div className="annotation-toolbar" aria-label="PDF 批注工具">
-        <div className="annotation-toolbar__tools">
+    <div className={toolbarStyles.bar} aria-label="PDF 批注工具">
+        <span className={toolbarStyles.mobileNotice}>精确绘制请使用桌面宽屏；当前仍可查看、定位和处理问题。</span>
+        <div className={toolbarStyles.group}>
           {annotationToolbarItems.map((item) =>
             item.type === "delete" ? (
               <button
                  key={item.label}
                  type="button"
-                 className="secondary-button danger-lite"
+                 className={toolbarStyles.tool}
+                 data-danger="true"
                  title={item.label}
+                 aria-label={item.label}
                  onClick={onDeleteSelected}
                  disabled={!canDeleteSelected || deleteBusy}
                >
                  <item.Icon size={15} strokeWidth={2.2} aria-hidden="true" />
-                 <span className="annotation-toolbar__label">{deleteBusy ? "删除中" : item.label}</span>
+                 <span className={toolbarStyles.label}>{deleteBusy ? "删除中" : item.label}</span>
                </button>
              ) : (
                <button
                  key={item.tool}
                  type="button"
-                 className={tool === item.tool ? "active" : ""}
+                 className={toolbarStyles.tool}
+                 data-selected={tool === item.tool}
                  title={item.label}
+                 aria-label={item.label}
+                 aria-pressed={tool === item.tool}
                  onClick={() => onToolChange(item.tool)}
                >
                  <item.Icon size={15} strokeWidth={2.2} aria-hidden="true" />
-                 <span className="annotation-toolbar__label">{item.label}</span>
+                 <span className={toolbarStyles.label}>{item.label}</span>
                </button>
              )
            )}
-         </div>
-         <div className="annotation-color-palette" aria-label="批注颜色">
-          <span className="annotation-color-palette__label">
+        </div>
+        <div className={toolbarStyles.group} aria-label="撤销与重做">
+          <button type="button" className={toolbarStyles.tool} title="复制选中批注" aria-label="复制选中批注"
+            disabled={!canCopySelected || copyBusy} onClick={onCopySelected}><Copy size={15} /><span className={toolbarStyles.label}>{copyBusy ? "复制中" : "复制"}</span></button>
+          <button type="button" className={toolbarStyles.tool} title="撤销 Ctrl+Z" aria-label="撤销批注修改"
+            disabled={!canUndo || historyBusy} onClick={onUndo}><Undo2 size={15} /><span className={toolbarStyles.label}>撤销</span></button>
+          <button type="button" className={toolbarStyles.tool} title="重做 Ctrl+Y" aria-label="重做批注修改"
+            disabled={!canRedo || historyBusy} onClick={onRedo}><Redo2 size={15} /><span className={toolbarStyles.label}>重做</span></button>
+        </div>
+         <div className={toolbarStyles.colors} aria-label="批注颜色">
+          <span className={toolbarStyles.colorLabel}>
             <Palette size={14} strokeWidth={2.2} aria-hidden="true" />
-            颜色
+            <span>颜色</span>
           </span>
-          <div className="annotation-color-palette__swatches">
             {annotationColors.map((item) => (
               <button
                 key={item.color}
                 type="button"
-                className={`annotation-color-swatch annotation-color-swatch--${item.color} ${color === item.color ? "active" : ""}`}
+                className={toolbarStyles.swatch}
+                data-selected={color === item.color}
                 style={{ "--annotation-choice": item.tone } as CSSProperties}
                 title={item.label}
                 aria-label={item.label}
@@ -1141,26 +1473,24 @@ function AnnotationToolbar({
               </button>
             ))}
             <label
-              className={`annotation-custom-color ${color === "custom" ? "active" : ""}`}
+              className={toolbarStyles.custom}
+              data-selected={color === "custom"}
               style={{ "--annotation-choice": annotationColorTone(customColor) } as CSSProperties}
               title="自定义颜色"
               onClick={() => onColorChange("custom")}
             >
               <input
                 type="color"
-                className="annotation-custom-color-input"
                 value={customColor}
                 aria-label="自定义批注颜色"
                 onChange={(event) => onCustomColorChange(event.target.value)}
               />
-              <span className="annotation-custom-color__well">
+              <span className={toolbarStyles.customWell}>
                 {color === "custom" && <Check size={13} strokeWidth={2.6} aria-hidden="true" />}
               </span>
-              <span className="annotation-custom-color__text">自定义</span>
+              <span className={toolbarStyles.customText}>自定义</span>
             </label>
-          </div>
         </div>
-      </div>
     </div>
   );
 }
@@ -1169,30 +1499,70 @@ function AnnotationDraftPopover({
   left,
   top,
   message,
+  mode,
+  issueTitle,
+  issueSeverity,
+  issueAssigneeId,
+  issueAssignees,
   busy,
   onMessageChange,
+  onModeChange,
+  onIssueTitleChange,
+  onIssueSeverityChange,
+  onIssueAssigneeChange,
   onConfirmDraftAnnotation,
   onCancel
 }: {
   left: number;
   top: number;
   message: string;
+  mode: "note" | "issue";
+  issueTitle: string;
+  issueSeverity: ApprovalIssueSeverity;
+  issueAssigneeId: string;
+  issueAssignees: User[];
   busy: boolean;
   onMessageChange: (message: string) => void;
+  onModeChange: (mode: "note" | "issue") => void;
+  onIssueTitleChange: (title: string) => void;
+  onIssueSeverityChange: (severity: ApprovalIssueSeverity) => void;
+  onIssueAssigneeChange: (userId: string) => void;
   onConfirmDraftAnnotation: () => void;
   onCancel: () => void;
 }) {
   return (
     <form
-      className="annotation-popover"
+      className={draftStyles.popover}
       style={{ left, top }}
       onSubmit={(event) => {
         event.preventDefault();
         void onConfirmDraftAnnotation();
       }}
     >
-      <label>
-        填写批注内容
+      <div className={draftStyles.mode} role="group" aria-label="批注类型">
+        <button type="button" data-selected={mode === "note"} aria-pressed={mode === "note"} onClick={() => onModeChange("note")}>普通说明</button>
+        <button type="button" data-selected={mode === "issue"} aria-pressed={mode === "issue"} onClick={() => onModeChange("issue")}>正式问题</button>
+      </div>
+      {mode === "issue" ? <>
+        <label className={draftStyles.field}>问题标题
+          <input value={issueTitle} onChange={(event) => onIssueTitleChange(event.target.value)} placeholder="例如：轴承孔公差未标注" />
+        </label>
+        <div className={draftStyles.row}>
+          <label className={draftStyles.field}>严重级
+            <select value={issueSeverity} onChange={(event) => onIssueSeverityChange(event.target.value as ApprovalIssueSeverity)}>
+              <option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="critical">严重</option>
+            </select>
+          </label>
+          <label className={draftStyles.field}>负责人
+            <select value={issueAssigneeId} onChange={(event) => onIssueAssigneeChange(event.target.value)}>
+              <option value="" disabled>选择设计人员</option>
+              {issueAssignees.map((assignee) => <option key={assignee.id} value={assignee.id}>{assignee.displayName}</option>)}
+            </select>
+          </label>
+        </div>
+      </> : null}
+      <label className={draftStyles.field}>
+        {mode === "issue" ? "问题说明" : "说明内容"}
         <textarea
           autoFocus
           value={message}
@@ -1200,13 +1570,12 @@ function AnnotationDraftPopover({
           placeholder="说明这个位置需要修改或确认的内容"
         />
       </label>
-      <div className="annotation-popover__actions">
-        <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>
-          取消
-        </button>
-        <button type="submit" disabled={!message.trim() || busy}>
-          {busy ? "保存中" : "保存批注"}
-        </button>
+      <div className={draftStyles.actions}>
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>取消</Button>
+        <Button type="submit" size="sm" loading={busy}
+          disabled={!message.trim() || (mode === "issue" && (!issueTitle.trim() || !issueAssigneeId))}>
+          {mode === "issue" ? "创建正式问题" : "保存说明"}
+        </Button>
       </div>
     </form>
   );
@@ -1335,6 +1704,44 @@ function annotationStyleJsonForColor(color: ApprovalAnnotationColor, customColor
   return Object.keys(style).length > 0 ? JSON.stringify(style) : null;
 }
 
+function annotationToInput(annotation: ApprovalAnnotation): ApprovalAnnotationInput {
+  return {
+    kind: annotation.kind,
+    message: annotation.message,
+    pageNumber: annotation.pageNumber,
+    xRatio: annotation.xRatio,
+    yRatio: annotation.yRatio,
+    widthRatio: annotation.widthRatio,
+    heightRatio: annotation.heightRatio,
+    endXRatio: annotation.endXRatio,
+    endYRatio: annotation.endYRatio,
+    pointsJson: annotation.pointsJson,
+    styleJson: annotation.styleJson,
+    color: annotation.color
+  };
+}
+
+function duplicateAnnotationInput(annotation: ApprovalAnnotation): ApprovalAnnotationInput {
+  const input = annotationToInput(annotation);
+  const delta = 0.02;
+  input.xRatio = clamp(annotation.xRatio + delta, 0, 1 - (annotation.widthRatio ?? 0));
+  input.yRatio = clamp(annotation.yRatio + delta, 0, 1 - (annotation.heightRatio ?? 0));
+  if (annotation.endXRatio !== null) input.endXRatio = clamp(annotation.endXRatio + delta, 0, 1);
+  if (annotation.endYRatio !== null) input.endYRatio = clamp(annotation.endYRatio + delta, 0, 1);
+  if (annotation.pointsJson) {
+    try {
+      const points = JSON.parse(annotation.pointsJson) as Array<{ xRatio: number; yRatio: number }>;
+      input.pointsJson = JSON.stringify(points.map((point) => ({
+        xRatio: clamp(point.xRatio + delta, 0, 1),
+        yRatio: clamp(point.yRatio + delta, 0, 1)
+      })));
+    } catch {
+      input.pointsJson = annotation.pointsJson;
+    }
+  }
+  return input;
+}
+
 function readAnnotationStrokeColor(styleJson: string | null) {
   const strokeColor = parseAnnotationStyle(styleJson).strokeColor;
   return typeof strokeColor === "string" && /^#[0-9a-fA-F]{6}$/.test(strokeColor) ? strokeColor.toLowerCase() : null;
@@ -1374,10 +1781,10 @@ const annotationToolbarItems: Array<
 ];
 
 const annotationColors: Array<{ color: Exclude<ApprovalAnnotationColor, "custom">; label: string; tone: string }> = [
-  { color: "red", label: "红色", tone: "#c62828" },
-  { color: "amber", label: "橙色", tone: "#b15f00" },
-  { color: "blue", label: "蓝色", tone: "#195fbd" },
-  { color: "green", label: "绿色", tone: "#1f7a45" }
+  { color: "red", label: "红色", tone: "var(--color-danger)" },
+  { color: "amber", label: "橙色", tone: "var(--color-warning)" },
+  { color: "blue", label: "蓝色", tone: "var(--color-info)" },
+  { color: "green", label: "绿色", tone: "var(--color-success)" }
 ];
 
 function clamp(value: number, min: number, max: number) {

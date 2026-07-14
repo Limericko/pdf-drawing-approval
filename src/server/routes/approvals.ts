@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth.ts";
 import type { Approval } from "../domain/approvals.ts";
 import type { ApprovalAnnotationRepository } from "../repositories/approvalAnnotations.ts";
+import type { ApprovalIssueRepository } from "../repositories/approvalIssues.ts";
 import type { ApprovalRepository } from "../repositories/approvals.ts";
 import type { OperationLogRepository } from "../repositories/operationLogs.ts";
 import type { SettingsRepository } from "../repositories/settings.ts";
@@ -24,6 +25,7 @@ const managedStatusFolders = new Set<string>(Object.values(folders));
 export function approvalRoutes(deps: {
   approvals: ApprovalRepository;
   approvalAnnotations?: ApprovalAnnotationRepository;
+  approvalIssues?: ApprovalIssueRepository;
   settings: SettingsRepository;
   operationLogs?: OperationLogRepository;
   signatureAssets?: SignatureAssetRepository;
@@ -341,6 +343,21 @@ export function approvalRoutes(deps: {
 
     try {
       const approvalId = Number(req.params.id);
+      if (parsed.data.decision === "approved" && deps.approvalIssues) {
+        const blockingIssueCount = deps.approvalIssues.countBlockingForApproval(approvalId);
+        if (blockingIssueCount > 0) {
+          deps.operationLogs?.create({
+            actorUserId: req.user?.id ?? null,
+            actorUsername: req.user?.username ?? null,
+            action: "approval.review_blocked_by_issues",
+            targetType: "approval",
+            targetId: approvalId,
+            message: `${req.user?.displayName ?? req.user?.username ?? "用户"}尝试通过图纸，但仍有 ${blockingIssueCount} 个高严重级问题未关闭`,
+            metadata: { blockingIssueCount, role: parsed.data.role }
+          });
+          return res.status(409).json({ error: "OPEN_HIGH_SEVERITY_ISSUES", blockingIssueCount });
+        }
+      }
       const allowEmptyRejectComment =
         parsed.data.decision === "rejected" &&
         !parsed.data.comment?.trim() &&

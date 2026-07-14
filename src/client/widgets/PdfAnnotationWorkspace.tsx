@@ -5,6 +5,7 @@ import type {
   PDFPageProxy,
   RenderTask
 } from "pdfjs-dist";
+import { Maximize, PanelLeftOpen } from "lucide-react";
 import type {
   ApprovalAnnotation,
   ApprovalAnnotationColor,
@@ -19,6 +20,8 @@ import {
   pdfViewportWheelListenerOptions,
   PdfViewportToolbar
 } from "./PdfViewportControls.tsx";
+import studioStyles from "../features/pdf-studio/PdfCanvasViewport.module.css";
+import { IconButton } from "../ui/actions/index.tsx";
 
 export type AnnotationTool = "select" | "pin" | "rect" | "arrow" | "circle" | "text" | "ink" | "cloud";
 export type AnnotationResizeHandle = "nw" | "ne" | "sw" | "se";
@@ -59,7 +62,8 @@ export function PdfAnnotationWorkspace({
   onSelectAnnotation,
   selectedAnnotationId = null,
   annotationScrollRequest = 0,
-  onUpdateAnnotationGeometry
+  onUpdateAnnotationGeometry,
+  pageIssueCounts = {}
 }: {
   pdfUrl: string;
   annotations: ApprovalAnnotation[];
@@ -73,8 +77,10 @@ export function PdfAnnotationWorkspace({
   selectedAnnotationId?: number | null;
   annotationScrollRequest?: number;
   onUpdateAnnotationGeometry?: (annotation: ApprovalAnnotation, input: ApprovalAnnotationInput) => void;
+  pageIssueCounts?: Readonly<Record<number, number>>;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const panRef = useRef<PdfPanState | null>(null);
   const viewportRef = useRef(createPdfViewportState());
@@ -85,6 +91,7 @@ export function PdfAnnotationWorkspace({
   const [viewport, setViewport] = useState(createPdfViewportState);
   const [currentPage, setCurrentPage] = useState(1);
   const [panning, setPanning] = useState(false);
+  const [thumbnailRailOpen, setThumbnailRailOpen] = useState(false);
 
   useEffect(() => {
     viewportRef.current = viewport;
@@ -165,14 +172,6 @@ export function PdfAnnotationWorkspace({
   }, [status, selectedAnnotationId, selectedAnnotationRenderKey, annotationScrollRequest]);
 
   const pageWidthStyle = pdfPageWidthStyle(viewport);
-  const pdfViewportScrollClassName = [
-    "pdf-viewport-scroll",
-    viewport.panMode ? "pdf-viewport-scroll--pan" : "",
-    panning ? "pdf-viewport-scroll--panning" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   function startPdfPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (!viewport.panMode || event.button !== 0 || !scrollRef.current) return;
     event.preventDefault();
@@ -232,9 +231,13 @@ export function PdfAnnotationWorkspace({
   }
 
   return (
-    <div className="pdf-annotation-workspace">
-      <PdfViewportToolbar state={viewport} onChange={setViewport} />
-      <div className="pdf-page-navigator" aria-label="PDF 页码导航">
+    <div className={studioStyles.workspace} ref={workspaceRef}>
+      <div className={studioStyles.topBar}>
+        <PdfViewportToolbar state={viewport} onChange={setViewport} />
+        <div className={studioStyles.topActions}>
+        <IconButton className={studioStyles.railToggle} label="打开页面缩略图" variant="secondary" size="sm"
+          onClick={() => setThumbnailRailOpen((current) => !current)}><PanelLeftOpen size={16} /></IconButton>
+        <div className={studioStyles.pageNavigator} aria-label="PDF 页码导航">
         <button type="button" aria-label="上一页" onClick={() => jumpToPage(currentPage - 1)} disabled={currentPage <= 1}>
           上一页
         </button>
@@ -252,28 +255,42 @@ export function PdfAnnotationWorkspace({
         <button type="button" aria-label="下一页" onClick={() => jumpToPage(currentPage + 1)} disabled={pageCount === 0 || currentPage >= pageCount}>
           下一页
         </button>
+        </div>
+        <IconButton label="全屏查看 PDF" variant="ghost" size="sm" onClick={() => void workspaceRef.current?.requestFullscreen?.()}>
+          <Maximize size={16} />
+        </IconButton>
+        </div>
       </div>
-      {pageNumbers.length > 1 && (
-        <div className="pdf-page-thumbnails" aria-label="PDF 缩略页导航">
+      <div className={studioStyles.body}>
+      {thumbnailRailOpen ? <button type="button" className={studioStyles.railBackdrop} aria-label="关闭页面缩略图" onClick={() => setThumbnailRailOpen(false)} /> : null}
+      {pageNumbers.length > 0 && (
+        <nav className={studioStyles.rail} data-open={thumbnailRailOpen} aria-label="PDF 缩略页导航">
           {pageNumbers.map((pageNumber) => (
             <button
               type="button"
               key={pageNumber}
-              className={pageNumber === currentPage ? "pdf-page-thumbnail pdf-page-thumbnail--active" : "pdf-page-thumbnail"}
+              className={studioStyles.thumbnail}
+              data-active={pageNumber === currentPage}
               aria-label={`跳转到第 ${pageNumber} 页`}
-              onClick={() => jumpToPage(pageNumber)}
+              onClick={() => { jumpToPage(pageNumber); setThumbnailRailOpen(false); }}
             >
-              <span className="pdf-page-thumbnail__preview" aria-hidden="true">
-                <span>{pageNumber}</span>
+              <span className={studioStyles.thumbnailPreview} aria-hidden="true">
+                <PdfPageThumbnail pdf={pdf} pageNumber={pageNumber} render={shouldRenderPdfThumbnail(pageNumber, currentPage)} />
+                {(pageIssueCounts[pageNumber] ?? 0) > 0 ? <span className={studioStyles.issueCount}>{pageIssueCounts[pageNumber]}</span> : null}
               </span>
               <small>第 {pageNumber} 页</small>
             </button>
           ))}
-        </div>
+        </nav>
       )}
       <div
         ref={scrollRef}
-        className={pdfViewportScrollClassName}
+        className={studioStyles.viewport}
+        role="region"
+        aria-label="PDF 页面视口"
+        tabIndex={0}
+        data-pan={viewport.panMode}
+        data-panning={panning}
         onScroll={syncCurrentPageFromScroll}
         onPointerDownCapture={startPdfPan}
         onPointerMove={movePdfPan}
@@ -281,13 +298,13 @@ export function PdfAnnotationWorkspace({
         onPointerCancel={endPdfPan}
       >
         {status === "loading" && (
-          <div className="pdf-annotation-message">
+          <div className={studioStyles.message}>
             <strong>正在加载 PDF 预览...</strong>
             <span>批注会固定在对应页面位置，并随 PDF 一起滚动。</span>
           </div>
         )}
         {status === "error" && (
-          <div className="pdf-annotation-message pdf-annotation-message--error">
+          <div className={studioStyles.message} data-error="true">
             <strong>PDF 预览加载失败</strong>
             <span>{error || "请刷新后重试，或检查 PDF 文件是否已同步完成。"}</span>
           </div>
@@ -308,6 +325,7 @@ export function PdfAnnotationWorkspace({
               readOnly={readOnly || viewport.panMode}
               pageStyle={pageWidthStyle}
               renderZoom={viewport.mode === "manual" ? viewport.zoom : 1}
+              renderCanvas={shouldRenderHighResolutionPage(pageNumber, currentPage)}
               onDraftAnnotation={onDraftAnnotation}
               onSelectAnnotation={onSelectAnnotation}
               selectedAnnotationId={selectedAnnotationId}
@@ -315,6 +333,12 @@ export function PdfAnnotationWorkspace({
             />
           ))}
       </div>
+      </div>
+      <footer className={studioStyles.bottomBar} aria-label="PDF 视图状态">
+        <span>第 {currentPage} / {pageCount || 1} 页</span>
+        <span>{viewport.mode === "manual" ? `${Math.round(viewport.zoom * 100)}%` : viewport.mode === "fit-width" ? "适宽" : "适高"}</span>
+        <span>高清渲染：当前页及相邻页</span>
+      </footer>
     </div>
   );
 }
@@ -342,6 +366,14 @@ export function mergePageAnnotations(
   nextPageAnnotations: ApprovalAnnotation[]
 ) {
   return [...nextPageAnnotations, ...annotations.filter((annotation) => annotation.pageNumber !== pageNumber)];
+}
+
+export function shouldRenderHighResolutionPage(pageNumber: number, currentPage: number) {
+  return Math.abs(pageNumber - currentPage) <= 1;
+}
+
+export function shouldRenderPdfThumbnail(pageNumber: number, currentPage: number) {
+  return Math.abs(pageNumber - currentPage) <= 3;
 }
 
 export function createAnnotationFromDrag(
@@ -591,6 +623,7 @@ function PdfAnnotationPage({
   readOnly,
   pageStyle,
   renderZoom,
+  renderCanvas,
   onDraftAnnotation,
   onSelectAnnotation,
   selectedAnnotationId,
@@ -607,6 +640,7 @@ function PdfAnnotationPage({
   readOnly: boolean;
   pageStyle?: CSSProperties;
   renderZoom: number;
+  renderCanvas: boolean;
   onDraftAnnotation?: (annotation: ApprovalAnnotationInput, anchor: AnnotationDraftAnchor) => void;
   onSelectAnnotation?: (annotation: ApprovalAnnotation) => void;
   selectedAnnotationId: number | null;
@@ -629,6 +663,11 @@ function PdfAnnotationPage({
 
         const viewport = page.getViewport({ scale: 1 });
         setAspectRatio(`${viewport.width} / ${viewport.height}`);
+
+        if (!renderCanvas) {
+          page.cleanup?.();
+          return;
+        }
 
         const canvas = canvasRef.current;
         const context = canvas?.getContext("2d");
@@ -655,14 +694,15 @@ function PdfAnnotationPage({
       renderTask?.cancel?.();
       page?.cleanup?.();
     };
-  }, [pdf, pageNumber, renderZoom]);
+  }, [pdf, pageNumber, renderZoom, renderCanvas]);
 
   return (
-    <div ref={pageRef} className="pdf-annotation-page" style={{ ...(pageStyle ?? {}), ...(aspectRatio ? { aspectRatio } : {}) }}>
-      <canvas ref={canvasRef} className="pdf-annotation-canvas" aria-label={`PDF 第 ${pageNumber} 页`} />
-      <span className="pdf-annotation-page-number">第 {pageNumber} 页</span>
+    <div ref={pageRef} className={studioStyles.page} style={{ ...(pageStyle ?? {}), ...(aspectRatio ? { aspectRatio } : {}) }}>
+      {renderCanvas ? <canvas ref={canvasRef} className={studioStyles.canvas} aria-label={`PDF 第 ${pageNumber} 页`} />
+        : <div className={studioStyles.pagePlaceholder}>滚动到附近时渲染第 {pageNumber} 页</div>}
+      <span className={studioStyles.pageNumber}>第 {pageNumber} 页</span>
       {error && (
-        <div className="pdf-annotation-page-error">
+        <div className={studioStyles.pageError}>
           <strong>第 {pageNumber} 页渲染失败</strong>
           <span>{error}</span>
         </div>
@@ -682,6 +722,34 @@ function PdfAnnotationPage({
       />
     </div>
   );
+}
+
+function PdfPageThumbnail({ pdf, pageNumber, render }: { pdf: PDFDocumentProxy | null; pageNumber: number; render: boolean }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    if (!pdf || !render || !canvasRef.current) return;
+    let cancelled = false;
+    let page: PDFPageProxy | null = null;
+    let task: RenderTask | null = null;
+    void pdf.getPage(pageNumber).then((nextPage) => {
+      page = nextPage;
+      if (cancelled || !canvasRef.current) return;
+      const base = nextPage.getViewport({ scale: 1 });
+      const viewport = nextPage.getViewport({ scale: 140 / base.width });
+      const context = canvasRef.current.getContext("2d");
+      if (!context) return;
+      canvasRef.current.width = Math.max(1, Math.floor(viewport.width));
+      canvasRef.current.height = Math.max(1, Math.floor(viewport.height));
+      task = nextPage.render({ canvas: canvasRef.current, canvasContext: context, viewport });
+      return task.promise;
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      task?.cancel?.();
+      page?.cleanup?.();
+    };
+  }, [pdf, pageNumber, render]);
+  return render ? <canvas ref={canvasRef} /> : <span>{pageNumber}</span>;
 }
 
 function clampPoint(point: RatioPoint) {

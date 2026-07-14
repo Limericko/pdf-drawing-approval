@@ -244,6 +244,59 @@ CREATE TABLE IF NOT EXISTS approval_annotations (
 CREATE INDEX IF NOT EXISTS idx_approval_annotations_approval_id ON approval_annotations(approval_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_approval_annotations_resolved ON approval_annotations(approval_id, resolved);
 
+CREATE TABLE IF NOT EXISTS approval_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  approval_id INTEGER NOT NULL,
+  annotation_id INTEGER,
+  creator_user_id INTEGER NOT NULL,
+  assignee_user_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'review', 'closed')),
+  due_at TEXT,
+  client_request_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  resolution_summary TEXT,
+  review_note TEXT,
+  forced_close_reason TEXT,
+  submitted_for_review_at TEXT,
+  closed_by_user_id INTEGER,
+  closed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (approval_id) REFERENCES approvals(id),
+  FOREIGN KEY (annotation_id) REFERENCES approval_annotations(id),
+  FOREIGN KEY (creator_user_id) REFERENCES users(id),
+  FOREIGN KEY (assignee_user_id) REFERENCES users(id),
+  FOREIGN KEY (closed_by_user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_issues_approval_status
+  ON approval_issues(approval_id, status, severity, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_approval_issues_assignee_status
+  ON approval_issues(assignee_user_id, status, due_at, id);
+CREATE INDEX IF NOT EXISTS idx_approval_issues_annotation_id
+  ON approval_issues(annotation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_issues_client_request
+  ON approval_issues(client_request_id) WHERE client_request_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS approval_issue_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id INTEGER NOT NULL,
+  actor_user_id INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('created', 'started', 'submitted_review', 'returned', 'closed', 'force_closed')),
+  from_status TEXT CHECK (from_status IN ('open', 'in_progress', 'review', 'closed')),
+  to_status TEXT NOT NULL CHECK (to_status IN ('open', 'in_progress', 'review', 'closed')),
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (issue_id) REFERENCES approval_issues(id),
+  FOREIGN KEY (actor_user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_issue_events_issue_created
+  ON approval_issue_events(issue_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS signature_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,

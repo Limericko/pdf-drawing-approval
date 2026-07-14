@@ -11,6 +11,8 @@ import {
   mergePageAnnotations,
   moveAnnotation,
   resizeAnnotation
+  ,shouldRenderHighResolutionPage,
+  shouldRenderPdfThumbnail
 } from "./PdfAnnotationWorkspace.tsx";
 
 const annotations = [
@@ -40,7 +42,8 @@ describe("PDF annotation workspace helpers", () => {
     expect(source).toContain('removeEventListener("wheel"');
     expect(source).toContain("onPointerDownCapture={startPdfPan}");
     expect(source).not.toContain("onWheel={onPdfViewportWheel}");
-    expect(source).toContain("className={pdfViewportScrollClassName");
+    expect(source).toContain("className={studioStyles.viewport}");
+    expect(source).toContain("data-pan={viewport.panMode}");
   });
 
   it("offers page navigation without removing viewport wheel and pan wiring", () => {
@@ -51,11 +54,19 @@ describe("PDF annotation workspace helpers", () => {
     expect(source).toContain("scrollIntoView({ block: \"start\"");
     expect(source).toContain('aria-label="上一页"');
     expect(source).toContain('aria-label="下一页"');
-    expect(source).toContain('className="pdf-page-thumbnails"');
+    expect(source).toContain("className={studioStyles.rail}");
     expect(source).toContain('aria-label={`跳转到第 ${pageNumber} 页`');
-    expect(source).toContain("pdf-page-thumbnail--active");
+    expect(source).toContain("data-active={pageNumber === currentPage}");
     expect(source).toContain('addEventListener("wheel"');
     expect(source).toContain("onPointerDownCapture={startPdfPan}");
+    expect(source).toContain("renderCanvas={shouldRenderHighResolutionPage(pageNumber, currentPage)}");
+    expect(source).toContain("PdfPageThumbnail");
+  });
+
+  it("limits high-resolution canvases and lazy thumbnails in long documents", () => {
+    const pages = Array.from({ length: 200 }, (_, index) => index + 1);
+    expect(pages.filter((page) => shouldRenderHighResolutionPage(page, 100))).toEqual([99, 100, 101]);
+    expect(pages.filter((page) => shouldRenderPdfThumbnail(page, 100))).toEqual([97, 98, 99, 100, 101, 102, 103]);
   });
 
   it("filters annotations by PDF page", () => {
