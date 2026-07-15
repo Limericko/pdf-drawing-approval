@@ -11,7 +11,7 @@
 | Phase 0–5：质量、安全、UI、PDF、审批/PDM、WebDAV | 已完成并通过自动化与浏览器验收 |
 | Phase 6：通用 Docker/OCI、密钥注入、旧数据迁移工具 | 仓库实现和本地容器验收已完成 |
 | GitHub 代码仓库 | 公开；可匿名克隆和查看 |
-| GHCR 容器镜像 | 当前仍为私有包；拉取需要 `read:packages` 令牌 |
+| GHCR 容器镜像 | 已公开；可匿名按不可变 digest 拉取 |
 | 正式生产切换 | 等待域名、正式账号邮箱、云资源和恢复演练 |
 
 完整证据见 [重构完成审计](docs/refactor-completion-audit.md)。
@@ -37,21 +37,19 @@ cd pdf-drawing-approval
 
 ## 拉取生产镜像
 
-代码仓库公开不会自动改变 GitHub Container Registry 包的可见性。当前 GHCR 镜像仍为私有包；登录令牌需要 `read:packages` 权限，并且账号必须有该容器包的访问权。
+GHCR 容器包已公开，无需登录即可拉取。生产部署固定使用本次公开构建返回的不可变 digest：
 
 ```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u Limericko --password-stdin
-
-docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:ae9720dc222d2a56d7ced35e92fceda95bbbc91973732200a3426669902fd455
+docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:50b55c9a5dfc29ec684849ee8a6fc843fd2917998d2ba63dab07a98e660b9b12
 ```
 
 生产环境使用不可变 digest：
 
 ```text
-PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:ae9720dc222d2a56d7ced35e92fceda95bbbc91973732200a3426669902fd455
+PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:50b55c9a5dfc29ec684849ee8a6fc843fd2917998d2ba63dab07a98e660b9b12
 ```
 
-镜像由 [GitHub Actions 发布流程](https://github.com/Limericko/pdf-drawing-approval/actions/workflows/publish-container.yml) 构建，并附带 SBOM 与 provenance。
+镜像由 [GitHub Actions 发布流程](https://github.com/Limericko/pdf-drawing-approval/actions/workflows/publish-container.yml) 构建，并附带 SBOM 与 provenance。2026-07-15 已使用匿名 GHCR token 验证该 digest，Registry 返回 HTTP 200 且 `Docker-Content-Digest` 完全一致。
 
 ## 生产部署
 
