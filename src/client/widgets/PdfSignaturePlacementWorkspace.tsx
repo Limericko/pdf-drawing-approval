@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import type { SignaturePlacement, SignaturePlacementRole } from "../api.ts";
+import type { SignaturePlacement, SignaturePlacementRole } from "./signaturePlacementTypes.ts";
 import type {
   PDFDocumentLoadingTask,
   PDFDocumentProxy,
@@ -14,6 +14,7 @@ import {
   pdfViewportWheelListenerOptions,
   PdfViewportToolbar
 } from "./PdfViewportControls.tsx";
+import styles from "./PdfSignaturePlacementWorkspace.module.css";
 
 type PdfPanState = {
   pointerId: number;
@@ -111,14 +112,6 @@ export function PdfSignaturePlacementWorkspace({
     [pageCount]
   );
   const pageWidthStyle = pdfPageWidthStyle(viewport);
-  const pdfViewportScrollClassName = [
-    "pdf-viewport-scroll",
-    viewport.panMode ? "pdf-viewport-scroll--pan" : "",
-    panning ? "pdf-viewport-scroll--panning" : ""
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   function startPdfPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (!viewport.panMode || event.button !== 0 || !scrollRef.current) return;
     event.preventDefault();
@@ -178,9 +171,9 @@ export function PdfSignaturePlacementWorkspace({
   }
 
   return (
-    <div className="pdf-placement-workspace">
+    <div className={styles.workspace}>
       <PdfViewportToolbar state={viewport} onChange={setViewport} />
-      <div className="pdf-page-navigator" aria-label="PDF 页码导航">
+      <div className={styles.navigator} aria-label="PDF 页码导航">
         <button type="button" aria-label="上一页" onClick={() => jumpToPage(currentPage - 1)} disabled={currentPage <= 1}>
           上一页
         </button>
@@ -200,16 +193,17 @@ export function PdfSignaturePlacementWorkspace({
         </button>
       </div>
       {pageNumbers.length > 1 && (
-        <div className="pdf-page-thumbnails" aria-label="PDF 缩略页导航">
+        <div className={styles.thumbnails} aria-label="PDF 缩略页导航">
           {pageNumbers.map((pageNumber) => (
             <button
               type="button"
               key={pageNumber}
-              className={pageNumber === currentPage ? "pdf-page-thumbnail pdf-page-thumbnail--active" : "pdf-page-thumbnail"}
+              className={styles.thumbnail}
+              data-active={pageNumber === currentPage}
               aria-label={`跳转到第 ${pageNumber} 页`}
               onClick={() => jumpToPage(pageNumber)}
             >
-              <span className="pdf-page-thumbnail__preview" aria-hidden="true">
+              <span className={styles.thumbnailPreview} aria-hidden="true">
                 <span>{pageNumber}</span>
               </span>
               <small>第 {pageNumber} 页</small>
@@ -219,7 +213,12 @@ export function PdfSignaturePlacementWorkspace({
       )}
       <div
         ref={scrollRef}
-        className={pdfViewportScrollClassName}
+        className={styles.viewport}
+        role="region"
+        aria-label="签名位置 PDF 页面视口"
+        tabIndex={0}
+        data-pan={viewport.panMode}
+        data-panning={panning}
         onScroll={syncCurrentPageFromScroll}
         onPointerDownCapture={startPdfPan}
         onPointerMove={movePdfPan}
@@ -227,13 +226,13 @@ export function PdfSignaturePlacementWorkspace({
         onPointerCancel={endPdfPan}
       >
         {status === "loading" && (
-          <div className="pdf-placement-message">
+          <div className={styles.message}>
             <strong>正在加载 PDF 预览...</strong>
             <span>签名框会随页面一起滚动。</span>
           </div>
         )}
         {status === "error" && (
-          <div className="pdf-placement-message pdf-placement-message--error">
+          <div className={styles.message} data-error="true">
             <strong>PDF 预览加载失败</strong>
             <span>{error || "请刷新后重试，或检查 PDF 文件是否已同步完成。"}</span>
           </div>
@@ -342,11 +341,11 @@ function PdfPlacementPage({
   }, [pdf, pageNumber, renderZoom]);
 
   return (
-    <div ref={pageRef} className="pdf-placement-page" style={{ ...(pageStyle ?? {}), ...(aspectRatio ? { aspectRatio } : {}) }}>
-      <canvas ref={canvasRef} className="pdf-placement-canvas" aria-label={`PDF 第 ${pageNumber} 页`} />
-      <span className="pdf-placement-page-number">第 {pageNumber} 页</span>
+    <div ref={pageRef} className={styles.page} style={{ ...(pageStyle ?? {}), ...(aspectRatio ? { aspectRatio } : {}) }}>
+      <canvas ref={canvasRef} className={styles.canvas} aria-label={`PDF 第 ${pageNumber} 页`} />
+      <span className={styles.pageNumber}>第 {pageNumber} 页</span>
       {error && (
-        <div className="pdf-placement-page-error">
+        <div className={styles.pageError}>
           <strong>第 {pageNumber} 页渲染失败</strong>
           <span>{error}</span>
         </div>

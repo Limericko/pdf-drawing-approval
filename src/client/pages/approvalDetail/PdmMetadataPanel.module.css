@@ -1,0 +1,9 @@
+.panel { display: grid; gap: var(--space-3); margin: var(--space-4) 0; padding: var(--space-4); background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: var(--radius-lg); }
+.panel h2 { margin: var(--space-1) 0 0; font-size: var(--font-size-title-sm); }
+.metadata { grid-template-columns: 6rem minmax(0, 1fr); }
+.repairForm { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--color-border); }
+.repairForm label { display: grid; gap: var(--space-2); color: var(--color-text); font-size: var(--font-size-body-sm); font-weight: 800; }
+.repairForm input { width: 100%; min-width: 0; }
+.danger { color: var(--color-danger); }
+
+@media (max-width: 42.5rem) { .metadata { grid-template-columns: 1fr; } }

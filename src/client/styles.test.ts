@@ -2,7 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const styles = fs.readFileSync(path.resolve("src/client/styles.css"), "utf8");
+const styles = [
+  "styles/tokens.css",
+  "styles/reset.css",
+  "styles/globals.css",
+  "styles/motion.css",
+  "styles.css"
+].map((file) => fs.readFileSync(path.resolve("src/client", file), "utf8")).join("\n");
+const appShellStyles = fs.readFileSync(path.resolve("src/client/patterns/AppShell/AppShell.module.css"), "utf8");
+const navigationStyles = fs.readFileSync(path.resolve("src/client/ui/navigation/Navigation.module.css"), "utf8");
+const dataStyles = fs.readFileSync(path.resolve("src/client/ui/data/Data.module.css"), "utf8");
+const pdfCanvasStyles = fs.readFileSync(path.resolve("src/client/features/pdf-studio/PdfCanvasViewport.module.css"), "utf8");
+const pdfViewportStyles = fs.readFileSync(path.resolve("src/client/features/pdf-studio/PdfViewportControls.module.css"), "utf8");
+const pdfToolbarStyles = fs.readFileSync(path.resolve("src/client/features/pdf-studio/PdfToolbar.module.css"), "utf8");
+const draftPopoverStyles = fs.readFileSync(path.resolve("src/client/features/pdf-studio/AnnotationDraftPopover.module.css"), "utf8");
+const annotationLayerStyles = fs.readFileSync(path.resolve("src/client/widgets/PdfAnnotationLayer.module.css"), "utf8");
+const signatureWorkspaceStyles = fs.readFileSync(path.resolve("src/client/widgets/PdfSignaturePlacementWorkspace.module.css"), "utf8");
 
 function ruleFor(selector: string) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -18,17 +33,17 @@ function rulesFor(selector: string) {
     .join("\n");
 }
 
-function mediaBlockFor(query: string) {
-  const start = styles.indexOf(`@media ${query}`);
+function mediaBlockFor(query: string, source = styles) {
+  const start = source.indexOf(`@media ${query}`);
   if (start === -1) return "";
-  const open = styles.indexOf("{", start);
+  const open = source.indexOf("{", start);
   if (open === -1) return "";
   let depth = 0;
-  for (let index = open; index < styles.length; index += 1) {
-    const char = styles[index];
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
     if (char === "{") depth += 1;
     if (char === "}") depth -= 1;
-    if (depth === 0) return styles.slice(open + 1, index);
+    if (depth === 0) return source.slice(open + 1, index);
   }
   return "";
 }
@@ -41,115 +56,73 @@ function ruleForIn(block: string, selector: string) {
 
 describe("approval detail PDF placement styles", () => {
   it("keeps the redesigned workbench accessible and data-scannable", () => {
-    const body = ruleFor("body");
+    const body = rulesFor("body");
     const focusStyles = rulesFor("button:focus-visible");
     const root = ruleFor(":root");
 
     expect(body).toContain("font-variant-numeric: tabular-nums");
     expect(focusStyles).toContain("box-shadow: var(--focus)");
-    expect(root).toContain("--radius-panel: 8px");
+    expect(root).toContain("--radius-panel: var(--radius-lg)");
+    expect(root).toContain("--radius-lg: 0.5rem");
     expect(styles).not.toContain("border-radius: 999px");
   });
 
-  it("anchors the signature placement layer to the detail PDF preview", () => {
-    const detailStage = ruleFor(".detail-pdf-stage");
+  it("anchors the signature placement layer inside the component-scoped workspace", () => {
+    const workspace = ruleForIn(signatureWorkspaceStyles, ".workspace");
     const layer = ruleFor(".signature-placement-layer");
 
-    expect(detailStage).toContain("position: sticky");
-    expect(detailStage).toContain("height: clamp(560px, calc(100vh - 150px), 980px)");
-    expect(detailStage).toContain("overflow: hidden");
+    expect(workspace).toContain("height: 100%");
+    expect(workspace).toContain("overflow: hidden");
     expect(layer).toContain("position: absolute");
     expect(layer).toContain("inset: 0");
   });
 
-  it("keeps the approval side panel independently scrollable", () => {
-    const sidePanel = rulesFor(".side-panel");
-
-    expect(sidePanel).toContain("position: sticky");
-    expect(sidePanel).toContain("max-height: calc(100vh - 40px)");
-    expect(sidePanel).toContain("overflow-y: auto");
-  });
-
-  it("renders traceability content as a movable floating panel", () => {
-    const launcher = ruleFor(".support-launcher");
-    const floatingPanel = ruleFor(".floating-support-panel");
-    const floatingHeader = ruleFor(".floating-panel-header");
-
-    expect(launcher).toContain("display: grid");
-    expect(floatingPanel).toContain("position: fixed");
-    expect(floatingPanel).toContain("z-index: 20");
-    expect(floatingHeader).toContain("cursor: move");
+  it("removes the superseded detail rail, floating panel, and legacy annotation toolbar", () => {
+    for (const selector of [".detail-layout", ".detail-pdf-stage", ".side-panel", ".floating-support-panel", ".annotation-toolbar", ".annotation-popover"]) {
+      expect(styles).not.toContain(selector);
+    }
   });
 
   it("supports a compact collapsible sidebar rail", () => {
-    const collapsedLayout = ruleFor(".app-layout--sidebar-collapsed");
-    const toggle = ruleFor(".sidebar-toggle");
-    const navLink = ruleFor(".side-nav a");
-    const navIcon = ruleFor(".side-nav__icon");
-    const collapsedSidebar = ruleFor(".app-layout--sidebar-collapsed .sidebar");
-    const collapsedBrand = ruleFor(".app-layout--sidebar-collapsed .brand");
-    const collapsedToggle = ruleFor(".app-layout--sidebar-collapsed .sidebar-toggle");
-    const collapsedNav = ruleFor(".app-layout--sidebar-collapsed .side-nav");
-    const collapsedNavLink = ruleFor(".app-layout--sidebar-collapsed .side-nav a");
-    const collapsedFullLabel = ruleFor(".app-layout--sidebar-collapsed .side-nav__full-label");
-    const collapsedIcon = ruleFor(".app-layout--sidebar-collapsed .side-nav__icon");
-    const collapsedUserPanel = ruleFor(".app-layout--sidebar-collapsed .user-panel");
-    const collapsedGhostButton = ruleFor(".app-layout--sidebar-collapsed .ghost-button");
-
-    expect(collapsedLayout).toContain("grid-template-columns: 72px minmax(0, 1fr)");
-    expect(toggle).toContain("width: 100%");
-    expect(navLink).toContain("grid-template-columns: 34px minmax(0, 1fr)");
-    expect(navIcon).toContain("width: 34px");
-    expect(collapsedSidebar).toContain("align-items: center");
-    expect(collapsedSidebar).toContain("padding: 18px 12px");
-    expect(collapsedBrand).toContain("width: 48px");
-    expect(collapsedBrand).toContain("justify-self: center");
-    expect(collapsedToggle).toContain("width: 48px");
-    expect(collapsedToggle).toContain("justify-self: center");
-    expect(collapsedNav).toContain("width: 48px");
-    expect(collapsedNav).toContain("justify-items: center");
-    expect(collapsedNavLink).toContain("width: 48px");
-    expect(collapsedNavLink).toContain("grid-template-columns: 1fr");
-    expect(collapsedNavLink).toContain("justify-items: center");
-    expect(collapsedFullLabel).toContain("display: none");
-    expect(collapsedIcon).toContain("width: 40px");
-    expect(collapsedUserPanel).toContain("width: 48px");
-    expect(collapsedUserPanel).toContain("justify-items: center");
-    expect(collapsedGhostButton).toContain("width: 34px");
+    expect(appShellStyles).toContain('grid-template-columns: var(--nav-width-collapsed) minmax(0, 1fr)');
+    expect(appShellStyles).toContain('.shell[data-collapsed="true"] .brand { justify-content: center; }');
+    expect(appShellStyles).toContain('.shell[data-collapsed="true"] .compactRole');
+    expect(navigationStyles).toContain('.navigation[data-collapsed="true"] .link');
+    expect(navigationStyles).toContain('grid-template-columns: 1fr');
+    expect(navigationStyles).toContain('.navigation[data-collapsed="true"] .label { display: none; }');
   });
 
   it("adapts the app shell and core work surfaces for phone widths", () => {
-    const mobile = mediaBlockFor("(max-width: 520px)");
-    const shell = ruleForIn(mobile, ".app-shell");
-    const sidebar = ruleForIn(mobile, ".sidebar");
-    const sideNav = ruleForIn(mobile, ".side-nav");
-    const navLink = ruleForIn(mobile, ".side-nav a");
-    const userPanel = ruleForIn(mobile, ".user-panel");
-    const approvalRow = ruleForIn(mobile, ".approval-table tbody tr");
-    const approvalCell = ruleForIn(mobile, ".approval-table td");
-    const approvalCellBefore = ruleForIn(mobile, ".approval-table td::before");
-    const pdfStage = ruleForIn(mobile, ".detail-pdf-stage");
-    const tableActionBar = ruleForIn(mobile, ".table-action-bar");
+    const mobileShell = mediaBlockFor("(max-width: 32.5rem)", appShellStyles);
+    const mobileUserPanel = ruleForIn(mobileShell, '.userPanel, .shell[data-collapsed="true"] .userPanel');
+    const mobileLogout = ruleForIn(mobileShell, '.logout, .shell[data-collapsed="true"] .logout');
+    const mobileData = mediaBlockFor("(max-width: 48rem)", dataStyles);
+    const approvalRow = ruleForIn(mobileData, ".dataTable tbody tr");
+    const approvalCell = ruleForIn(mobileData, ".dataTable td");
+    const approvalCellBefore = ruleForIn(mobileData, ".dataTable td::before");
+    const mobilePdf = mediaBlockFor("(max-width: 42.5rem)", pdfCanvasStyles);
+    const tableActionBar = ruleForIn(mobileData, ".batchActionBar");
 
-    expect(mobile).toContain(".app-layout--sidebar-collapsed");
-    expect(shell).toContain("padding: 12px");
-    expect(sidebar).toContain("position: sticky");
-    expect(sidebar).toContain("height: auto");
-    expect(sideNav).toContain("display: flex");
-    expect(sideNav).toContain("overflow-x: auto");
-    expect(navLink).toContain("flex: 0 0 auto");
-    expect(userPanel).toContain("display: flex");
+    expect(appShellStyles).toContain("@media (max-width: 32.5rem)");
+    expect(appShellStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(mobileUserPanel).toContain("display: flex");
+    expect(mobileUserPanel).not.toContain("display: none");
+    expect(mobileLogout).toContain("min-height: var(--control-height-touch)");
+    expect(navigationStyles).toContain("overflow-x: auto");
+    expect(navigationStyles).toContain("flex: 0 0 auto");
     expect(approvalRow).toContain("display: grid");
     expect(approvalCell).toContain("grid-template-columns:");
     expect(approvalCellBefore).toContain("content: attr(data-label)");
-    expect(pdfStage).toContain("height: 64vh");
-    expect(tableActionBar).toContain("position: sticky");
+    expect(ruleForIn(mobilePdf, ".viewport")).toContain("padding: var(--space-2)");
+    expect(tableActionBar).toContain("flex-direction: column");
+    expect(mobileData).toContain("position: sticky");
+    expect(mobileData).toContain("z-index: var(--z-sticky)");
   });
 
   it("keeps PDF pages and signature boxes in one scrollable placement workspace", () => {
-    const workspace = ruleFor(".pdf-placement-workspace");
-    const page = ruleFor(".pdf-placement-page");
-    const canvas = ruleFor(".pdf-placement-canvas");
+    const workspace = ruleForIn(signatureWorkspaceStyles, ".workspace");
+    const page = ruleForIn(signatureWorkspaceStyles, ".page");
+    const canvas = ruleForIn(signatureWorkspaceStyles, ".canvas");
     const layer = ruleFor(".signature-placement-layer");
 
     expect(workspace).toContain("display: flex");
@@ -161,33 +134,33 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("supports PDF zoom controls and drag-to-pan scrolling", () => {
-    const toolbar = ruleFor(".pdf-viewport-toolbar");
-    const toolbarButton = ruleFor(".pdf-viewport-toolbar button");
-    const zoom = ruleFor(".pdf-viewport-toolbar__zoom");
-    const scroll = ruleFor(".pdf-viewport-scroll");
-    const pan = ruleFor(".pdf-viewport-scroll--pan");
-    const panning = ruleFor(".pdf-viewport-scroll--panning");
-    const placementPage = ruleFor(".pdf-placement-page");
-    const annotationPage = ruleFor(".pdf-annotation-page");
+    const toolbar = ruleForIn(pdfViewportStyles, ".toolbar");
+    const toolbarButton = ruleForIn(pdfViewportStyles, ".toolbar button");
+    const zoom = ruleForIn(pdfViewportStyles, ".zoom");
+    const scroll = ruleForIn(signatureWorkspaceStyles, ".viewport");
+    const pan = ruleForIn(signatureWorkspaceStyles, '.viewport[data-pan="true"]');
+    const panning = ruleForIn(signatureWorkspaceStyles, '.viewport[data-panning="true"]');
+    const placementPage = ruleForIn(signatureWorkspaceStyles, ".page");
+    const annotationPage = ruleForIn(pdfCanvasStyles, ".page");
 
     expect(toolbar).toContain("display: flex");
-    expect(toolbar).toContain("border-bottom: 1px solid var(--line)");
-    expect(toolbarButton).toContain("width: 34px");
+    expect(toolbar).toContain("gap: var(--space-1)");
+    expect(toolbarButton).toContain("width: var(--icon-button-sm)");
     expect(toolbarButton).toContain("place-items: center");
-    expect(zoom).toContain("min-width: 52px");
+    expect(zoom).toContain("min-width: 3.25rem");
     expect(scroll).toContain("overflow: auto");
     expect(scroll).toContain("touch-action: pan-x pan-y");
     expect(pan).toContain("cursor: grab");
     expect(panning).toContain("cursor: grabbing");
-    expect(placementPage).toContain("width: var(--pdf-page-width, min(100%, 960px))");
-    expect(annotationPage).toContain("width: var(--pdf-page-width, min(100%, 960px))");
+    expect(placementPage).toContain("width: var(--pdf-page-width, min(100%, 60rem))");
+    expect(annotationPage).toContain("width: var(--pdf-page-width, min(100%, 60rem))");
   });
 
   it("shows compact PDF thumbnail navigation without resizing the document", () => {
-    const thumbnails = ruleFor(".pdf-page-thumbnails");
-    const thumbnail = ruleFor(".pdf-page-thumbnail");
-    const activeThumbnail = ruleFor(".pdf-page-thumbnail--active");
-    const thumbnailPreview = ruleFor(".pdf-page-thumbnail__preview");
+    const thumbnails = ruleForIn(signatureWorkspaceStyles, ".thumbnails");
+    const thumbnail = ruleForIn(signatureWorkspaceStyles, ".thumbnail");
+    const activeThumbnail = ruleForIn(signatureWorkspaceStyles, '.thumbnail[data-active="true"]');
+    const thumbnailPreview = ruleForIn(signatureWorkspaceStyles, ".thumbnailPreview");
 
     expect(thumbnails).toContain("display: flex");
     expect(thumbnails).toContain("overflow-x: auto");
@@ -198,14 +171,10 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("keeps admin operation logs bounded inside a scrollable panel", () => {
-    const logSurface = ruleFor(".operation-log-panel .table-surface");
-    const tableHeader = ruleFor(".operation-log-panel .data-table th");
-
-    expect(logSurface).toContain("max-height:");
-    expect(logSurface).toContain("overflow: auto");
-    expect(tableHeader).toContain("position: sticky");
-    expect(tableHeader).toContain("top: 0");
-    expect(tableHeader).toContain("z-index:");
+    expect(dataStyles).toContain('.dataTable[data-sticky-header="true"] th');
+    expect(dataStyles).toContain("position: sticky");
+    expect(dataStyles).toContain("top: 0");
+    expect(dataStyles).toContain("z-index: var(--z-sticky)");
   });
 
   it("keeps profile and role guide layouts responsive at medium window widths", () => {
@@ -245,66 +214,57 @@ describe("approval detail PDF placement styles", () => {
   });
 
   it("keeps drawing annotation text readable on top of the PDF", () => {
-    const textMarker = ruleFor(".pdf-annotation-marker--text");
-    const textBody = ruleFor(".pdf-annotation-marker--text em");
-    const draft = ruleFor(".pdf-annotation-draft");
-    const draftText = ruleFor(".pdf-annotation-draft--text");
+    const textMarker = ruleForIn(annotationLayerStyles, '.marker[data-kind="text"]');
+    const textBody = ruleForIn(annotationLayerStyles, '.marker[data-kind="text"] > em');
+    const draft = ruleForIn(annotationLayerStyles, ".draft");
+    const draftText = ruleForIn(annotationLayerStyles, '.draft[data-kind="text"]');
 
     expect(textMarker).toContain("display: block");
-    expect(textMarker).toContain("min-width: 42px");
-    expect(textMarker).toContain("min-height: 24px");
+    expect(textMarker).toContain("min-width: 2.625rem");
+    expect(textMarker).toContain("min-height: 1.5rem");
     expect(textBody).toContain("position: absolute");
     expect(textBody).toContain("inset: 3px");
-    expect(textBody).toContain("font-size: 14px");
+    expect(textBody).toContain("font-size: var(--font-size-body)");
     expect(textBody).toContain("white-space: pre-wrap");
     expect(draft).toContain("border: 2px dashed currentColor");
-    expect(draftText).toContain("min-width: 42px");
-    expect(draftText).toContain("font-size: 14px");
+    expect(draftText).toContain("min-width: 2.625rem");
+    expect(draftText).toContain("font-size: var(--font-size-body)");
   });
 
   it("supports in-canvas annotation tools, popover comments, and selected handles", () => {
-    const toolbar = ruleFor(".annotation-toolbar");
-    const popover = ruleFor(".annotation-popover");
-    const popoverTextArea = ruleFor(".annotation-popover textarea");
-    const selectedMarker = ruleFor(".pdf-annotation-marker--selected");
-    const resizeHandle = ruleFor(".pdf-annotation-resize-handle");
-    const pdfToolbar = ruleFor(".pdf-annotation-toolbar");
+    const toolbar = ruleForIn(pdfToolbarStyles, ".bar");
+    const popover = ruleForIn(draftPopoverStyles, ".popover");
+    const popoverTextArea = ruleForIn(draftPopoverStyles, ".field textarea");
+    const selectedMarker = ruleForIn(annotationLayerStyles, '.marker[data-selected="true"]');
+    const resizeHandle = ruleForIn(annotationLayerStyles, ".resizeHandle");
 
     expect(toolbar).toContain("display:");
-    expect(toolbar).toContain("position:");
+    expect(toolbar).toContain("overflow-x: auto");
     expect(popover).toContain("position: absolute");
     expect(popover).toContain("z-index:");
     expect(popoverTextArea).toContain("resize: vertical");
     expect(selectedMarker).toContain("box-shadow:");
     expect(resizeHandle).toContain("position: absolute");
-    expect(pdfToolbar).toContain("display:");
   });
 
   it("renders annotation colors as real swatches and selected callouts", () => {
-    const swatch = ruleFor(".annotation-color-swatch");
-    const activeSwatch = ruleFor(".annotation-color-swatch.active");
-    const customInput = ruleFor(".annotation-custom-color-input");
-    const customWell = ruleFor(".annotation-custom-color__well");
-    const palette = ruleFor(".annotation-color-palette");
-    const paletteSwatches = ruleFor(".annotation-color-palette__swatches");
-    const callout = ruleFor(".pdf-annotation-callout");
-    const toolbarIcon = ruleFor(".annotation-toolbar__tools svg");
+    const swatch = ruleForIn(pdfToolbarStyles, ".swatch");
+    const activeSwatch = ruleForIn(pdfToolbarStyles, '.swatch[data-selected="true"]');
+    const customInput = ruleForIn(pdfToolbarStyles, ".custom input");
+    const customWell = ruleForIn(pdfToolbarStyles, ".customWell");
+    const palette = ruleForIn(pdfToolbarStyles, ".colors");
+    const callout = ruleForIn(annotationLayerStyles, ".callout");
 
-    expect(styles).not.toContain(".annotation-toolbar button {");
-    expect(styles).not.toContain(".annotation-toolbar button.active");
-    expect(ruleFor(".annotation-toolbar__tools button")).toContain("background: var(--surface-raised)");
+    expect(styles).not.toContain(".annotation-toolbar");
     expect(palette).toContain("display: flex");
-    expect(paletteSwatches).toContain("display: flex");
     expect(swatch).toContain("background: var(--annotation-choice)");
-    expect(swatch).toContain("color: #ffffff");
-    expect(activeSwatch).toContain("outline:");
+    expect(swatch).toContain("color: var(--palette-white)");
+    expect(activeSwatch).toContain("box-shadow:");
     expect(activeSwatch).not.toContain("background: var(--primary)");
-    expect(customInput).toContain("appearance: none");
     expect(customInput).toContain("opacity: 0");
     expect(customWell).toContain("background: var(--annotation-choice)");
     expect(callout).toContain("position: absolute");
     expect(callout).toContain("white-space: normal");
-    expect(toolbarIcon).toContain("width:");
   });
 
   it("uses rendering containment for growing operational lists and muted inline feedback", () => {
@@ -312,7 +272,7 @@ describe("approval detail PDF placement styles", () => {
     const batchRow = rulesFor(".batch-history-row");
     const commentItem = rulesFor(".comment-item");
     const backupRun = rulesFor(".backup-run-row");
-    const operationRow = ruleFor(".operation-table tbody tr");
+    const operationRow = dataStyles.match(/\.dataTable tbody tr\s*\{([^}]*)\}/)?.[1] ?? "";
     const mutedInline = ruleFor(".muted-inline");
 
     expect(riskRow).toContain("content-visibility: auto");

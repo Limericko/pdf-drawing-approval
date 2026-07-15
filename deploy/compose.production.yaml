@@ -1,0 +1,169 @@
+name: pdf-approval-production
+
+x-runtime: &runtime
+  image: ${PDF_APPROVAL_IMAGE:?set PDF_APPROVAL_IMAGE to an immutable registry digest}
+  init: true
+  read_only: true
+  restart: unless-stopped
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 45s
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-common-environment: &common-environment
+  NODE_ENV: production
+  PDF_APPROVAL_RUNTIME_MODE: platform
+  PDF_APPROVAL_PUBLIC_BASE_URL: ${PDF_APPROVAL_PUBLIC_BASE_URL:?set the canonical HTTPS URL}
+  PDF_APPROVAL_STORAGE_DRIVER: s3
+  PDF_APPROVAL_STORAGE_S3_ENDPOINT: ${PDF_APPROVAL_STORAGE_S3_ENDPOINT:?set the HTTPS S3-compatible endpoint}
+  PDF_APPROVAL_STORAGE_S3_REGION: ${PDF_APPROVAL_STORAGE_S3_REGION:?set the S3-compatible region}
+  PDF_APPROVAL_STORAGE_S3_BUCKET: ${PDF_APPROVAL_STORAGE_S3_BUCKET:?set the private S3-compatible bucket}
+  PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "${PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE:?set true or false for the provider}"
+  PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS: ${PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS:-}
+  PDF_APPROVAL_STORAGE_S3_ACCESS_KEY_FILE: /run/secrets/pdf-approval/s3-access-key.secret
+  PDF_APPROVAL_STORAGE_S3_SECRET_KEY_FILE: /run/secrets/pdf-approval/s3-secret-key.secret
+  PDF_APPROVAL_INVITATION_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/invitation-hmac-keyring.secret
+  PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: ${PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS:-}
+
+services:
+  web:
+    <<: *runtime
+    command: ["web"]
+    environment:
+      <<: *common-environment
+      PORT: "8080"
+      PDF_APPROVAL_PLATFORM_WEB_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_TOTP_KEYRING_FILE: /run/secrets/pdf-approval/totp-keyring.secret
+      PDF_APPROVAL_RECOVERY_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/recovery-hmac-keyring.secret
+      PDF_APPROVAL_CSRF_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/csrf-hmac-keyring.secret
+      PDF_APPROVAL_COOKIE_SECURE: "true"
+      PDF_APPROVAL_TRUST_PROXY: "1"
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: ${PDF_APPROVAL_WEB_DB_POOL_MAX:-20}
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_WEB_SECRET_DIR:?set the absolute web secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=512m
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "node", "deploy/healthcheck.mjs"]
+      interval: 15s
+      timeout: 3s
+      retries: 4
+      start_period: 30s
+    cpus: 2.0
+    mem_limit: 2g
+
+  worker:
+    <<: *runtime
+    command: ["worker"]
+    environment:
+      <<: *common-environment
+      PDF_APPROVAL_PLATFORM_WORKER_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_SMTP_HOST: ${PDF_APPROVAL_SMTP_HOST:?set SMTP host}
+      PDF_APPROVAL_SMTP_PORT: ${PDF_APPROVAL_SMTP_PORT:-465}
+      PDF_APPROVAL_SMTP_FROM: ${PDF_APPROVAL_SMTP_FROM:?set SMTP sender}
+      PDF_APPROVAL_SMTP_SECURE: ${PDF_APPROVAL_SMTP_SECURE:-true}
+      PDF_APPROVAL_SMTP_REQUIRE_TLS: ${PDF_APPROVAL_SMTP_REQUIRE_TLS:-false}
+      PDF_APPROVAL_SMTP_USER: ${PDF_APPROVAL_SMTP_USER:?set SMTP username}
+      PDF_APPROVAL_SMTP_PASSWORD_FILE: /run/secrets/pdf-approval/smtp-password.secret
+      PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE: /run/secrets/pdf-approval/webdav-credentials.json
+      PDF_APPROVAL_WEBDAV_STAGING_ROOT: /var/lib/pdf-approval/webdav-staging
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: ${PDF_APPROVAL_WORKER_DB_POOL_MAX:-8}
+      PDF_APPROVAL_WORKER_CONCURRENCY: ${PDF_APPROVAL_WORKER_CONCURRENCY:-4}
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_WORKER_SECRET_DIR:?set the absolute worker secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=1g
+      - /var/lib/pdf-approval/webdav-staging:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=4g
+    cpus: 2.0
+    mem_limit: 3g
+
+  migration:
+    <<: *runtime
+    profiles: ["tools"]
+    restart: "no"
+    command: ["migration"]
+    environment:
+      NODE_ENV: production
+      PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_MIGRATION_SECRET_DIR:?set the absolute migration secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m
+
+  legacy-migration:
+    <<: *runtime
+    profiles: ["tools"]
+    restart: "no"
+    command:
+      - legacy-migration
+      - --database
+      - /migration/input/db/legacy.sqlite
+      - --source-id
+      - ${PDF_APPROVAL_LEGACY_SOURCE_ID:?set the stable legacy source id}
+      - --roots
+      - /migration/config/roots.json
+      - --emails
+      - /migration/config/emails.json
+      - --mode
+      - ${PDF_APPROVAL_LEGACY_MODE:-import}
+      - --output
+      - /migration/output/migration-report.json
+    environment:
+      <<: *common-environment
+      PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_MIGRATION_SECRET_DIR:?set the absolute migration secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_DATABASE_DIR:?set the directory containing legacy.sqlite}
+        target: /migration/input/db
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_FILES_DIR:?set the legacy file snapshot directory}
+        target: /migration/input/files
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_CONFIG_DIR:?set the directory containing roots.json and emails.json}
+        target: /migration/config
+        read_only: true
+      - type: bind
+        source: ${PDF_APPROVAL_LEGACY_OUTPUT_DIR:?set a new empty report output directory}
+        target: /migration/output
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=1g
+
+  bootstrap-admin:
+    <<: *runtime
+    profiles: ["tools"]
+    restart: "no"
+    command: ["bootstrap-admin"]
+    environment:
+      NODE_ENV: production
+      PDF_APPROVAL_PLATFORM_BOOTSTRAP_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_TOTP_KEYRING_FILE: /run/secrets/pdf-approval/totp-keyring.secret
+      PDF_APPROVAL_RECOVERY_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/recovery-hmac-keyring.secret
+    volumes:
+      - type: bind
+        source: ${PDF_APPROVAL_BOOTSTRAP_SECRET_DIR:?set the absolute bootstrap secret directory}
+        target: /run/secrets/pdf-approval
+        read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m

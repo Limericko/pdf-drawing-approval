@@ -12,6 +12,9 @@ import type {
   UserSignatureStatus
 } from "../../api.ts";
 import { statusLabel } from "../../widgets/status.ts";
+import { Button } from "../../ui/actions/index.tsx";
+import { DataTable, TableFrame, type DataTableColumn } from "../../ui/data/index.tsx";
+import styles from "./OperationsTab.module.css";
 
 type CleanupBusy = "preview" | "execute" | "";
 type ReportFilters = { projectName: string; status: string; from: string; to: string };
@@ -527,48 +530,18 @@ function MaintenanceRunSummaryPanel(props: { logs: OperationLog[] }) {
 }
 
 function OperationLogPanel(props: { logs: OperationLog[]; onRefresh: () => void }) {
-  return (
-    <section className="management-panel operation-log-panel">
-      <div className="panel-heading">
-        <div>
-          <h2>操作日志</h2>
-          <span>最近 100 条，更多记录保留在数据库中</span>
-        </div>
-        <button type="button" className="secondary-button" onClick={props.onRefresh}>
-          刷新操作日志
-        </button>
-      </div>
-      <div className="table-surface">
-        <table className="data-table operation-table">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>人员</th>
-              <th>动作</th>
-              <th>对象</th>
-              <th>说明</th>
-            </tr>
-          </thead>
-          <tbody>
-            {props.logs.map((log) => (
-              <tr key={log.id}>
-                <td className="time-cell">{new Date(log.createdAt).toLocaleString()}</td>
-                <td>{log.actorUsername ?? "system"}</td>
-                <td>{operationActionLabel(log.action)}</td>
-                <td>{log.targetType}{log.targetId ? ` #${log.targetId}` : ""}</td>
-                <td className="wrap-cell">{log.message}</td>
-              </tr>
-            ))}
-            {props.logs.length === 0 && (
-              <tr>
-                <td colSpan={5} className="empty-cell">暂无操作日志</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
+  const columns: readonly DataTableColumn<OperationLog>[] = [
+    { id: "time", header: "时间", cell: (log) => <time className={styles.time}>{new Date(log.createdAt).toLocaleString()}</time> },
+    { id: "actor", header: "人员", cell: (log) => log.actorUsername ?? "system" },
+    { id: "action", header: "动作", cell: (log) => operationActionLabel(log.action) },
+    { id: "target", header: "对象", mobileHidden: true, cell: (log) => <span className={styles.target}>{log.targetType}{log.targetId ? ` #${log.targetId}` : ""}</span> },
+    { id: "message", header: "说明", cell: (log) => <span className={styles.message}>{log.message}</span> }
+  ];
+  return <TableFrame title="操作日志" description="最近 100 条，更多记录保留在数据库中"
+    actions={<Button variant="secondary" onClick={props.onRefresh}>刷新操作日志</Button>}>
+    <DataTable ariaLabel="操作日志" columns={columns} rows={props.logs} getRowKey={(log) => log.id}
+      emptyTitle="暂无操作日志" stickyHeader />
+  </TableFrame>;
 }
 
 export function buildMaintenanceRunSummary(logs: OperationLog[]): MaintenanceRunSummaryItem[] {

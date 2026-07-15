@@ -5,13 +5,13 @@ import { describe, expect, it } from "vitest";
 const source = fs.readFileSync(path.resolve("src/client/App.tsx"), "utf8");
 
 describe("app shell layout structure", () => {
-  it("renders a collapsible sidebar with icon-only compact navigation", () => {
+  it("delegates the collapsible shell and compact navigation to shared DS3 patterns", () => {
     expect(source).toContain("sidebarCollapsed");
-    expect(source).toContain("app-layout--sidebar-collapsed");
-    expect(source).toContain("sidebar-toggle");
-    expect(source).toContain('src="/app-icon.png"');
+    expect(source).toContain("<AppShell collapsed={sidebarCollapsed}");
+    expect(source).toContain("<AppNavigation collapsed={sidebarCollapsed}");
+    expect(source).toContain('logoSrc: "/app-icon.png"');
     expect(source).toContain("navIconForRoute");
-    expect(source).toContain("side-nav__icon");
+    expect(source).not.toContain("aria-current");
     expect(source).not.toContain("compactNavLabel");
   });
 
@@ -50,8 +50,7 @@ describe("app shell layout structure", () => {
     expect(source).toContain("<Suspense fallback={<PageLoadingFallback");
     expect(source).toContain("const pageLoaders");
     expect(source).toContain("function preloadRoute");
-    expect(source).toContain("onMouseEnter={() => preloadRoute(item.route)}");
-    expect(source).toContain("onFocus={() => preloadRoute(item.route)}");
+    expect(source).toContain("onIntent={(id) => preloadRoute(id as AppRouteName)}");
     expect(source).not.toContain('import { MyTasksPage } from "./pages/MyTasksPage.tsx"');
     expect(source).not.toContain('import { SettingsPage } from "./pages/SettingsPage.tsx"');
   });

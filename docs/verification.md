@@ -4135,3 +4135,301 @@ git diff --check
 
 - 验证时真实服务端 `/health` 仍显示 `0.9.1`，因为尚未安装新版服务端 exe；当前已同步的是更新目录。安装 `PDF图纸审批服务端-安装包-0.9.2.exe` 后，服务端运行版本才会变为 `0.9.2`。
 ```
+
+## 2026-07-10 Phase 0 browser baseline
+
+验证范围：
+
+- Playwright 仅清理并重建 `.cache/e2e/runtime`，数据库、图纸、签名、日志、备份和发布目录均位于该隔离根目录；未使用或读取真实 `data`、`output`、`logs`、`backups`、`config` 目录。
+- 固定种子提供管理员、主管、工艺和设计师角色；四种角色均有独立的浏览器落点和角色导航断言，失败时可直接定位到具体角色。
+- 测试代码生成有效 PDF，并在桌面、移动项目中断言首个 PDF canvas 的非白像素数大于 100。
+- Axe 在桌面、移动项目的登录页和管理员主区域均为 0 个 critical 违规。
+- 视觉基线包括管理员外壳 desktop/mobile、审批 PDF 工作台 desktop/mobile，四张截图均已人工复核；截图断言禁用动画并使用固定 `maxDiffPixels: 1000`，避免全页高度放大可接受差异。相同的两份截图 spec 已连续定向复测三次且全部通过，未更新快照；登录与角色导航属于交互基线，没有单独截图。
+
+命令：
+
+```powershell
+npm test -- --run src/client
+npm test -- --run src/server/auth.test.ts src/server/domain src/server/repositories src/server/services src/server/files src/server/pdf
+npm test -- --run src/server/routes/auth.test.ts src/server/routes/submissions.test.ts src/server/routes/approvals.test.ts src/server/routes/approvalAnnotations.test.ts src/server/routes/approvalComments.test.ts src/server/routes/pdm.test.ts
+npm test -- --run src/server/routes/settings.test.ts src/server/routes/system.test.ts src/server/routes/users.test.ts src/server/routes/profile.test.ts src/server/routes/signatures.test.ts src/server/routes/signatureTemplates.test.ts src/server/routes/operationLogs.test.ts src/server/routes/reports.test.ts src/server/routes/tray.test.ts src/server/server.test.ts src/server/startServer.test.ts src/server/dbIndexes.test.ts
+npm run e2e:typecheck
+npm run build
+npm run desktop:test
+npm run e2e -- --project=mobile-chromium e2e/smoke/approval-workbench.spec.ts
+npm run e2e -- e2e/smoke/login-navigation.spec.ts
+npm run e2e -- e2e/smoke/approval-workbench.spec.ts e2e/smoke/responsive-accessibility.spec.ts
+npm run e2e
+```
+
+结果：
+
+- client：32 个测试文件、223 个用例通过；Vitest `16.04s`，命令墙钟 `25.5s`。
+- server auth/domain/repositories/services/files/pdf：31 个测试文件、130 个用例通过；Vitest `15.20s`，命令墙钟 `24.7s`，低于 60 秒硬超时。
+- server 核心 routes：6 个测试文件、88 个用例通过；Vitest `36.64s`，命令墙钟 `45.6s`，低于 60 秒硬超时。
+- server settings/system/users 等：12 个测试文件、65 个用例通过；Vitest `13.79s`，命令墙钟 `21.8s`，低于 60 秒硬超时。
+- `npm run e2e:typecheck`：通过，命令墙钟 `9.3s`。
+- `npm run build`：TypeScript 与 Vite 生产构建通过，命令墙钟 `26.8s`；保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告，不阻断构建。
+- `npm run desktop:test`：3 个测试文件、12 个用例通过；Vitest `5.24s`，命令墙钟 `13.7s`。
+- 移动 PDF 工作台定向复测：2 个用例通过，Playwright `37.8s`；工作台快照已精确遮罩动态“提交时间”值。当前 desktop 基线为 `1440x1235`、`235902` bytes、SHA-256 `D28CA02DA90DAEE605ABCB5085169279765047040C18F094B9DE7451260CCC5E`，mobile 基线为 `390x3604`、`237530` bytes、SHA-256 `3F67D6B1ADE21DE6F3E0E35F363E74FF40A244CECD1FD58797823FC89D8AB2F0`。
+- 登录与角色导航定向复测：desktop 5 个、mobile 5 个，共 10 个用例通过；管理员、主管、工艺和设计师的独立浏览器断言均通过。Playwright `46.4s`，命令墙钟 `52.5s`。
+- 固定截图容差定向校准：`maxDiffPixels: 1000` 下连续三次均为 desktop 5 个、mobile 5 个，共 10 个用例通过；三次 Playwright 均为 `1.0m`，命令墙钟依次为 `68.5s`、`68.6s`、`66.9s`，未更新快照。
+- 完整 Playwright：desktop 10 个、mobile 10 个，共 20 个用例通过；Playwright `1.2m`，命令墙钟 `74.7s`。退出后 `14173`、`18080` 均无监听。
+
+范围审计：
+
+- Phase 0 未修改业务流程、数据库 schema 或桌面打包逻辑；`package.json` 和 lockfile 仅增加测试脚本及开发依赖。
+- 产品代码唯一改动是将登录方式切换容器的 ARIA 语义从 `tablist` 修正为 `group`，未改变交互或认证行为。
+
+## 2026-07-13 Phase 1 Task 22 平台收尾验证（完成）
+
+范围与隔离：
+
+- 新增独立 `playwright.platform.config.ts`，使用 `24173`（Vite）和 `28080`（Platform API），未修改 Phase 0 的 `playwright.config.ts`、`14173`、`18080` 或 legacy `.cache/e2e/runtime`。
+- 平台 harness 设计为每次创建唯一 fresh PostgreSQL database，应用当前 `0001`–`0007` 迁移，以真实 `startPlatformWebServer()`、`workerMain()` 和 Vite 启动 Web/Worker/客户端。每次运行拥有单一 MinIO cleanup root `phase1-e2e/<run-id>`；Web 与 Worker 显式注入同一个测试 StorageAdapter wrapper，把逻辑 `write/openRead/head/delete` 和 wrapper 自有 health probe 全部映射到其 `objects/` 子前缀。Worker probe sentinel 位于同一 owned root 的 `sentinel/` 子前缀，因此对 adapter 仍是前缀外对象，但正常退出或启动失败时可由 cleanup root 统一兜底。生产默认 storage factory 不变，也没有新增环境变量 fallback。退出时关闭 HTTP、Pool、Worker、删除该 owned cleanup root 和本次 state 文件，再由现有 harness 等待 session 为 0 并 `DROP DATABASE ... WITH (FORCE)`。
+- Mailpit 清理函数只接受 `127.0.0.1|localhost|::1:58025`；由于 Mailpit API 的本地测试基线使用全量清理，harness 只有在首次清理成功、确认取得本地测试实例所有权后才在退出时再次清理。它不得指向共享或远程 Mailpit。
+- 测试种子使用源码内固定的 `.test` 邮箱、合成密码和 TOTP 常量；`.cache/platform-e2e/state.json` 分别记录 owned `storageCleanupRoot` 与 adapter 实际 `storagePrefix`，并只发布非秘密的管理员邮箱及必要实体 ID，不写密码、TOTP secret 或 recovery codes。进程启动第一步先删除陈旧 state，退出再次删除；不提交截图、trace、视频或临时 state。
+
+已实际执行的 TDD 与静态门禁（节选；所有测试命令均由 60 秒执行器约束）：
+
+```powershell
+node scripts/run-with-timeout.mjs 60000 npm run e2e:platform -- --project=desktop-chromium e2e/platform/identity-security.spec.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run e2e/platform/support/totp.unit.test.ts e2e/platform/support/mailpit.unit.test.ts e2e/platform/support/fixtures.unit.test.ts e2e/platform/support/server.unit.test.ts src/client/viteConfig.test.ts
+node scripts/run-with-timeout.mjs 60000 npm run e2e:typecheck
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/client
+npm run test:platform:unit
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/auth.test.ts src/server/domain src/server/repositories src/server/services src/server/files src/server/pdf
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/routes/auth.test.ts src/server/routes/submissions.test.ts src/server/routes/approvals.test.ts src/server/routes/approvalAnnotations.test.ts src/server/routes/approvalComments.test.ts src/server/routes/pdm.test.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/routes/settings.test.ts src/server/routes/system.test.ts src/server/routes/users.test.ts src/server/routes/profile.test.ts src/server/routes/signatures.test.ts src/server/routes/signatureTemplates.test.ts src/server/routes/operationLogs.test.ts src/server/routes/reports.test.ts src/server/routes/tray.test.ts src/server/server.test.ts src/server/startServer.test.ts src/server/dbIndexes.test.ts
+node scripts/run-with-timeout.mjs 60000 npm test -- --run src/server/serverPackage.test.ts src/server/serverExePackage.test.ts
+node scripts/run-with-timeout.mjs 60000 npm run desktop:test
+node scripts/run-with-timeout.mjs 60000 npm run build
+node scripts/run-with-timeout.mjs 60000 npm run e2e -- --project=desktop-chromium e2e/smoke/login-navigation.spec.ts
+git diff --check
+```
+
+结果：
+
+- 首个 identity spec 有效 RED：1 个用例在 `page.goto(http://127.0.0.1:24173/)` 得到 `ERR_CONNECTION_REFUSED`，证明当时尚无 harness；墙钟 `12.0s`。此前 Playwright 先暴露本机缺少版本匹配的 bundled Chromium 与 ffmpeg，平台配置改为“bundled Chromium 存在时优先，否则使用已安装 Chrome channel”，并关闭非必需视频；截图/trace 均位于被忽略的 `.cache/platform-e2e`。
+- Vite platform target 先得到预期 RED：24 个通过、1 个失败，实际仍选 `18080` 而预期 platform `28080`；墙钟 `16.2s`。最小实现后，TOTP、Mailpit 与 Vite 共 3 个文件、29 个用例通过；fresh 复测 Vitest `4.17s`、命令墙钟 `14.6s`。
+- lifecycle fixture 初次类型检查得到预期 RED：`TS2322`，worker-scoped fixture 被错误声明为 test scope；墙钟 `10.6s`。分离 Playwright test/worker fixtures 后通过；三份完整 spec 落盘后的 fresh `e2e:typecheck` 通过，命令墙钟 `10.7s`。
+- Mailpit 不可用诊断先得到预期 RED：2 个通过、1 个失败，原始 `connect ECONNREFUSED secret-host` 未映射；修复后 3/3 通过，Vitest `1.67s`、命令墙钟 `10.2s`，错误消息不再泄露连接上下文。
+- state 发布竞态与清理诊断先得到预期 RED：2 个文件、2 个用例均因函数不存在失败，同时证明导入 `server.ts` 会错误启动 harness；墙钟 `15.1s`。修复后 state 使用临时文件 + rename 原子发布，并在 Vite 绑定 `24173` 前完成；`server.ts` 增加 main-module guard，清理逐项保留稳定子错误。2/2 GREEN 后 `e2e:typecheck` 继续通过，组合命令墙钟 `24.2s`。
+- 最终 support + Vite targeted fresh：5 个文件、32 个用例通过，Vitest `6.17s`；随后 `e2e:typecheck` 和 `git diff --check` 通过，组合墙钟 `25.7s`。
+- 端口检查显示平台 `24173:RELEASED`、`28080:RELEASED`。
+
+已完成的无 Docker 回归门禁：
+
+- Task 20/21 身份客户端与界面聚焦：9 个文件、156 个用例通过，墙钟 `13.0s`。
+- 全量 client：40 个文件、375 个用例通过，墙钟 `15.6s`。
+- legacy auth/domain/repositories/services/files/pdf：31 个文件、130 个用例通过，墙钟 `20.3s`。
+- legacy 核心 routes：6 个文件、88 个用例通过，墙钟 `41.0s`。
+- legacy settings/system/users 等：12 个文件、65 个用例通过，墙钟 `23.7s`。
+- server/server-exe package：2 个文件、3 个用例通过，墙钟 `12.1s`。
+- Electron：3 个文件、12 个用例通过，墙钟 `12.3s`。
+- `npm run build`：TypeScript 与 Vite 生产构建通过，墙钟 `29.7s`；只保留既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告。
+
+规格审查 Important 修复证据：
+
+- 物理 S3 前缀与 Worker 注入先得到预期 RED：storage suite 因 wrapper 模块不存在失败；Worker 新用例仍进入真实 `loadPlatformConfig`，4 个既有用例通过、1 个新用例失败，墙钟 `13.3s`。实现测试 wrapper、Web `dependencies.createStorage` 注入和 Worker 显式 `loadConfig/storageFactory/runLifecycle` 依赖后，2 个文件、7 个用例通过，墙钟 `17.6s`。
+- fresh 受影响回归包含 prefixed storage、TOTP、Mailpit、state publication、cleanup diagnostics 和 Worker lifecycle：6 个文件、14 个用例通过，墙钟 `14.6s`。
+- identity security spec 在 `page.goBack()` 后、下一次 `page.goto('/')` 前，使用同一 helper 同时扫描后退态 URL、localStorage、sessionStorage 和 console；检查 challenge、invitation、enrollment、`otpauth://` URI、手工 TOTP secret、两次 TOTP code 与全部 recovery codes 均不残留。
+- 运行手册已明确列出 `npm run platform:db:migrate`、`npm run platform:bootstrap-admin` 和 `npm run platform:worker`；未跟踪 `.env.local` 使用等价的显式 Node 入口覆盖，不修改或隐藏 npm 默认配置。
+- 修复后的 Task 20/21 聚焦回归：9 个文件、156 个用例通过，墙钟 `13.2s`；`e2e:typecheck` 通过，墙钟 `11.2s`；`npm run build` 通过，墙钟 `27.3s`，仍只有既有 PDF.js `531.35 kB` 警告。
+
+质量审查 Critical / Important 修复证据：
+
+- 本地依赖边界采用 fail-closed：在 Mailpit、PostgreSQL、MinIO 的任何请求前，先删除陈旧 state，再校验全部 TEST/admin/migration/web/worker/bootstrap PostgreSQL URL 均为固定 `55432` loopback、允许的本地角色/数据库/本地密码；MinIO 必须是固定 `59000` loopback HTTP、无认证/path/query/hash、精确 `pdf-approval` bucket、`forcePathStyle=true` 和 local-only 示例凭据。run env 从白名单显式构造，不继承生产同名配置。对应 RED 后，环境与启动边界 2 个文件、14 个用例通过。
+- startup、E2E Worker child 和正式 Worker 进程错误只允许白名单稳定 code，否则输出通用 code；数据库 URL、secret 和任意 `error.code` 不再透传。对应 3 个文件、10 个用例通过。
+- S3 prefix 回收检查 `DeleteObjects.Errors`，且 `IsTruncated=true` 缺 `NextContinuationToken` 时 fail-closed；多页、部分失败和缺 token 3 个用例通过。
+- `npm run e2e:platform` 无参数时由无 shell 的 Node runner 顺序执行 desktop identity、desktop session/project、mobile identity 三次独立 fresh harness；显式参数保持单次 Playwright 直通。stateful Playwright `retries` 固定为 0；command matrix 2/2 通过。
+- 完整 harness 已接真实 Worker prefix probe：先在 owned run root 的 `objects/` adapter 子前缀写对象、在同一 root 的 `sentinel/` 子前缀写 sentinel，并在真实 PostgreSQL transaction 中写 storage metadata 与 cleanup outbox intent，之后才启动 Worker；轮询时先确认 sentinel 存在，观察到对象已删除且 metadata 为 `deleted` 后再确认一次 sentinel，最后主动删除 sentinel。sentinel 对 Worker adapter 是前缀外对象；正常退出或启动失败时由 cleanup root 兜底。该真实 PostgreSQL + MinIO 路径已随最终四个 Platform Playwright 用例完成验证。
+- Mailpit 全量清理前获取 `127.0.0.1:58026` OS 独占锁，退出释放；并发所有权测试 4/4 通过。Worker child 在启动配置/模式检查前建立外层 AbortSignal，IPC/SIGTERM/SIGINT shutdown 在 schema gate 后仍被观察，取消后不创建 storage、不启动 loop；Worker 相关 2 个文件、8 个用例通过。
+- 邀请限流按源码定义保留 `invitation.prepare` 与 `invitation.complete` 两个不同 PostgreSQL 共享 bucket；E2E 分别验证两类失败各自达到 `429`，不把 prepare 打满误写成 complete 必须立即 `429`。
+- fresh 组合受影响回归：12 个文件、65 个用例通过，墙钟 `17.4s`；Worker 聚焦实际收集 3 个文件、19 个用例通过，墙钟 `14.8s`。身份客户端/API 聚焦另有 9 个文件、113 个用例通过，墙钟 `15.9s`；既有 Task 20/21 9 文件、156 用例证据仍见上一条。
+- `e2e:typecheck` 首次仅因新 runner `.mjs` 缺类型声明失败；补同名 `.d.mts` 后 fresh 通过，墙钟 `11.3s`。`npm run build` fresh 通过，墙钟 `29.4s`，仍只有既有 PDF.js `531.35 kB` chunk 警告。
+- 最终 Minor 的 ownership layout 与 sentinel 成功前复检均先得到有效 RED：2 个文件、7 个用例中 2 个失败；最小修复后受影响 4 个文件、11 个用例通过，墙钟 `15.4s`。layout 断言 sentinel 不属于 adapter `objects/` 前缀但属于 cleanup root；竞态用例模拟首次 sentinel 存在、probe 已删、返回前 sentinel 消失并确认必须失败。
+
+基础设施恢复与最终真实验收：
+
+- Docker Desktop 恢复后，PostgreSQL `127.0.0.1:55432`、MinIO `127.0.0.1:59000/59001`、Mailpit `127.0.0.1:51025/58025` 三项容器均为 healthy；只执行幂等 `npm run infra:up`，未 reset、未删除卷。
+- 九组 Platform integration 共 `319/319` 通过；Platform unit 共 `530` 个通过，另有 1 个 Windows symlink policy 跳过。此前环境中的 `runWithTimeout/taskkill` 用例已在最终权限环境下通过。
+- Phase 0 回归保持绿色：client `375/375`、legacy auth/domain/repositories/services/files/pdf `130/130`、legacy core routes `88/88`、legacy settings/system 等 `65/65`、package `3/3`、Electron `12/12`、legacy Playwright `20/20`；生产构建通过，只有既有 PDF.js `531.35 kB` chunk 警告。
+- Windows 下 Playwright `webServer` 会强制结束进程树，无法等待异步清理。最终改为 `scripts/run-platform-e2e.mjs` 持有 harness 生命周期：每组 fork fresh harness，等待 READY，运行 Playwright，并在 `finally` 通过 IPC 请求 shutdown；只有同时收到 cleanup ack 和 child exit 才算成功。pass、Playwright fail/throw、harness 启动失败和超时路径均有单测，生命周期测试 `19/19`、`e2e:typecheck`、`git diff --check` 均通过。
+- 真实定向运行 `npm run e2e:platform -- --project=desktop-chromium e2e/platform/project-access.spec.ts`：`1/1` 通过，墙钟 `28.5s`；退出后数据库、对象、邮件、state、端口与 Mailpit 锁均为 0。
+- 真实完整运行 `npm run e2e:platform`：三次独立 READY；desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过，墙钟 `100.5s`。覆盖 Axe、无横向溢出、真实 Cookie/CSRF、邀请、TOTP、一次性恢复码、两类邀请限流、项目 active membership 与未授权统一 404。
+- 完整运行退出后再次核对：`pdf_approval_test_*` 数据库 `0`、MinIO `phase1-e2e/*` 对象 `0`、Mailpit 测试邮件 `0`、`.cache/platform-e2e/state.json` 不存在，`14173/18080/24173/28080/58026` 监听 `0`；三项基础设施仍为 healthy。
+
+最终验收结论：
+
+- Phase 1 Task 22 的真实依赖、浏览器、Worker、数据库、对象存储、邮件与清理生命周期门禁全部通过。
+- Phase 1 验收范围已闭环；已知 PDF.js chunk 警告保持 Phase 0 基线，不阻断本阶段完成。
+
+## 2026-07-13 Phase 2 Task 1–2：DS0/DS1 启动切片
+
+范围：
+
+- 新建 `codex/phase-2-ui-design-system`，以已验收的 Phase 1 提交为基础；详细计划写入 `docs/plans/2026-07-13-phase-2-ui-design-system-app-shell.md`。
+- 将基础视觉来源从 `src/client/styles.css` 的单一 `:root` 拆为 `styles/tokens.css`、`reset.css`、`globals.css` 和 `motion.css`。未迁移页面通过只指向新令牌的兼容别名继续工作；本切片不迁移审批、PDM 或 PDF 业务 DOM。
+- 视觉方向采用精密工业：冷中性工作面、深色工具表面、单一青绿色主操作；取消旧 body 装饰渐变，不引入 UI 框架或运行时字体。
+- 新增开发专用 `/__ui-gallery`。入口同时要求 `import.meta.env.DEV`，生产构建扫描 `UI 设计系统基线` 与 `Phase 2 · DS0 / DS1` 均为 0 个匹配，生产导航没有 Gallery 入口。
+- 新增独立 `playwright.ui.config.ts` 和 `npm run e2e:ui`，固定覆盖 `1440×900`、`1280×800`、`1024×768`、`768×1024`、`390×844` 五个视口，不连接 legacy/platform API。
+
+TDD 与浏览器校准：
+
+- 初始 foundation 测试按预期 RED：4 个令牌/入口断言失败，Gallery 因实现文件不存在而无法收集。
+- 最小实现后，foundation、Gallery 和既有样式聚焦测试共 `21/21` 通过。
+- UI Gallery 首轮五视口真实浏览器得到有效 RED：次要文字 `#627278` 在工作面 `#e7ecee` 上只有 `4.20:1`，低于 WCAG AA `4.5:1`。将令牌校准为 `#5b6b70` 后对比度达到 `4.66:1`，未降低 axe 门禁。
+- 五视口均验证：无横向溢出、键盘 `:focus-visible` 可见、reduced-motion 将滚动恢复为 `auto`、控制台 0 个 error、axe 0 个 serious/critical；截图已人工检查桌面和手机布局。
+- UI Gallery 截图大小：desktop `134587`、compact `132139`、landscape `133534`、portrait `134805`、mobile `129969` bytes。
+
+回归结果：
+
+- 全量 client：42 个文件、`381/381` 通过。
+- `npm run e2e:typecheck`：通过。
+- `npm run build`：通过；只保留既有 PDF.js `531.35 kB` chunk 警告。
+- Electron：3 个文件、`12/12` 通过。
+- UI Gallery：五视口 `5/5` 通过，非更新模式复测稳定。
+- Phase 0 legacy Playwright：先得到 16 个行为测试通过、4 个预期视觉差异；人工检查新的 desktop/mobile 管理台和 PDF 工作台后更新四张基线，完整非更新模式复测 `20/20` 通过。
+- Phase 1 Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- Platform 退出后：测试数据库 `0`、MinIO 测试对象 `0`、Mailpit 测试邮件 `0`、state 文件不存在，`14173/18080/24173/28080/34173/58026` 监听 `0`。
+
+当前边界：
+
+- Phase 2 已开始，但尚未完成；本切片只完成详细计划、DS0 和 DS1。
+- 下一切片是 Task 3 Actions：Button、IconButton、ButtonLink 和 ButtonGroup，并从 platform identity 开始迁移调用点。
+
+## 2026-07-14 Phase 2 Task 3–5：DS2 Platform Identity 垂直切片
+
+范围：
+
+- 新增仓库内生 Actions、Forms、Feedback 组件层；Actions 包含 `Button`、`IconButton`、`ButtonLink`、`ButtonGroup`，Forms 包含字段、输入、选择、选择组、开关、文件拖放和表单动作，Feedback 包含提示、Toast、保存状态、进度、骨架、空/错状态和连接横幅。
+- Platform 登录、MFA、邀请激活、恢复码和项目访问页面已迁移到公共组件；业务请求、路由、Cookie/CSRF、安全激活和项目权限逻辑保持不变。
+- 删除 identity 中零引用的 `.platform-button`、`.platform-error`、`.platform-feedback`、基础 input/select、factor 和 confirmation 实现；保留的 `platform-form` 只负责页面布局。`platformIdentity.css` 的颜色全部改为语义令牌。
+- UI Gallery 扩展到 DS0–DS2 的主要状态；五份截图已人工检查，当前大小为 desktop `229528`、compact `225062`、landscape `223411`、portrait `226621`、mobile `214005` bytes。
+
+真实浏览器校准：
+
+- loading Button 初始丢失可访问名称，修复为 loading 时使用显式 `aria-label`。
+- warning 文本初始对比度为 `3.41:1`，将 warning 令牌调整为 `#8a5c00` 后通过 axe。
+- PasswordInput 的“显示密码”按钮与“密码”输入框名称冲突；按钮改用“显示/隐藏输入内容”可访问名称，具体字段信息保留在 title。
+- RadioGroup 原先把说明文本并入 accessible name；改为独立 `aria-labelledby` 与 `aria-describedby`，恢复码选项可按精确名称定位。
+
+Gallery 生命周期修复：
+
+- Windows 下 Playwright `webServer` 退出存在端口释放竞态。`scripts/run-ui-gallery-e2e.mjs` 现直接使用 Vite `createServer()` 持有服务，Playwright CLI 以 `shell: false` 子进程运行，并在成功或失败路径的 `finally` 关闭 Vite。
+- runner 生命周期单测 `4/4` 通过。`npm run e2e:ui` 连续两次均为五视口 `5/5` 通过；两次结束后的 `34173` 监听数均为 `0`，未再出现端口占用。
+
+本切片回归：
+
+- 全量 client：46 个测试文件、`390/390` 通过。
+- `npm run e2e:typecheck`：通过；runner 的依赖注入声明已收窄为实际使用的 Vite 和 child-process 契约。
+- `npm run build`：TypeScript 与 Vite 生产构建通过；只保留既有 PDF.js `531.35 kB` chunk 警告。
+- Phase 1 Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- Platform 退出后 `.cache/platform-e2e/state.json` 不存在，`24172/24173` 监听均为 `0`，`pdf_approval_e2e_%` 测试数据库为 `0`。
+
+当前边界：
+
+- Phase 2 尚未完成；本切片只收口 DS2 公共组件中的 Actions、Forms、Feedback 以及 Platform Identity 调用点。
+- 下一切片继续迁移 legacy Login/Profile/Submit，然后实现 Overlays、DS3 AppShell 和 DS4 数据组件及业务页面迁移。
+
+### DS2 legacy Login / Profile / Submit 调用点迁移
+
+- legacy 登录、个人资料和提交图纸已改用共享 Actions、Forms、Feedback；页面源码不再自建 input/select/textarea，也不再使用 `.secondary-button`、`.error`、`.success` 或 `.success-message` 表达公共语义。
+- 批量文件选择行保留领域专用按钮 DOM，避免公共 Button 的内容包装破坏文件名、状态和错误信息网格；页面级提交、重置、模板、快捷账号和资料动作均已迁移。
+- 聚焦迁移与既有布局测试：5 个文件、`24/24` 通过；全量 client 更新为 47 个文件、`392/392` 通过。生产构建通过，只保留既有 PDF.js `531.35 kB` 警告。
+- legacy Playwright 登录/角色入口在 desktop/mobile 共 `10/10` 通过，覆盖管理员、主管、工艺、设计师落点和登录页 critical axe 门禁；退出后 `14173/18080` 监听均为 `0`。
+- 使用真实浏览器人工检查 desktop 登录、提交、个人资料和 `390×844` mobile 登录；控件无溢出，字段可访问名称、密码显示按钮、空状态和禁用原因均正确暴露。
+
+### DS2 Overlay 公共层与调用点迁移
+
+- 新增 `Dialog`、`ConfirmDialog`、`Drawer`、`Popover`、`Tooltip`；Modal/Drawer 统一管理初始焦点、Tab 环、Escape、body 滚动锁和关闭后的焦点回归，手机使用全宽底部 Dialog 或全屏 Drawer。
+- 桌面更新、签名必配、打印设置、管理端系统清理和 PDM 历史回填已迁移到公共浮层；打印设置同步迁移到共享 Actions/Forms/Feedback。
+- 旧 `.desktop-update-*` 容器、`.signature-required-*`、`.print-settings-backdrop/dialog/header/check/actions` 在生产调用点零引用后删除；更新下载进度和打印表单的领域布局样式保留。
+- Overlay 与迁移聚焦回归：7 个文件、`44/44` 通过；全量 client 更新为 49 个文件、`396/396` 通过，`e2e:typecheck` 和生产构建通过。
+- Gallery 五视口交互验证 Dialog/Drawer 初始焦点、Escape 关闭、焦点回归和 Popover Escape；更新基线后非更新模式 `5/5` 通过，`34173` 监听为 `0`。桌面与手机截图已人工检查；当前大小为 desktop `245403`、compact `240070`、landscape `238445`、portrait `241343`、mobile `228479` bytes。
+
+### DS3 AppShell、导航与页面模式
+
+- `App.tsx` 不再拥有 sidebar/nav/user DOM；新 `AppShell` 只接收品牌、已过滤导航、用户显示信息和内容，`AppNavigation` 不认识角色权限，权限仍由 `roleAccess` 先行过滤。
+- 当前页统一使用 `aria-current="page"`；桌面展开宽度 `232px`、收起宽度 `64px`，平板/手机切换为顶部横向任务流。管理员、主管、工艺和设计师原有落点不变；主管/工艺入口文案由“待我审核”统一为“我的任务”。
+- 新增 `PageHeader`、`Breadcrumbs`、`Tabs`、`SegmentedControl` 和 `FilterBar`；MyTasks 首个迁移为“我的任务”页面标题与统一错误反馈。Gallery 增加 DS3 页面壳层样例。
+- AppShell 迁移后，全局 `styles.css` 中旧 `.app-layout/.sidebar/.brand/.side-nav/.user-panel/.ghost-button/.content-area/.app-shell/.skip-link` 及其响应式规则共删除 522 行；新实现只使用 CSS Modules 和语义令牌。
+- 聚焦 DS3 组件测试 `16/16` 通过；全量 client 更新为 52 个文件、`400/400` 通过，`e2e:typecheck`、生产构建和 `git diff --check` 通过。
+- legacy Playwright 完整非更新模式：desktop/mobile 共 22 项，`21` 通过，mobile-only 的 desktop 64px 契约用例按设计跳过 `1`；desktop 断言动画稳定后精确为 `64px`。退出后 `14173/18080` 监听均为 `0`。
+- 四份 AppShell/PDF 工作台视觉基线已在真实浏览器人工复核并更新；desktop admin `125186`、mobile admin `117602`、desktop workbench `120741`、mobile workbench `148104` bytes。
+- Gallery DS0–DS3 更新后非更新模式五视口 `5/5` 通过，截图已人工复核；当前大小为 desktop `281878`、compact `275865`、landscape `273396`、portrait `275733`、mobile `261986` bytes。
+
+## 2026-07-14 Phase 2 Task 9–12：DS4 数据页与阶段验收（完成）
+
+实现范围：
+
+- 新增业务无关的 `StatusChip`、`Badge`、`KeyValueList`、`TableFrame`、`DataTable`、`Pagination`、`Timeline`、`FileLink`、`HashValue` 和 `BatchActionBar`。`DataTable` 不请求数据；审批和 PDM 状态均在页面或领域适配层映射为 `label/tone`。
+- `DataTable` 覆盖固定表头、受控选择、全选/部分选择、行键盘进入、loading/empty/error、重试、手机卡片字段和 `mobileHidden` 领域配置；手机批量操作栏固定在可触达位置。
+- MyTasks、Approvals 和共享 ApprovalTable 已迁移。审批台账继续保留延迟关键词请求、筛选、分页、批量签后 PDF、打印归档、管理员删除和行进入；单删、批删、打印归档均改用 `ConfirmDialog`。
+- PDM Parts、Pending Metadata、Part Detail 已迁移。零件库保留风险队列、查询、分页和详情入口；待补录使用 Drawer 快速补录；详情页使用 DataTable、FileLink、HashValue 和 Timeline，并把版本作废改为 `ConfirmDialog`。
+- Settings 使用统一 PageHeader/Tabs；用户、签名模板和 Operations 操作日志迁移到 DataTable。模板删除改用 `ConfirmDialog`；表格内字段使用带隐藏视觉标签的公共表单控件。
+- 删除零引用的 `.data-table`、`.approval-table`、`.pdm-table`、`.table-action-bar`、`.pagination-bar`、`.user-table`、`.template-table`、`.operation-table` 和 `.operation-log-panel` 公共实现及其响应式分支。
+
+TDD 与静态门禁：
+
+- DS4 初始测试先因 `src/client/ui/data/index.tsx` 不存在得到预期 RED；最小实现后数据组件 `4/4` 通过。
+- 迁移聚焦回归：审批切片 `22/22`，PDM 与数据组件 `14/14`，Settings/Forms/Overlay 聚焦 `15/15`。
+- 全量 client：53 个测试文件、`405/405` 通过。
+- `npm run e2e:typecheck`：通过。
+- `npm run build`：通过；仍只有既有 `assets/pdf-CJRVEglZ.js` `531.35 kB` 超过 500 kB 的 PDF.js chunk 警告。
+- 新 DS4 CSS/组件扫描：硬编码颜色 `0`、任意 z-index `0`、公共组件中的审批/PDM/WebDAV 业务词 `0`；旧表格选择器生产引用 `0`；`git diff --check` 通过。
+
+真实浏览器与运行时验收：
+
+- Gallery E2E 已升级为 DS0–DS4：先因旧阶段标识得到五视口有效 RED；新增表格选择、状态、分页和手机字段断言后，1440×900、1280×800、1024×768、768×1024、390×844 非更新模式 `5/5` 通过。
+- Gallery 每个视口均验证无横向溢出、axe serious/critical `0`、控制台 error `0`、reduced motion、Dialog/Drawer/Popover 焦点契约，以及桌面全选和移动端逐行选择。五张截图已人工检查；大小依次为 desktop `345429`、compact `338019`、landscape `334355`、portrait `346498`、mobile `329493` bytes。
+- Electron：3 个测试文件、`12/12` 通过。
+- legacy Playwright：22 项，`21 passed / 1 skipped`；跳过项仅为 mobile 项目不适用 desktop 64px 契约。系统管理桌面/手机实际截图人工检查后更新，完整非更新模式复测稳定。
+- Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+- 最终退出后 `14173/18080/24173/28080/34173/58026` 监听均为 `0`，Platform state 文件不存在。
+
+Phase 2 结论：
+
+- DS0–DS4、统一 AppShell、公共 Actions/Forms/Feedback/Overlays/Navigation/Data 组件及计划内业务页迁移全部完成。
+- Phase 2 验收闭环；PDF Studio 专用三栏工作台继续进入 Phase 3，未在本阶段越界修改。
+
+## 2026-07-14 Phase 3：PDF 审阅与标注三栏工作台（完成）
+
+实现范围：
+
+- 审批详情重构为文档优先三栏工作台：桌面缩略图栏、中央 PDF 画布、右侧审阅检查器；981–1280px 收窄栏宽，平板和手机改用缩略图与检查器抽屉。
+- PDF 视口支持适宽、适高、100%、缩放、拖动、页码定位、全屏、高低清分层渲染和页面问题数。
+- 批注工具支持定位、箭头、矩形、圆形、文字、画笔、云线、自定义颜色、连续标注、复制、撤销、重做与保存状态；绘制后可创建普通说明或正式问题。
+- 画布“正式问题”改为单一原子接口：批注与问题在同一 SQLite 事务内创建，失败整体回滚；`clientRequestId` 支持幂等重试且不会重复写操作日志，不再产生孤立批注。
+- 新增正式问题领域模型与审计轨迹：严重级、负责人、期限、处理说明、待复核与关闭；处理人不能关闭自己的问题，管理员强制关闭必须填写原因。
+- 正式问题检查器支持状态、严重级、负责人、PDF 页码四维筛选；页码选项覆盖文档全部页面，画布问题表单补齐到期时间。
+- 未关闭 high/critical 问题阻止审批通过；创建支持幂等键，状态更新使用乐观版本冲突检测，并通过 SSE 推送单服务器实时更新。
+- 桌面检查器支持鼠标拖动和键盘调整，宽度受 280–480px 与视口 40% 双边界约束，并以 `pdf-studio.inspector-width` 持久化；1100px 默认 280px，1440px 默认 320px。
+- 问题、批注、属性、记录统一进入检查器；旧浮动协同窗、旧详情双栏、旧工具栏和零引用全局样式已删除。
+- PDF 批注层、页面画布、签名定位工作区、PDM 信息和签审面板全部迁入 CSS Modules，并只使用语义令牌与现有 UI 原语。
+- DS5 PDF Studio 已进入开发专用 UI Gallery，使用真实工程图 SVG、缩略页、画布批注、检查器、问题状态和实际审阅动作条展示完整状态。
+
+自动化与静态门禁：
+
+- `npm test -- --run src/client src/server/repositories src/server/routes src/server/services`：98 个文件，`661/661` 通过。
+- `npm run e2e:typecheck`：通过。
+- `npm run desktop:test`：3 个文件，`12/12` 通过。
+- `npm run build`：TypeScript 与 Vite 生产构建通过；仅保留既有 PDF.js `531.35 kB` chunk 警告。
+- `git diff --check`：通过。
+- 最终增量扫描：新增硬编码颜色 `0`、数值型 `z-index` `0`、旧 PDF Studio 全局业务 class `0`、调试输出 `0`。
+
+真实浏览器与响应式验收：
+
+- PDF Studio 五视口门禁覆盖 1440、1100、800、680、390px；无水平溢出，缩略图栏、检查器宽度与抽屉契约全部通过，axe serious/critical 为 `0`。
+- 工作台真实交互覆盖：非空 PDF canvas、矩形绘制、说明保存、100%→110% 缩放、页码定位、撤销、重做、桌面工具策略、手机降级策略和控制台 error `0`。
+- 12 页真实长文档验证覆盖 12 个缩略页、当前页附近仅 2–3 个高清 canvas、缩略图仅渲染当前页 ±3（最多 7 个 canvas）、跳转第 7 页并原子创建带定位批注的正式问题。
+- 正式问题浏览器闭环覆盖主管创建 high 问题、设计师开始处理并提交复核、主管退回、设计师修订后再次提交、主管独立关闭，以及主管/工艺/管理员三条审批路径的 high/critical 阻断。
+- legacy Playwright：32 项，`26 passed / 6 skipped`；跳过项均为按产品策略不适用于手机或桌面专属契约的用例。
+- UI Gallery：1440、1280、1024、768、390 五视口 `5/5` 通过；五张 DS5 基线已人工检查，非更新模式复测通过。
+- Platform Playwright：desktop identity `1/1`、desktop project/session `2/2`、mobile identity `1/1`，合计 `4/4` 通过。
+
+Phase 3 结论：
+
+- PDF 审阅与标注工作台、正式问题闭环、响应式/无障碍契约和旧逻辑清理全部完成。
+- 当前 SSE 事件中心为单服务器内存实现；未来扩展为多实例部署时需迁移到共享消息总线。

@@ -31,7 +31,7 @@ export function navigationForRole(user: Pick<User, "role">): NavItem[] {
 
   if (user.role === "supervisor" || user.role === "process") {
     return [
-      { href: "#/", label: "待我审核", route: "tasks" },
+      { href: "#/", label: "我的任务", route: "tasks" },
       { href: "#/approvals", label: "全部图纸", route: "approvals" },
       { href: "#/pdm", label: "零件库", route: "pdm" },
       { href: "#/signature", label: "我的签名", route: "signature" },

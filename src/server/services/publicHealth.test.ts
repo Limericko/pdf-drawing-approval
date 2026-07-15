@@ -11,6 +11,7 @@ describe("buildPublicHealth", () => {
 
     expect(health).toEqual({
       ok: true,
+      runtimeMode: "legacy",
       appName: "PDF图纸审批",
       version: expect.stringMatching(/^\d+\.\d+\.\d+$/),
       apiCompatVersion: 1,

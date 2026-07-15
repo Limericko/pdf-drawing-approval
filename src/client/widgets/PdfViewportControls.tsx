@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { Hand, Maximize2, Minus, Plus, RotateCcw, StretchVertical } from "lucide-react";
+import styles from "../features/pdf-studio/PdfViewportControls.module.css";
 
 export type PdfViewportMode = "fit-width" | "fit-height" | "manual";
 
@@ -92,11 +93,11 @@ export function PdfViewportToolbar({
   onChange: (state: PdfViewportState) => void;
 }) {
   return (
-    <div className="pdf-viewport-toolbar" aria-label="PDF 视图控制">
+    <div className={styles.toolbar} aria-label="PDF 视图控制">
       <button type="button" title="缩小" aria-label="缩小 PDF" onClick={() => onChange(updatePdfViewportZoom(state, "out"))}>
         <Minus size={16} aria-hidden="true" />
       </button>
-      <strong className="pdf-viewport-toolbar__zoom">{pdfViewportZoomLabel(state)}</strong>
+      <strong className={styles.zoom}>{pdfViewportZoomLabel(state)}</strong>
       <button type="button" title="放大" aria-label="放大 PDF" onClick={() => onChange(updatePdfViewportZoom(state, "in"))}>
         <Plus size={16} aria-hidden="true" />
       </button>
@@ -119,7 +120,7 @@ export function PdfViewportToolbar({
         title="拖动浏览"
         aria-label="拖动浏览 PDF"
         aria-pressed={state.panMode}
-        className={state.panMode ? "active" : ""}
+        data-active={state.panMode}
         onClick={() => onChange(setPdfViewportPanMode(state, !state.panMode))}
       >
         <Hand size={16} aria-hidden="true" />

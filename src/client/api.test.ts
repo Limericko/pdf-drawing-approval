@@ -147,6 +147,38 @@ describe("approval annotation API", () => {
   });
 });
 
+describe("linked formal issue API", () => {
+  it("sends the issue and drawing annotation in one idempotent request", async () => {
+    api.setToken("token value");
+    const fetchMock = mockJsonFetch({ issue: { id: 8 }, annotation: { id: 12 } });
+    await api.createApprovalIssueWithAnnotation(4, {
+      assigneeUserId: 3,
+      title: "孔径公差缺失",
+      description: "请补充 H7 公差。",
+      severity: "high",
+      annotation: {
+        kind: "rect",
+        message: "请补充 H7 公差。",
+        pageNumber: 1,
+        xRatio: 0.2,
+        yRatio: 0.3,
+        widthRatio: 0.2,
+        heightRatio: 0.1,
+        color: "red"
+      }
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/approvals/4/issues/linked-annotation");
+    expect(init).toEqual(expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(String(init.body))).toEqual(expect.objectContaining({
+      title: "孔径公差缺失",
+      clientRequestId: expect.any(String),
+      annotation: expect.objectContaining({ kind: "rect", pageNumber: 1 })
+    }));
+  });
+});
+
 describe("desktop API base URL", () => {
   it("uses the configured server base URL for JSON requests", async () => {
     setServerBaseUrl("http://192.168.1.20:8080");

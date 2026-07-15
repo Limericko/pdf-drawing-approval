@@ -31,6 +31,20 @@ export function migrateDatabase(db: DatabaseConnection) {
   migrateSignatureTemplates(db);
   migrateBatchSubmissions(db);
   migrateApprovalAnnotations(db);
+  migrateApprovalIssues(db);
+}
+
+function migrateApprovalIssues(db: DatabaseConnection) {
+  const columns = db.prepare("PRAGMA table_info(approval_issues)").all() as Array<{ name: string }>;
+  const existing = new Set(columns.map((column) => column.name));
+  if (!existing.has("client_request_id")) {
+    db.exec("ALTER TABLE approval_issues ADD COLUMN client_request_id TEXT");
+  }
+  if (!existing.has("version")) {
+    db.exec("ALTER TABLE approval_issues ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+  }
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_issues_client_request
+    ON approval_issues(client_request_id) WHERE client_request_id IS NOT NULL;`);
 }
 
 function migrateApprovalIndexes(db: DatabaseConnection) {

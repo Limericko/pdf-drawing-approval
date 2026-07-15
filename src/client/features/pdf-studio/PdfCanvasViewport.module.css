@@ -1,0 +1,85 @@
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--color-workspace);
+}
+
+.topBar {
+  min-width: 0;
+  min-height: 2.75rem;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border-strong);
+}
+.topActions { display: flex; gap: var(--space-2); align-items: center; }
+.railToggle { display: none; }
+
+.pageNavigator { display: flex; gap: var(--space-1); align-items: center; }
+.pageNavigator button {
+  min-width: var(--icon-button-sm);
+  min-height: var(--icon-button-sm);
+  padding: 0 var(--space-2);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  font-size: var(--font-size-caption);
+}
+.pageNavigator button:hover:not(:disabled) { background: var(--color-primary-soft); border-color: var(--color-primary); }
+.pageNavigator input { width: 3.25rem; height: var(--control-height-sm); padding-inline: var(--space-2); color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font: 700 var(--font-size-caption) / 1 var(--font-family-mono); }
+.pageNavigator span { color: var(--color-text-muted); font: var(--font-size-caption) / 1 var(--font-family-mono); }
+
+.body { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: var(--pdf-thumbnails-width) minmax(0, 1fr); }
+.rail { min-height: 0; display: grid; align-content: start; gap: var(--space-2); padding: var(--space-2); overflow: auto; background: var(--color-surface-subtle); border-right: 1px solid var(--color-border-strong); }
+.thumbnail { width: 100%; min-width: 0; display: grid; gap: var(--space-1); padding: var(--space-1); color: var(--color-text-muted); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); box-shadow: none; }
+.thumbnail:hover { color: var(--color-text); background: var(--color-surface); border-color: var(--color-border); }
+.thumbnail[data-active="true"] { color: var(--color-primary-active); background: var(--color-primary-soft); border-color: var(--color-primary); }
+.thumbnailPreview { position: relative; width: 100%; aspect-ratio: 0.707; display: grid; place-items: center; overflow: hidden; background: var(--color-surface); border: 1px solid var(--color-border); box-shadow: var(--shadow-document); }
+.thumbnailPreview canvas { width: 100%; height: 100%; object-fit: contain; }
+.thumbnailPreview > span { font: 700 var(--font-size-caption) / 1 var(--font-family-mono); }
+.thumbnail small { overflow: hidden; font-size: var(--font-size-caption); text-overflow: ellipsis; white-space: nowrap; }
+.issueCount { position: absolute; right: var(--space-1); bottom: var(--space-1); min-width: 1.25rem; min-height: 1.25rem; display: grid; place-items: center; color: var(--color-text-on-dark); background: var(--color-danger); border-radius: var(--radius-sm); font: 700 var(--font-size-caption) / 1 var(--font-family-mono); }
+
+.viewport { min-width: 0; min-height: 0; overflow: auto; padding: var(--space-4); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.viewport[data-pan="true"] { cursor: grab; }
+.viewport[data-panning="true"] { cursor: grabbing; user-select: none; }
+.message { display: grid; gap: var(--space-2); min-height: 13.75rem; place-content: center; padding: var(--space-5); color: var(--color-text); text-align: center; background: color-mix(in srgb, var(--color-surface) 72%, transparent); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-lg); }
+.message strong { font-size: var(--font-size-title-sm); }
+.message span { color: var(--color-text-muted); }
+.message[data-error="true"] { color: var(--color-danger); border-color: var(--color-danger); }
+.page { position: relative; width: var(--pdf-page-width, min(100%, 60rem)); margin: 0 auto var(--space-4); overflow: visible; background: var(--color-surface); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-document); }
+.page:last-child { margin-bottom: 0; }
+.canvas { display: block; width: 100%; height: auto; background: var(--color-surface); }
+.pageNumber { position: absolute; left: var(--space-2); top: var(--space-2); z-index: var(--z-sticky); padding: 0.1875rem 0.4375rem; color: var(--color-text); background: color-mix(in srgb, var(--color-surface) 84%, transparent); border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: var(--font-size-caption); font-weight: 800; pointer-events: none; }
+.pageError { position: absolute; inset: 0; z-index: var(--z-popover); display: grid; gap: var(--space-1); place-content: center; padding: var(--space-5); color: var(--color-danger); text-align: center; background: color-mix(in srgb, var(--color-surface) 88%, transparent); }
+.pagePlaceholder { width: 100%; height: 100%; display: grid; place-items: center; color: var(--color-text-muted); background: var(--color-surface); font-size: var(--font-size-caption); }
+.bottomBar { min-height: 2rem; display: flex; gap: var(--space-3); align-items: center; justify-content: center; padding: var(--space-1) var(--space-3); color: var(--color-text-muted); background: var(--color-surface); border-top: 1px solid var(--color-border-strong); font: var(--font-size-caption) / 1 var(--font-family-mono); }
+
+@media (max-width: 80rem) {
+  .body { grid-template-columns: 5.5rem minmax(0, 1fr); }
+  .rail { padding-inline: var(--space-1); }
+  .topBar { padding-inline: var(--space-2); }
+}
+
+@media (max-width: 61.25rem) {
+  .body { grid-template-columns: minmax(0, 1fr); }
+  .rail { display: none; }
+  .railToggle { display: inline-flex; }
+  .rail[data-open="true"] { position: absolute; z-index: var(--z-sticky); inset-block: 0; left: 0; width: 7rem; display: grid; box-shadow: var(--shadow-floating); }
+  .railBackdrop { position: absolute; z-index: var(--z-base); inset: 0; padding: 0; background: color-mix(in srgb, var(--color-chrome) 24%, transparent); border: 0; border-radius: 0; }
+}
+
+@media (max-width: 42.5rem) {
+  .topBar { gap: var(--space-2); align-items: stretch; flex-direction: column; }
+  .pageNavigator { justify-content: space-between; }
+  .viewport { padding: var(--space-2); }
+}

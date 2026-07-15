@@ -1,3 +1,3 @@
-import { startPdfApprovalServer } from "./startServer.ts";
+import { startConfiguredServer } from "./startConfiguredServer.ts";
 
-startPdfApprovalServer();
+await startConfiguredServer();

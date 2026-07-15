@@ -2,7 +2,7 @@
 
 面向中型工程团队的云端 PDF 审阅、标注、并行审批与 PDM 协同平台。办公室和异地用户通过同一 HTTPS 域名登录；生产业务数据统一存放在 PostgreSQL 与 S3 兼容对象存储中，WebDAV 仅作为受控文件交换端。
 
-> 最新完整重构代码位于 [`codex/phase-6-hk-cloud-deployment`](https://github.com/Limericko/pdf-drawing-approval/tree/codex/phase-6-hk-cloud-deployment)。默认 `main` 暂时保留 0.9.2 局域网基线，正式合并前请使用 Phase 6 分支和下方不可变镜像。
+`main` 已包含 Phase 0–6 的全部重构代码。仓库同时保留 Windows 局域网兼容模式，作为旧数据迁移来源和必要回退路径；公网生产入口使用独立的 platform 运行模式、邀请制账号、TOTP MFA、Cookie/CSRF 会话和项目权限。
 
 ## 当前状态
 
@@ -10,9 +10,11 @@
 | --- | --- |
 | Phase 0–5：质量、安全、UI、PDF、审批/PDM、WebDAV | 已完成并通过自动化与浏览器验收 |
 | Phase 6：通用 Docker/OCI、密钥注入、旧数据迁移工具 | 仓库实现和本地容器验收已完成 |
+| GitHub 代码仓库 | 公开；可匿名克隆和查看 |
+| GHCR 容器镜像 | 当前仍为私有包；拉取需要 `read:packages` 令牌 |
 | 正式生产切换 | 等待域名、正式账号邮箱、云资源和恢复演练 |
 
-完整证据见 [重构完成审计](https://github.com/Limericko/pdf-drawing-approval/blob/codex/phase-6-hk-cloud-deployment/docs/refactor-completion-audit.md)。
+完整证据见 [重构完成审计](docs/refactor-completion-audit.md)。
 
 ## 核心能力
 
@@ -22,11 +24,20 @@
 - 公网安全登录：邀请制账号、TOTP MFA、Cookie/CSRF 会话和项目级权限。
 - 云端与 WebDAV 受控双向同步：哈希校验、冲突队列、有限重试和删除不传播。
 - PostgreSQL、S3 兼容对象存储、后台 Worker/Outbox，以及云厂商无关的 Docker/OCI 运行包。
-- 保留 Windows 局域网兼容模式，作为迁移来源与必要回退路径。
+- 保留 Electron 客户端和 Windows 局域网兼容运行方式。
+
+## 获取代码
+
+代码仓库已公开，无需 GitHub 登录即可克隆：
+
+```bash
+git clone https://github.com/Limericko/pdf-drawing-approval.git
+cd pdf-drawing-approval
+```
 
 ## 拉取生产镜像
 
-镜像位于私有 GitHub Container Registry。登录令牌需要 `read:packages` 权限，并且账号必须有本仓库访问权。
+代码仓库公开不会自动改变 GitHub Container Registry 包的可见性。当前 GHCR 镜像仍为私有包；登录令牌需要 `read:packages` 权限，并且账号必须有该容器包的访问权。
 
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u Limericko --password-stdin
@@ -42,19 +53,12 @@ PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:70844d80005dd13
 
 镜像由 [GitHub Actions 发布流程](https://github.com/Limericko/pdf-drawing-approval/actions/workflows/publish-container.yml) 构建，并附带 SBOM 与 provenance。
 
-## 获取完整重构代码
+## 生产部署
 
-```bash
-git clone git@github.com:Limericko/pdf-drawing-approval.git
-cd pdf-drawing-approval
-git switch codex/phase-6-hk-cloud-deployment
-```
-
-生产部署入口：
-
-- [通用 Docker/OCI 运行说明](https://github.com/Limericko/pdf-drawing-approval/blob/codex/phase-6-hk-cloud-deployment/deploy/README.md)
-- [生产 Compose](https://github.com/Limericko/pdf-drawing-approval/blob/codex/phase-6-hk-cloud-deployment/deploy/compose.production.yaml)
-- [生产迁移与切换手册](https://github.com/Limericko/pdf-drawing-approval/blob/codex/phase-6-hk-cloud-deployment/docs/runbooks/phase-6-production-cutover.md)
+- [通用 Docker/OCI 运行说明](deploy/README.md)
+- [生产 Compose](deploy/compose.production.yaml)
+- [迁移演练手册](docs/runbooks/phase-6-migration-drill.md)
+- [生产迁移与切换手册](docs/runbooks/phase-6-production-cutover.md)
 
 ## 技术栈
 
@@ -65,8 +69,6 @@ git switch codex/phase-6-hk-cloud-deployment
 - Docker Compose / OCI
 
 ## 开发与验证
-
-切换到 Phase 6 分支后：
 
 ```powershell
 npm ci
@@ -80,6 +82,13 @@ npm run e2e:platform
 ```
 
 本地依赖栈包含 PostgreSQL、MinIO 和 Mailpit。真实生产配置和秘密不得提交到 Git。
+
+## 安全边界
+
+- 公网生产模式关闭自注册并强制邀请、MFA、项目权限、CSRF 防护和审计。
+- legacy 默认账号仅用于迁移前的局域网兼容环境，不得暴露到公网。
+- 生产秘密必须通过只读文件注入，不得进入代码、镜像、Compose、日志或客户端 bundle。
+- 公共仓库不包含正式账号邮箱、数据库密码、S3 密钥、SMTP 密码或 WebDAV 凭据。
 
 ## 部署边界
 

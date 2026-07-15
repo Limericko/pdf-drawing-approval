@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { SignaturePlacement, SignaturePlacementRole } from "../api.ts";
+import type { SignaturePlacement, SignaturePlacementRole } from "./signaturePlacementTypes.ts";
 
 const labels: Record<SignaturePlacementRole, string> = {
   designer: "设计",

@@ -6,6 +6,7 @@ import {
   pdmMetadataStatusCopy,
   pdmPublishStatusCopy
 } from "../approvalDetailLogic.ts";
+import styles from "./PdmMetadataPanel.module.css";
 
 export type PdmRepairDraft = {
   documentCode: string;
@@ -43,7 +44,7 @@ export function PdmMetadataPanel({
     : "";
 
   return (
-    <section className="pdm-metadata-panel">
+    <section className={styles.panel}>
       <div className="section-title-row">
         <div>
           <span className="eyebrow">PDM</span>
@@ -56,7 +57,7 @@ export function PdmMetadataPanel({
         )}
       </div>
 
-      <dl className="compact-dl pdm-metadata-list">
+      <dl className={`compact-dl ${styles.metadata}`}>
         <dt>体系文件号</dt>
         <dd>{approval.documentCode || "待补"}</dd>
         <dt>管家婆物料号</dt>
@@ -81,13 +82,13 @@ export function PdmMetadataPanel({
         {approval.pdmPublishError && (
           <>
             <dt>发布问题</dt>
-            <dd className="danger-text">{approval.pdmPublishError}</dd>
+            <dd className={styles.danger}>{approval.pdmPublishError}</dd>
           </>
         )}
       </dl>
 
       {editing && (
-        <div className="pdm-repair-form">
+        <div className={styles.repairForm}>
           <label>
             体系文件号
             <input

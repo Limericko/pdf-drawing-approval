@@ -6,6 +6,7 @@ import type { AppConfig } from "./config.ts";
 import { createDatabase, type DatabaseConnection } from "./db.ts";
 import { ApprovalCommentRepository } from "./repositories/approvalComments.ts";
 import { ApprovalAnnotationRepository } from "./repositories/approvalAnnotations.ts";
+import { ApprovalIssueRepository } from "./repositories/approvalIssues.ts";
 import { ApprovalRepository } from "./repositories/approvals.ts";
 import { BackupRunRepository } from "./repositories/backups.ts";
 import { BatchSubmissionRepository } from "./repositories/batchSubmissions.ts";
@@ -21,6 +22,7 @@ import { UserRepository } from "./repositories/users.ts";
 import { SettingsRepository } from "./repositories/settings.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { approvalAnnotationRoutes } from "./routes/approvalAnnotations.ts";
+import { approvalIssueRoutes } from "./routes/approvalIssues.ts";
 import { approvalCommentRoutes } from "./routes/approvalComments.ts";
 import { approvalRoutes } from "./routes/approvals.ts";
 import { approvalOperationLogRoutes, operationLogRoutes } from "./routes/operationLogs.ts";
@@ -41,6 +43,7 @@ import { createMaintenanceScheduler, readMaintenanceSettings } from "./services/
 import { PdmBackfillService } from "./services/pdmBackfillService.ts";
 import { PdmReleaseService } from "./services/pdmReleaseService.ts";
 import { buildPublicHealth } from "./services/publicHealth.ts";
+import { ApprovalIssueEventHub } from "./services/approvalIssueEventHub.ts";
 import type { MailTransport } from "./notifications/email.ts";
 import { notifyApprovalCreated } from "./notifications/notifyApprovalCreated.ts";
 import { notifyApprovalEvent } from "./notifications/approvalNotifications.ts";
@@ -57,6 +60,7 @@ export type ServerDeps = {
   db?: DatabaseConnection;
   approvals?: ApprovalRepository;
   approvalAnnotations?: ApprovalAnnotationRepository;
+  approvalIssues?: ApprovalIssueRepository;
   approvalComments?: ApprovalCommentRepository;
   backups?: BackupRunRepository;
   batchSubmissions?: BatchSubmissionRepository;
@@ -91,12 +95,14 @@ export type ServerDeps = {
   lanAddresses?: string[];
   fetchUpdateManifest?: (sourceUrl: string) => Promise<UpdateManifest>;
   restart?: () => void;
+  approvalIssueEventHub?: ApprovalIssueEventHub;
 };
 
 export function createServer(config: AppConfig, deps: ServerDeps = {}) {
   const db = deps.db ?? createDatabase(config.databasePath);
   const approvals = deps.approvals ?? new ApprovalRepository(db);
   const approvalAnnotations = deps.approvalAnnotations ?? new ApprovalAnnotationRepository(db);
+  const approvalIssues = deps.approvalIssues ?? new ApprovalIssueRepository(db);
   const approvalComments = deps.approvalComments ?? new ApprovalCommentRepository(db);
   const backups = deps.backups ?? new BackupRunRepository(db);
   const batchSubmissions = deps.batchSubmissions ?? new BatchSubmissionRepository(db);
@@ -112,6 +118,7 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
   const userPreferences = deps.userPreferences ?? new UserPreferenceRepository(db);
   const users = deps.users ?? new UserRepository(db);
   const settings = deps.settings ?? new SettingsRepository(db);
+  const approvalIssueEventHub = deps.approvalIssueEventHub ?? new ApprovalIssueEventHub();
   users.ensureDefaultUsers();
 
   const emitApprovalNotification = (
@@ -195,6 +202,7 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
     approvalRoutes({
       approvals,
       approvalAnnotations,
+      approvalIssues,
       settings,
       operationLogs,
       signatureAssets,
@@ -207,6 +215,19 @@ export function createServer(config: AppConfig, deps: ServerDeps = {}) {
     })
   );
   app.use("/api/pdm", pdmRoutes({ approvals, operationLogs, pdmParts, pdmBackfillService, pdmReleaseService, jwtSecret: config.jwtSecret }));
+  app.use(
+    "/api/approvals",
+    approvalIssueRoutes({
+      db,
+      approvals,
+      approvalIssues,
+      approvalAnnotations,
+      users,
+      operationLogs,
+      issueEventHub: approvalIssueEventHub,
+      jwtSecret: config.jwtSecret
+    })
+  );
   app.use(
     "/api/approvals",
     approvalAnnotationRoutes({

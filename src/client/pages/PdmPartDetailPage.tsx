@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Ban, Download, ExternalLink, FileCheck2, FileText, History } from "lucide-react";
 import {
   getAnnotatedFileUrl,
   getApprovalFileUrl,
@@ -13,6 +12,14 @@ import {
   type PdmRevisionStatus,
   type User
 } from "../api.ts";
+import { PageHeader } from "../patterns/PageHeader/index.tsx";
+import { Button, ButtonLink } from "../ui/actions/index.tsx";
+import { DataTable, FileLink, HashValue, KeyValueList, StatusChip, TableFrame, Timeline, type DataTableColumn } from "../ui/data/index.tsx";
+import { EmptyState, ErrorState, InlineAlert, Skeleton } from "../ui/feedback/index.tsx";
+import { TextInput } from "../ui/forms/index.tsx";
+import { Tabs } from "../ui/navigation/index.tsx";
+import { ConfirmDialog } from "../ui/overlays/index.tsx";
+import styles from "./PdmPartDetailPage.module.css";
 
 type PdmDetailTab = "history" | "projects" | "approvals" | "hashes" | "trace";
 
@@ -25,416 +32,163 @@ export function PdmPartDetailPage({ id, user }: { id: number; user?: Pick<User, 
   const [message, setMessage] = useState("");
   const [voidReasonByRevisionId, setVoidReasonByRevisionId] = useState<Record<number, string>>({});
   const [busyRevisionId, setBusyRevisionId] = useState<number | null>(null);
+  const [pendingVoidRevision, setPendingVoidRevision] = useState<PdmDrawingRevision | null>(null);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     getPdmPart(id)
-      .then((result) => {
-        if (active) setDetail(result);
-      })
-      .catch((err) => {
-        if (active) setError(err instanceof Error ? err.message : "PDM_PART_DETAIL_FAILED");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
+      .then((result) => { if (active) setDetail(result); })
+      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "PDM_PART_DETAIL_FAILED"); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [id, refreshSeq]);
 
-  async function handleVoidRevision(revision: PdmDrawingRevision) {
+  function requestVoidRevision(revision: PdmDrawingRevision) {
     const reason = (voidReasonByRevisionId[revision.id] ?? "").trim();
-    if (!reason) {
-      setError("请先填写版本作废原因。");
-      return;
-    }
-    const confirmed = window.confirm(`确认作废 ${revision.drawingName} / ${revision.version}？作废后会重新计算当前有效版本。`);
-    if (!confirmed) return;
+    if (!reason) { setError("请先填写版本作废原因。"); return; }
+    setPendingVoidRevision(revision);
+  }
 
-    setError("");
-    setMessage("");
-    setBusyRevisionId(revision.id);
+  async function confirmVoidRevision() {
+    const revision = pendingVoidRevision;
+    if (!revision) return;
+    const reason = (voidReasonByRevisionId[revision.id] ?? "").trim();
+    setError(""); setMessage(""); setBusyRevisionId(revision.id);
     try {
       await voidPdmRevision(revision.id, reason);
       setMessage("PDM 图纸版本已作废，当前有效版本已重新计算。");
       setVoidReasonByRevisionId((current) => ({ ...current, [revision.id]: "" }));
       setRefreshSeq((current) => current + 1);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "PDM_REVISION_VOID_FAILED");
-    } finally {
-      setBusyRevisionId(null);
-    }
+      setPendingVoidRevision(null);
+    } catch (err) { setError(err instanceof Error ? err.message : "PDM_REVISION_VOID_FAILED"); }
+    finally { setBusyRevisionId(null); }
   }
 
-  if (loading && !detail) {
-    return <div className="empty compact-empty">正在打开零件详情...</div>;
-  }
-
-  if (error && !detail) {
-    return (
-      <section>
-        <a className="table-action-link" href="#/pdm">
-          <ArrowLeft size={14} strokeWidth={2} aria-hidden="true" />
-          返回零件库
-        </a>
-        <div className="error">零件详情读取失败：{error}</div>
-      </section>
-    );
-  }
-
-  if (!detail) {
-    return <div className="empty compact-empty">未找到零件档案</div>;
-  }
+  if (loading && !detail) return <TableFrame><div className={styles.initialState}><Skeleton lines={5} label="正在打开零件详情" /></div></TableFrame>;
+  if (error && !detail) return <section className={styles.page}>
+    <ButtonLink variant="ghost" href="#/pdm">返回零件库</ButtonLink>
+    <ErrorState title="零件详情读取失败" onRetry={() => setRefreshSeq((current) => current + 1)}>{error}</ErrorState>
+  </section>;
+  if (!detail) return <EmptyState title="未找到零件档案" />;
 
   const { part, currentRevision, revisions, usages, traceLogs } = detail;
-  const overviewFacts = pdmDetailOverviewFacts(detail);
   const relationTabs = buildPdmRelationTabs(revisions.length, usages.length, traceLogs.length);
   const canVoidRevision = user?.role === "admin";
 
-  return (
-    <section className="pdm-detail-page pdm-detail-shell">
-      <header className="pdm-detail-nav">
-        <a className="table-action-link" href="#/pdm">
-          <ArrowLeft size={14} strokeWidth={2} aria-hidden="true" />
-          返回零件库
-        </a>
-      </header>
+  return <section className={styles.page}>
+    <PageHeader title={part.name} eyebrow="零件主档案" description={pdmRevisionSummary(detail)}
+      breadcrumbs={<ButtonLink variant="ghost" size="sm" href="#/pdm">返回零件库</ButtonLink>}
+      metadata={<StatusChip tone={part.isCommon ? "info" : "neutral"}>{part.isCommon ? "共用件" : "普通零件"}</StatusChip>} />
 
-      <section className="pdm-master-card" aria-label="PDM 零件主档案">
-        <div className="pdm-master-card__body">
-          <div>
-            <span className="eyebrow">零件主档案</span>
-            <h1>{part.name}</h1>
-            <p>{pdmRevisionSummary(detail)}</p>
-          </div>
-          <div className="pdm-master-facts">
-            {overviewFacts.map((fact) => (
-              <div key={fact.label}>
-                <span>{fact.label}</span>
-                <strong>{fact.value}</strong>
-              </div>
-            ))}
-          </div>
-        </div>
-        <aside className="pdm-current-version-pin" aria-label="当前有效版本">
-          <span>当前有效版本</span>
-          {currentRevision ? (
-            <>
-              <strong>{currentRevision.version}</strong>
-              <em>{currentRevision.documentCode ?? "体系文件号待补"}</em>
-              <a className="table-action-link" href={`#/approvals/${currentRevision.approvalId}`}>
-                <ExternalLink size={14} strokeWidth={2} aria-hidden="true" />
-                {pdmTraceabilityLabel(currentRevision.approvalId)}
-              </a>
-              <RevisionFileActions revision={currentRevision} compact />
-            </>
-          ) : (
-            <>
-              <strong>待发布</strong>
-              <em>该零件还没有发布到 PDM 的当前版本。</em>
-            </>
-          )}
-        </aside>
-      </section>
+    <KeyValueList aria-label="PDM 零件主档案" items={pdmDetailOverviewFacts(detail)} />
 
-      {message && <div className="success">{message}</div>}
-      {error && <div className="error">PDM 操作失败：{error}</div>}
+    <TableFrame title="当前有效版本" description={currentRevision ? currentRevision.documentCode ?? "体系文件号待补" : "该零件还没有发布到 PDM 的当前版本。"}>
+      {currentRevision ? <div className={styles.currentRevision}>
+        <StatusChip tone="success">{currentRevision.version}</StatusChip>
+        <ButtonLink variant="secondary" size="sm" href={`#/approvals/${currentRevision.approvalId}`}>{pdmTraceabilityLabel(currentRevision.approvalId)}</ButtonLink>
+        <RevisionFileActions revision={currentRevision} />
+      </div> : <EmptyState title="待发布">审批通过并发布后会生成当前有效版本。</EmptyState>}
+    </TableFrame>
 
-      <section className="pdm-relation-tabs" aria-label="PDM 版本关系">
-        <div className="pdm-tab-list" role="tablist" aria-label="零件版本关系">
-          {relationTabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={activeTab === tab.key ? "active" : ""}
-              onClick={() => setActiveTab(tab.key)}
-              aria-selected={activeTab === tab.key}
-            >
-              <span>{tab.label}</span>
-              <strong>{tab.count}</strong>
-            </button>
-          ))}
-        </div>
+    {message ? <InlineAlert tone="success">{message}</InlineAlert> : null}
+    {error ? <InlineAlert tone="danger">PDM 操作失败：{error}</InlineAlert> : null}
 
-        {activeTab === "history" && (
-          <section className="pdm-panel pdm-history-panel">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">版本关系</span>
-                <h2>历史版本</h2>
-              </div>
-              <span className="muted-inline">共 {revisions.length} 个版本</span>
-            </div>
-            {revisions.length > 0 ? (
-              <RevisionHistoryTable
-                revisions={revisions}
-                canVoid={canVoidRevision}
-                busyRevisionId={busyRevisionId}
-                voidReasonByRevisionId={voidReasonByRevisionId}
-                onVoidReasonChange={(revisionId, reason) =>
-                  setVoidReasonByRevisionId((current) => ({ ...current, [revisionId]: reason }))
-                }
-                onVoidRevision={handleVoidRevision}
-              />
-            ) : (
-              <div className="empty compact-empty">暂无历史版本。</div>
-            )}
-          </section>
-        )}
+    <Tabs label="零件版本关系" activeId={activeTab} onChange={(value) => setActiveTab(value as PdmDetailTab)}
+      items={relationTabs.map((tab) => ({ id: tab.key, label: `${tab.label} ${tab.count}` }))} />
 
-        {activeTab === "projects" && (
-          <section className="pdm-panel pdm-usage-panel">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">项目复用</span>
-                <h2>使用项目</h2>
-              </div>
-              <span className="muted-inline">{usages.length} 个项目</span>
-            </div>
-            <UsageProjectList usages={usages} />
-          </section>
-        )}
+    {activeTab === "history" ? <RevisionHistoryTable revisions={revisions} canVoid={canVoidRevision}
+      busyRevisionId={busyRevisionId} voidReasonByRevisionId={voidReasonByRevisionId}
+      onVoidReasonChange={(revisionId, reason) => setVoidReasonByRevisionId((current) => ({ ...current, [revisionId]: reason }))}
+      onVoidRevision={requestVoidRevision} /> : null}
 
-        {activeTab === "approvals" && (
-          <section className="pdm-panel">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">关联审批</span>
-                <h2>审批记录</h2>
-              </div>
-              <span className="muted-inline">按版本发布时间倒序</span>
-            </div>
-            {revisions.length > 0 ? (
-              <div className="pdm-approval-link-list">
-                {revisions.map((revision) => (
-                  <a key={revision.id} className="pdm-approval-link" href={`#/approvals/${revision.approvalId}`}>
-                    <span>
-                      <strong>{revision.version}</strong>
-                      {revision.drawingName}
-                    </span>
-                    <em>{pdmTraceabilityLabel(revision.approvalId)}</em>
-                  </a>
-                ))}
-              </div>
-            ) : (
-              <div className="empty compact-empty">暂无关联审批记录。</div>
-            )}
-          </section>
-        )}
+    {activeTab === "projects" ? <UsageProjectList usages={usages} /> : null}
 
-        {activeTab === "hashes" && (
-          <section className="pdm-panel">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">文件校验</span>
-                <h2>文件哈希</h2>
-              </div>
-              <span className="muted-inline">用于追溯原始 PDF、签后 PDF 和批注版 PDF。</span>
-            </div>
-            <RevisionHashGrid revisions={revisions} />
-          </section>
-        )}
+    {activeTab === "approvals" ? <TableFrame title="审批记录" description="按版本发布时间倒序">
+      {revisions.length > 0 ? <div className={styles.linkList}>{revisions.map((revision) => <ButtonLink key={revision.id}
+        variant="secondary" href={`#/approvals/${revision.approvalId}`}>{revision.version} · {revision.drawingName} · {pdmTraceabilityLabel(revision.approvalId)}</ButtonLink>)}</div>
+        : <EmptyState title="暂无关联审批记录" />}
+    </TableFrame> : null}
 
-        {activeTab === "trace" && (
-          <section className="pdm-panel pdm-trace-panel">
-            <div className="section-title-row">
-              <div>
-                <span className="eyebrow">追溯记录</span>
-                <h2>操作时间线</h2>
-              </div>
-              <span className="muted-inline">来自该零件所有版本的审批与 PDM 操作</span>
-            </div>
-            <PdmTraceTimeline logs={traceLogs} />
-          </section>
-        )}
-      </section>
-    </section>
-  );
+    {activeTab === "hashes" ? <RevisionHashGrid revisions={revisions} /> : null}
+
+    {activeTab === "trace" ? <TableFrame title="操作时间线" description="来自该零件所有版本的审批与 PDM 操作">
+      <PdmTraceTimeline logs={traceLogs} />
+    </TableFrame> : null}
+
+    <ConfirmDialog open={Boolean(pendingVoidRevision)} title="确认作废版本"
+      description={pendingVoidRevision ? `确认作废 ${pendingVoidRevision.drawingName} / ${pendingVoidRevision.version}？作废后会重新计算当前有效版本。` : ""}
+      confirmLabel="确认作废" danger busy={Boolean(busyRevisionId)} onClose={() => setPendingVoidRevision(null)}
+      onConfirm={() => { void confirmVoidRevision(); }} />
+  </section>;
 }
 
-function RevisionHistoryTable({
-  revisions,
-  canVoid,
-  busyRevisionId,
-  voidReasonByRevisionId,
-  onVoidReasonChange,
-  onVoidRevision
-}: {
-  revisions: PdmDrawingRevision[];
-  canVoid: boolean;
-  busyRevisionId: number | null;
-  voidReasonByRevisionId: Record<number, string>;
-  onVoidReasonChange: (revisionId: number, reason: string) => void;
-  onVoidRevision: (revision: PdmDrawingRevision) => void;
+function RevisionHistoryTable({ revisions, canVoid, busyRevisionId, voidReasonByRevisionId, onVoidReasonChange, onVoidRevision }: {
+  readonly revisions: readonly PdmDrawingRevision[];
+  readonly canVoid: boolean;
+  readonly busyRevisionId: number | null;
+  readonly voidReasonByRevisionId: Readonly<Record<number, string>>;
+  readonly onVoidReasonChange: (revisionId: number, reason: string) => void;
+  readonly onVoidRevision: (revision: PdmDrawingRevision) => void;
 }) {
-  return (
-    <div className="table-surface pdm-table-surface">
-      <table className="data-table pdm-table pdm-history-table">
-        <thead>
-          <tr>
-            <th>版本</th>
-            <th>体系文件号</th>
-            <th>图纸名称</th>
-            <th>状态</th>
-            <th>发布时间</th>
-            <th>PDF 文件</th>
-            <th>审批记录</th>
-            {canVoid && <th>版本维护</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {revisions.map((revision) => (
-            <tr key={revision.id}>
-              <td data-label="版本"><span className="version-badge">{revision.version}</span></td>
-              <td data-label="体系文件号">{revision.documentCode ?? <span className="muted-inline">待补</span>}</td>
-              <td data-label="图纸名称">{revision.drawingName}</td>
-              <td data-label="状态">
-                <span className={`status-chip status-chip--${revision.releaseStatus === "released" ? "print" : "archived"}`}>
-                  {pdmRevisionStatusLabel(revision.releaseStatus)}
-                </span>
-              </td>
-              <td data-label="发布时间">{formatDateTime(revision.releasedAt)}</td>
-              <td data-label="PDF 文件">
-                <RevisionFileActions revision={revision} />
-              </td>
-              <td data-label="审批记录">
-                <a className="table-action-link" href={`#/approvals/${revision.approvalId}`}>
-                  <ExternalLink size={14} strokeWidth={2} aria-hidden="true" />
-                  {pdmTraceabilityLabel(revision.approvalId)}
-                </a>
-              </td>
-              {canVoid && (
-                <td data-label="版本维护">
-                  {revision.releaseStatus === "voided" ? (
-                    <span className="muted-inline">已作废</span>
-                  ) : (
-                    <div className="pdm-revision-admin">
-                      <input
-                        value={voidReasonByRevisionId[revision.id] ?? ""}
-                        onChange={(event) => onVoidReasonChange(revision.id, event.target.value)}
-                        placeholder="填写作废原因"
-                      />
-                      <button
-                        type="button"
-                        className="danger icon-text-button"
-                        disabled={busyRevisionId === revision.id}
-                        onClick={() => onVoidRevision(revision)}
-                      >
-                        <Ban size={14} strokeWidth={2} aria-hidden="true" />
-                        作废版本
-                      </button>
-                    </div>
-                  )}
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+  const columns: DataTableColumn<PdmDrawingRevision>[] = [
+    { id: "version", header: "版本", align: "center", cell: (revision) => <strong>{revision.version}</strong> },
+    { id: "document", header: "体系文件号", mobileHidden: true, cell: (revision) => revision.documentCode ?? "待补" },
+    { id: "drawing", header: "图纸名称", cell: (revision) => revision.drawingName },
+    { id: "status", header: "状态", cell: (revision) => <StatusChip tone={revision.releaseStatus === "released" ? "success" : "neutral"}>{pdmRevisionStatusLabel(revision.releaseStatus)}</StatusChip> },
+    { id: "released", header: "发布时间", mobileHidden: true, cell: (revision) => <time className={styles.time}>{formatDateTime(revision.releasedAt)}</time> },
+    { id: "files", header: "PDF 文件", cell: (revision) => <RevisionFileActions revision={revision} /> },
+    { id: "approval", header: "审批记录", mobileHidden: true, cell: (revision) => <ButtonLink variant="ghost" size="sm" href={`#/approvals/${revision.approvalId}`}>{pdmTraceabilityLabel(revision.approvalId)}</ButtonLink> }
+  ];
+  if (canVoid) columns.push({ id: "maintenance", header: "版本维护", cell: (revision) => revision.releaseStatus === "voided"
+    ? <span className={styles.muted}>已作废</span>
+    : <div className={styles.maintenance}>
+      <TextInput id={`void-reason-${revision.id}`} label="作废原因" hideLabel value={voidReasonByRevisionId[revision.id] ?? ""}
+        onChange={(event) => onVoidReasonChange(revision.id, event.target.value)} placeholder="填写作废原因" />
+      <Button size="sm" variant="danger" loading={busyRevisionId === revision.id} loadingLabel="作废中" onClick={() => onVoidRevision(revision)}>作废版本</Button>
+    </div> });
+  return <TableFrame title="历史版本" description={`共 ${revisions.length} 个版本`}>
+    <DataTable ariaLabel="PDM 历史版本" columns={columns} rows={revisions} getRowKey={(revision) => revision.id}
+      emptyTitle="暂无历史版本" stickyHeader />
+  </TableFrame>;
 }
 
-function RevisionFileActions({ revision, compact = false }: { revision: PdmDrawingRevision; compact?: boolean }) {
+function RevisionFileActions({ revision }: { readonly revision: PdmDrawingRevision }) {
   const annotatedCacheKey = revision.annotatedFilePath ? revision.updatedAt : null;
-  return (
-    <div className={compact ? "pdm-file-action-list pdm-file-action-list--compact" : "pdm-file-action-list"}>
-      <a className="table-action-link" href={getApprovalFileUrl(revision.approvalId)} target="_blank" rel="noreferrer">
-        <FileText size={14} strokeWidth={2} aria-hidden="true" />
-        原始 PDF
-      </a>
-      {revision.signedFilePath ? (
-        <a className="table-action-link" href={getSignedFileUrl(revision.approvalId, revision.signedFileHash)} target="_blank" rel="noreferrer">
-          <FileCheck2 size={14} strokeWidth={2} aria-hidden="true" />
-          签后 PDF
-        </a>
-      ) : (
-        <span className="pdm-file-action-disabled">
-          <FileCheck2 size={14} strokeWidth={2} aria-hidden="true" />
-          签后 PDF
-        </span>
-      )}
-      {revision.annotatedFilePath ? (
-        <a className="table-action-link" href={getAnnotatedFileUrl(revision.approvalId, annotatedCacheKey)} target="_blank" rel="noreferrer">
-          <Download size={14} strokeWidth={2} aria-hidden="true" />
-          审查版 PDF
-        </a>
-      ) : (
-        <span className="pdm-file-action-disabled">
-          <Download size={14} strokeWidth={2} aria-hidden="true" />
-          审查版 PDF
-        </span>
-      )}
-    </div>
-  );
+  return <div className={styles.fileActions} onClick={(event) => event.stopPropagation()}>
+    <FileLink href={getApprovalFileUrl(revision.approvalId)} target="_blank" rel="noreferrer">原始 PDF</FileLink>
+    {revision.signedFilePath ? <FileLink href={getSignedFileUrl(revision.approvalId, revision.signedFileHash)} target="_blank" rel="noreferrer">签后 PDF</FileLink>
+      : <span className={styles.disabledFile}>签后 PDF</span>}
+    {revision.annotatedFilePath ? <FileLink href={getAnnotatedFileUrl(revision.approvalId, annotatedCacheKey)} target="_blank" rel="noreferrer">审查版 PDF</FileLink>
+      : <span className={styles.disabledFile}>审查版 PDF</span>}
+  </div>;
 }
 
-function PdmTraceTimeline({ logs }: { logs: OperationLog[] }) {
-  if (logs.length === 0) return <div className="empty compact-empty">暂无操作时间线。</div>;
-  return (
-    <ol className="pdm-trace-list">
-      {logs.map((log) => (
-        <li key={log.id}>
-          <span className="pdm-trace-list__icon" aria-hidden="true">
-            <History size={15} strokeWidth={2} />
-          </span>
-          <div>
-            <time>{formatDateTime(log.createdAt)}</time>
-            <strong>{operationLogActionLabel(log.action)}</strong>
-            <span>{log.message}</span>
-            <em>{log.actorUsername ? `操作人：${log.actorUsername}` : "系统记录"}</em>
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
+function PdmTraceTimeline({ logs }: { readonly logs: readonly OperationLog[] }) {
+  if (logs.length === 0) return <EmptyState title="暂无操作时间线" />;
+  return <Timeline items={logs.map((log) => ({ id: log.id, title: operationLogActionLabel(log.action),
+    timestamp: formatDateTime(log.createdAt), description: <>{log.message}<span className={styles.actor}>{log.actorUsername ? `操作人：${log.actorUsername}` : "系统记录"}</span></>,
+    tone: log.action.includes("failed") || log.action.includes("voided") ? "danger" : log.action.includes("published") ? "success" : "info" }))} />;
 }
 
-function UsageProjectList({ usages }: { usages: PdmPartUsage[] }) {
-  if (usages.length === 0) return <div className="empty compact-empty">暂无项目使用记录。</div>;
-  return (
-    <div className="pdm-usage-list">
-      {usages.map((usage) => (
-        <div key={usage.id}>
-          <strong>{usage.projectName}</strong>
-          <span>首次审批 #{usage.firstApprovalId}，最近审批 #{usage.lastApprovalId}</span>
-        </div>
-      ))}
-    </div>
-  );
+function UsageProjectList({ usages }: { readonly usages: readonly PdmPartUsage[] }) {
+  return <TableFrame title="使用项目" description={`${usages.length} 个项目`}>
+    {usages.length > 0 ? <KeyValueList items={usages.map((usage) => ({ id: String(usage.id), label: usage.projectName,
+      value: `首次审批 #${usage.firstApprovalId}，最近审批 #${usage.lastApprovalId}` }))} /> : <EmptyState title="暂无项目使用记录" />}
+  </TableFrame>;
 }
 
-function RevisionHashGrid({ revisions }: { revisions: PdmDrawingRevision[] }) {
-  if (revisions.length === 0) return <div className="empty compact-empty">暂无文件哈希记录。</div>;
-  return (
-    <div className="pdm-hash-grid">
-      {revisions.map((revision) => (
-        <article key={revision.id} className="pdm-hash-card">
-          <header>
-            <span className="version-badge">{revision.version}</span>
-            <strong>{pdmRevisionStatusLabel(revision.releaseStatus)}</strong>
-          </header>
-          <dl className="compact-dl pdm-revision-facts">
-            <div>
-              <dt>原始文件哈希</dt>
-              <dd>{revision.originalFileHash ?? "未记录"}</dd>
-            </div>
-            <div>
-              <dt>签后文件哈希</dt>
-              <dd>{revision.signedFileHash ?? "未记录"}</dd>
-            </div>
-            <div>
-              <dt>批注版文件</dt>
-              <dd>{revision.annotatedFilePath ? "已归档" : "未归档"}</dd>
-            </div>
-          </dl>
-        </article>
-      ))}
-    </div>
-  );
+function RevisionHashGrid({ revisions }: { readonly revisions: readonly PdmDrawingRevision[] }) {
+  return <TableFrame title="文件哈希" description="用于追溯原始 PDF、签后 PDF 和批注版 PDF。">
+    {revisions.length > 0 ? <div className={styles.hashList}>{revisions.map((revision) => <section key={revision.id}>
+      <header><StatusChip tone={revision.releaseStatus === "released" ? "success" : "neutral"}>{revision.version}</StatusChip><strong>{pdmRevisionStatusLabel(revision.releaseStatus)}</strong></header>
+      <KeyValueList items={[
+        { label: "原始文件哈希", value: revision.originalFileHash ? <HashValue value={revision.originalFileHash} /> : "未记录", wide: true },
+        { label: "签后文件哈希", value: revision.signedFileHash ? <HashValue value={revision.signedFileHash} /> : "未记录", wide: true },
+        { label: "批注版文件", value: revision.annotatedFilePath ? "已归档" : "未归档" }
+      ]} />
+    </section>)}</div> : <EmptyState title="暂无文件哈希记录" />}
+  </TableFrame>;
 }
 
 export function pdmDetailOverviewFacts(detail: PdmPartDetail) {
@@ -449,48 +203,31 @@ export function pdmDetailOverviewFacts(detail: PdmPartDetail) {
 
 function buildPdmRelationTabs(revisionCount: number, usageCount: number, traceCount: number): Array<{ key: PdmDetailTab; label: string; count: number }> {
   return [
-    { key: "history", label: "版本历史", count: revisionCount },
-    { key: "projects", label: "使用项目", count: usageCount },
-    { key: "approvals", label: "关联审批", count: revisionCount },
-    { key: "hashes", label: "文件哈希", count: revisionCount },
+    { key: "history", label: "版本历史", count: revisionCount }, { key: "projects", label: "使用项目", count: usageCount },
+    { key: "approvals", label: "关联审批", count: revisionCount }, { key: "hashes", label: "文件哈希", count: revisionCount },
     { key: "trace", label: "操作时间线", count: traceCount }
   ];
 }
 
 export function pdmRevisionSummary(detail: PdmPartDetail) {
-  if (!detail.currentRevision) return "尚未发布当前有效版本";
-  return `当前 ${detail.currentRevision.version} / 体系文件号 ${detail.currentRevision.documentCode ?? "待补"}`;
+  return detail.currentRevision ? `当前 ${detail.currentRevision.version} / 体系文件号 ${detail.currentRevision.documentCode ?? "待补"}` : "尚未发布当前有效版本";
 }
 
 export function pdmRevisionStatusLabel(status: PdmRevisionStatus) {
-  return {
-    released: "当前有效",
-    superseded: "历史版本",
-    voided: "已作废"
-  }[status];
+  return { released: "当前有效", superseded: "历史版本", voided: "已作废" }[status];
 }
 
-export function pdmTraceabilityLabel(approvalId: number) {
-  return `查看审批 #${approvalId}`;
-}
+export function pdmTraceabilityLabel(approvalId: number) { return `查看审批 #${approvalId}`; }
 
 function formatDateTime(value: string | null) {
   if (!value) return "未记录";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function operationLogActionLabel(action: string) {
-  const labels: Record<string, string> = {
-    "pdm.revision_voided": "PDM 版本作废",
-    "pdm.revision_published": "发布到 PDM",
-    "pdm.metadata_repaired": "PDM 信息补录",
-    "pdm.published": "发布到 PDM",
-    "pdm.backfill_requested": "PDM 历史回填",
-    "approval.reviewed": "审核处理",
-    "approval.signed": "签后 PDF",
-    "approval.printed": "打印归档"
-  };
+  const labels: Record<string, string> = { "pdm.revision_voided": "PDM 版本作废", "pdm.revision_published": "发布到 PDM",
+    "pdm.metadata_repaired": "PDM 信息补录", "pdm.published": "发布到 PDM", "pdm.backfill_requested": "PDM 历史回填",
+    "approval.reviewed": "审核处理", "approval.signed": "签后 PDF", "approval.printed": "打印归档" };
   return labels[action] ?? action;
 }

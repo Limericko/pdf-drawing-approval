@@ -1,0 +1,155 @@
+.field,
+.choiceField {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.field > label,
+.choiceGroup > legend {
+  color: var(--color-text);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  font-weight: 600;
+}
+
+.required,
+.error { color: var(--color-danger); }
+
+.description,
+.error {
+  margin: 0;
+  font-size: var(--font-size-body-sm);
+  line-height: var(--line-height-body-sm);
+}
+
+.description { color: var(--color-text-muted); }
+
+.control {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height-md);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+textarea.control { min-height: 6rem; resize: vertical; }
+.control:hover:not(:disabled) { border-color: var(--color-primary); }
+.control:focus-visible { outline: none; border-color: var(--color-primary); box-shadow: var(--focus-ring); }
+.control[aria-invalid="true"] { border-color: var(--color-danger); }
+.control:disabled { color: var(--color-text-muted); background: var(--color-surface-subtle); cursor: not-allowed; }
+.control:read-only { background: var(--color-surface-subtle); }
+
+.passwordControl { position: relative; }
+.passwordControl .control { padding-right: 4.5rem; }
+.passwordControl button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  min-height: 0;
+  padding: 0 var(--space-3);
+  color: var(--color-primary);
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  box-shadow: none;
+  font-size: var(--font-size-body-sm);
+  font-weight: 600;
+}
+
+.passwordControl button:hover { background: var(--color-primary-soft); box-shadow: none; }
+.passwordControl button:focus-visible { outline: none; box-shadow: inset var(--focus-ring); }
+
+.choice {
+  min-height: var(--control-height-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+}
+
+.choice input,
+.radioChoice input {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.choice input:focus-visible,
+.radioChoice input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.switchField .choice input { width: 2.25rem; accent-color: var(--color-primary); }
+
+.choiceGroup {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choiceGroupItems { display: grid; gap: var(--space-2); }
+.radioGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--space-2); }
+
+.radioChoice {
+  min-height: var(--control-height-touch);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.radioChoice:has(input:checked) { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.radioChoice span { display: grid; gap: var(--space-1); }
+.radioChoice small { color: var(--color-text-muted); }
+
+.dropzone {
+  min-height: 7rem;
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-subtle);
+  text-align: center;
+  cursor: pointer;
+}
+
+.dropzone:hover { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.dropzone input { width: min(100%, 22rem); }
+
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 32.5rem) {
+  .control,
+  .choice { min-height: var(--control-height-touch); }
+  .formActions > * { width: 100%; }
+}
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

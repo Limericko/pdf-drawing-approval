@@ -9,6 +9,7 @@ export type PublicHealthInput = {
 export function buildPublicHealth(input: PublicHealthInput) {
   return {
     ok: true,
+    runtimeMode: "legacy" as const,
     appName,
     version: appVersion,
     apiCompatVersion,

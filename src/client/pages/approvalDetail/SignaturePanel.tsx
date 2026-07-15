@@ -1,6 +1,7 @@
 import type { Approval, SignaturePlacement } from "../../api.ts";
 import { getSignedFileUrl } from "../../api.ts";
 import { StatusChip } from "../../widgets/StatusChip.tsx";
+import styles from "./SignaturePanel.module.css";
 
 export function SignaturePanel({
   approval,
@@ -70,7 +71,7 @@ export function SignaturePanel({
         </a>
       )}
       {approval.signatureStatus === "failed" && (
-        <div className="signature-warning">
+        <div className={styles.warning}>
           <strong>签名生成失败</strong>
           <span>{approval.signatureError ?? "未记录具体错误，请查看操作日志。"}</span>
         </div>
@@ -81,14 +82,14 @@ export function SignaturePanel({
         </button>
       )}
       {showPlacementPanel && (
-        <div className="signature-placement-panel">
+        <div className={styles.placementPanel}>
           <div className="panel-heading compact-heading">
             <div>
               <h2>签名位置</h2>
               <span>{placementEditing ? "编辑中" : `${signaturePlacements.length} 个位置`}</span>
             </div>
           </div>
-          <div className="signature-placement-summary signature-placement-summary--compact">
+          <div className={styles.summary}>
             {signaturePlacements.map((placement) => (
               <div key={placement.role}>
                 <strong>{roleLabel(placement.role)}</strong>
@@ -100,7 +101,7 @@ export function SignaturePanel({
           </div>
           {canEditPlacements ? (
             <>
-              <div className="placement-actions">
+              <div className={styles.actions}>
                 <button type="button" className="secondary-button" onClick={onTogglePlacementEditing} disabled={!pdfReady}>
                   {placementEditing ? "收起编辑" : "编辑签名框"}
                 </button>
@@ -112,7 +113,7 @@ export function SignaturePanel({
                 </button>
               </div>
               {canSaveTemplate && (
-                <div className="template-save-row">
+                <div className={styles.templateRow}>
                   <input
                     value={templateName}
                     onChange={(event) => onTemplateNameChange(event.target.value)}
@@ -125,7 +126,7 @@ export function SignaturePanel({
               )}
             </>
           ) : (
-            <div className="signature-warning signature-warning--soft">
+            <div className={styles.warning} data-soft="true">
               <strong>等待签名定位</strong>
               <span>设计师或管理员补充位置后可继续生成签后 PDF。</span>
             </div>
@@ -133,7 +134,7 @@ export function SignaturePanel({
         </div>
       )}
       {approval.status === "approved_for_print" && signatureRequired && !signedPdfReady && (
-        <div className="signature-warning signature-warning--soft">
+        <div className={styles.warning} data-soft="true">
           <strong>待打印文件未就绪</strong>
           <span>此图纸需要签审 PDF。签后 PDF 生成前，请不要按原始 PDF 打印归档。</span>
         </div>
