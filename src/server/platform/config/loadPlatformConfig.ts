@@ -435,10 +435,17 @@ function assertProductionStorage(storage: PlatformStorageConfig, env: NodeJS.Pro
   const endpoint = new URL(storage.endpoint);
   const allowedHostnames = parseProductionS3AllowedHostnames(env.PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS);
   if (allowedHostnames === null) configInvalid("PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS");
-  if (
-    endpoint.protocol !== "https:" ||
-    !isTrustedProductionS3EndpointHostnameWithAllowlist(endpoint.hostname, allowedHostnames)
-  ) {
+  const trustedPublicEndpoint = endpoint.protocol === "https:" &&
+    isTrustedProductionS3EndpointHostnameWithAllowlist(endpoint.hostname, allowedHostnames);
+  const trustedSingleNodeEndpoint =
+    env.PDF_APPROVAL_DEPLOYMENT_PROFILE === "single-node" &&
+    endpoint.protocol === "http:" &&
+    endpoint.hostname === "minio" &&
+    endpoint.port === "9000" &&
+    endpoint.pathname === "/" &&
+    storage.forcePathStyle &&
+    allowedHostnames.length === 0;
+  if (!trustedPublicEndpoint && !trustedSingleNodeEndpoint) {
     insecure("PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   }
   if (

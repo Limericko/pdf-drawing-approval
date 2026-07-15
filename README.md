@@ -53,6 +53,7 @@ PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:50b55c9a5dfc29e
 
 ## 生产部署
 
+- [单机完整版：一键安装与统一维护](deploy/single-node/README.md)
 - [通用 Docker/OCI 运行说明](deploy/README.md)
 - [生产 Compose](deploy/compose.production.yaml)
 - [迁移演练手册](docs/runbooks/phase-6-migration-drill.md)
@@ -91,5 +92,7 @@ npm run e2e:platform
 ## 部署边界
 
 本项目支持普通 Linux 云服务器、托管容器平台、Nomad 或 Kubernetes 等标准 Docker/OCI 环境。中国香港可以作为部署区域，但应用不依赖阿里云 SDK、Registry、OSS、KMS 或特定负载均衡产品。
+
+只有一台云服务器时，优先使用单机完整版。它将 Caddy、应用、Worker、PostgreSQL 和 MinIO 作为一套产品管理，并提供统一的安装、升级、备份、恢复和健康检查入口；正式高可用环境继续使用云厂商无关的生产 Compose。
 
 本地镜像和测试环境的成功不等于正式上线。完成生产切换前仍必须取得正式迁移、镜像签名、滚动发布、故障切换、备份恢复、RPO/RTO 和角色冒烟证据。

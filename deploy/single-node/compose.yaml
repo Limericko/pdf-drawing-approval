@@ -1,0 +1,228 @@
+name: ${COMPOSE_PROJECT_NAME:-pdf-approval-single-node}
+
+x-app-runtime: &app-runtime
+  image: ${PDF_APPROVAL_IMAGE:?run install.sh or set PDF_APPROVAL_IMAGE}
+  init: true
+  read_only: true
+  restart: unless-stopped
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 45s
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  PDF_APPROVAL_RUNTIME_MODE: platform
+  PDF_APPROVAL_DEPLOYMENT_PROFILE: single-node
+  PDF_APPROVAL_PUBLIC_BASE_URL: https://${PDF_APPROVAL_DOMAIN:?set PDF_APPROVAL_DOMAIN}
+  PDF_APPROVAL_STORAGE_DRIVER: s3
+  PDF_APPROVAL_STORAGE_S3_ENDPOINT: http://minio:9000
+  PDF_APPROVAL_STORAGE_S3_REGION: us-east-1
+  PDF_APPROVAL_STORAGE_S3_BUCKET: pdf-approval
+  PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "true"
+  PDF_APPROVAL_STORAGE_S3_ALLOWED_HOSTS: ""
+  PDF_APPROVAL_STORAGE_S3_ACCESS_KEY_FILE: /run/secrets/pdf-approval/s3-access-key.secret
+  PDF_APPROVAL_STORAGE_S3_SECRET_KEY_FILE: /run/secrets/pdf-approval/s3-secret-key.secret
+  PDF_APPROVAL_INVITATION_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/invitation-hmac-keyring.secret
+  PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: ${PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS:-}
+
+services:
+  gateway:
+    image: caddy:2@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      PDF_APPROVAL_DOMAIN: ${PDF_APPROVAL_DOMAIN:?set PDF_APPROVAL_DOMAIN}
+      PDF_APPROVAL_ACME_EMAIL: ${PDF_APPROVAL_ACME_EMAIL:?set PDF_APPROVAL_ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  postgres:
+    image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pdf_approval
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/pdf-approval-bootstrap/postgres-password.secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/001-pdf-approval-roles.sh:ro
+      - ./runtime/secrets/postgres:/run/pdf-approval-bootstrap:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pdf_approval"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    shm_size: 256mb
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER_FILE: /run/pdf-approval-minio/access-key.secret
+      MINIO_ROOT_PASSWORD_FILE: /run/pdf-approval-minio/secret-key.secret
+    volumes:
+      - minio-data:/data
+      - ./runtime/secrets/minio:/run/pdf-approval-minio:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./runtime/secrets/minio:/run/pdf-approval-minio:ro
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set local http://minio:9000 "$$(cat /run/pdf-approval-minio/access-key.secret)" "$$(cat /run/pdf-approval-minio/secret-key.secret)"
+        mc mb --ignore-existing local/pdf-approval
+        mc anonymous set none local/pdf-approval
+
+  migration:
+    <<: *app-runtime
+    profiles: ["tools"]
+    restart: "no"
+    command: ["migration"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PDF_APPROVAL_PLATFORM_MIGRATION_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+    volumes:
+      - ./runtime/secrets/migration:/run/secrets/pdf-approval:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m
+
+  web:
+    <<: *app-runtime
+    command: ["web"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-environment
+      PORT: "8080"
+      PDF_APPROVAL_PLATFORM_WEB_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_TOTP_KEYRING_FILE: /run/secrets/pdf-approval/totp-keyring.secret
+      PDF_APPROVAL_RECOVERY_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/recovery-hmac-keyring.secret
+      PDF_APPROVAL_CSRF_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/csrf-hmac-keyring.secret
+      PDF_APPROVAL_COOKIE_SECURE: "true"
+      PDF_APPROVAL_TRUST_PROXY: "1"
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: ${PDF_APPROVAL_WEB_DB_POOL_MAX:-20}
+    volumes:
+      - ./runtime/secrets/web:/run/secrets/pdf-approval:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=512m
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "node", "deploy/healthcheck.mjs"]
+      interval: 15s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    cpus: 2.0
+    mem_limit: 2g
+
+  worker:
+    <<: *app-runtime
+    command: ["worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-environment
+      PDF_APPROVAL_PLATFORM_WORKER_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_SMTP_HOST: ${PDF_APPROVAL_SMTP_HOST:?set PDF_APPROVAL_SMTP_HOST}
+      PDF_APPROVAL_SMTP_PORT: ${PDF_APPROVAL_SMTP_PORT:-465}
+      PDF_APPROVAL_SMTP_FROM: ${PDF_APPROVAL_SMTP_FROM:?set PDF_APPROVAL_SMTP_FROM}
+      PDF_APPROVAL_SMTP_SECURE: ${PDF_APPROVAL_SMTP_SECURE:-true}
+      PDF_APPROVAL_SMTP_REQUIRE_TLS: ${PDF_APPROVAL_SMTP_REQUIRE_TLS:-false}
+      PDF_APPROVAL_SMTP_USER: ${PDF_APPROVAL_SMTP_USER:?set PDF_APPROVAL_SMTP_USER}
+      PDF_APPROVAL_SMTP_PASSWORD_FILE: /run/secrets/pdf-approval/smtp-password.secret
+      PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE: /run/secrets/pdf-approval/webdav-credentials.json
+      PDF_APPROVAL_WEBDAV_STAGING_ROOT: /var/lib/pdf-approval/webdav-staging
+      PDF_APPROVAL_PLATFORM_DB_POOL_MAX: ${PDF_APPROVAL_WORKER_DB_POOL_MAX:-8}
+      PDF_APPROVAL_WORKER_CONCURRENCY: ${PDF_APPROVAL_WORKER_CONCURRENCY:-4}
+    volumes:
+      - ./runtime/secrets/worker:/run/secrets/pdf-approval:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=1g
+      - /var/lib/pdf-approval/webdav-staging:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=4g
+    cpus: 2.0
+    mem_limit: 3g
+
+  bootstrap-admin:
+    <<: *app-runtime
+    profiles: ["tools"]
+    restart: "no"
+    command: ["bootstrap-admin"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PDF_APPROVAL_PLATFORM_BOOTSTRAP_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
+      PDF_APPROVAL_TOTP_KEYRING_FILE: /run/secrets/pdf-approval/totp-keyring.secret
+      PDF_APPROVAL_RECOVERY_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/recovery-hmac-keyring.secret
+    volumes:
+      - ./runtime/secrets/bootstrap:/run/secrets/pdf-approval:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=64m
+
+volumes:
+  postgres-data:
+    name: pdf-approval-single-node-postgres-data
+  minio-data:
+    name: pdf-approval-single-node-minio-data
+  caddy-data:
+    name: pdf-approval-single-node-caddy-data
+  caddy-config:
+    name: pdf-approval-single-node-caddy-config

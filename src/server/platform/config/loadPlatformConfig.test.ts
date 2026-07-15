@@ -628,6 +628,53 @@ describe("production security gates", () => {
     ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ENDPOINT");
   });
 
+  it("accepts only the fixed internal MinIO endpoint in the single-node deployment profile", () => {
+    const config = loadPlatformConfig(
+      workerEnv({
+        NODE_ENV: "production",
+        PDF_APPROVAL_DEPLOYMENT_PROFILE: "single-node",
+        PDF_APPROVAL_SMTP_HOST: "smtp.example",
+        PDF_APPROVAL_SMTP_PORT: "465",
+        PDF_APPROVAL_SMTP_SECURE: "true",
+        PDF_APPROVAL_SMTP_USER: "mailer",
+        PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+        PDF_APPROVAL_STORAGE_S3_ENDPOINT: "http://minio:9000",
+        PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "singleNodeAccess123",
+        PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "singleNodeSecret1234567890",
+        PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "true"
+      }),
+      "worker"
+    );
+
+    expect(config.storage).toEqual(expect.objectContaining({ endpoint: "http://minio:9000" }));
+  });
+
+  it.each([
+    "http://minio:9001",
+    "http://minio.example:9000",
+    "http://127.0.0.1:9000",
+    "https://minio:9000"
+  ])("rejects the single-node S3 endpoint variant %s", (endpoint) => {
+    expect(() =>
+      loadPlatformConfig(
+        workerEnv({
+          NODE_ENV: "production",
+          PDF_APPROVAL_DEPLOYMENT_PROFILE: "single-node",
+          PDF_APPROVAL_SMTP_HOST: "smtp.example",
+          PDF_APPROVAL_SMTP_PORT: "465",
+          PDF_APPROVAL_SMTP_SECURE: "true",
+          PDF_APPROVAL_SMTP_USER: "mailer",
+          PDF_APPROVAL_SMTP_PASSWORD: "strong-smtp-password",
+          PDF_APPROVAL_STORAGE_S3_ENDPOINT: endpoint,
+          PDF_APPROVAL_STORAGE_S3_ACCESS_KEY: "singleNodeAccess123",
+          PDF_APPROVAL_STORAGE_S3_SECRET_KEY: "singleNodeSecret1234567890",
+          PDF_APPROVAL_STORAGE_S3_FORCE_PATH_STYLE: "true"
+        }),
+        "worker"
+      )
+    ).toThrow("INSECURE_PRODUCTION_CONFIG:PDF_APPROVAL_STORAGE_S3_ENDPOINT");
+  });
+
   it.each([
     "https://127.0.0.2",
     "https://localhost.",
