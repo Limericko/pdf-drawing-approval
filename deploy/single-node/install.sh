@@ -186,6 +186,7 @@ esac
 
 printf '%s\n' "正在初始化 PostgreSQL、MinIO 和数据库结构……"
 compose up -d postgres minio
+compose exec -T postgres /docker-entrypoint-initdb.d/001-pdf-approval-roles.sh
 compose --profile tools run --rm migration
 compose --profile tools run --rm single-node-bootstrap
 compose up -d --remove-orphans web worker

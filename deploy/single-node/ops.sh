@@ -19,6 +19,11 @@ compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
+sync_postgres_roles() {
+  compose up -d postgres
+  compose exec -T postgres /docker-entrypoint-initdb.d/001-pdf-approval-roles.sh
+}
+
 read_env() {
   sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1
 }
@@ -64,6 +69,7 @@ restore() {
   printf '%s' "恢复会覆盖当前数据，输入 RESTORE 继续: " >&2
   IFS= read -r confirmation
   [ "$confirmation" = "RESTORE" ] || fail "已取消恢复"
+  sync_postgres_roles
   compose stop web worker
   compose exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='pdf_approval' AND pid <> pg_backend_pid();"
@@ -86,7 +92,8 @@ update() {
   old_image="$(read_env PDF_APPROVAL_IMAGE)"
   backup
   write_env PDF_APPROVAL_IMAGE "$new_image"
-  if ! compose pull web || ! compose --profile tools run --rm migration || ! compose up -d --remove-orphans web worker; then
+  if ! compose pull web || ! sync_postgres_roles || ! compose --profile tools run --rm migration ||
+      ! compose up -d --remove-orphans web worker; then
     printf '%s\n' "升级失败，正在恢复旧镜像……" >&2
     write_env PDF_APPROVAL_IMAGE "$old_image"
     compose up -d --remove-orphans web worker
@@ -115,11 +122,11 @@ case "$command_name" in
   status) compose ps ;;
   doctor) compose config --quiet; compose ps; compose exec -T web node deploy/healthcheck.mjs ;;
   logs) compose logs --tail=200 -f "${1:-web}" ;;
-  start) compose up -d --remove-orphans web worker ;;
+  start) sync_postgres_roles; compose up -d --remove-orphans web worker ;;
   stop) compose stop ;;
-  restart) compose up -d --remove-orphans --force-recreate web worker ;;
+  restart) sync_postgres_roles; compose up -d --remove-orphans --force-recreate web worker ;;
   bootstrap) compose --profile tools run --rm single-node-bootstrap ;;
-  migrate) compose --profile tools run --rm migration ;;
+  migrate) sync_postgres_roles; compose --profile tools run --rm migration ;;
   backup) backup ;;
   restore) restore "${1:-}" ;;
   update) update "${1:-}" ;;

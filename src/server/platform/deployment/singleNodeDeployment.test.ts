@@ -42,6 +42,7 @@ describe("single-node deployment package", () => {
     const operations = await source("deploy/single-node/ops.sh");
     expect(installer).toContain("openssl rand");
     expect(installer).toContain("compose --profile tools run --rm migration");
+    expect(installer).toContain("compose exec -T postgres /docker-entrypoint-initdb.d/001-pdf-approval-roles.sh");
     expect(installer).toContain("compose --profile tools run --rm single-node-bootstrap");
     expect(installer).toContain("compose up -d --remove-orphans web worker");
     expect(installer).not.toContain("gateway");
@@ -52,6 +53,7 @@ describe("single-node deployment package", () => {
     expect(operations).toContain("mc mirror");
     expect(operations).toContain("升级失败，正在恢复旧镜像");
     expect(operations).toContain("restore)");
+    expect(operations).toContain("sync_postgres_roles");
   });
 
   it("excludes generated configuration, runtime data and backups from git", async () => {
