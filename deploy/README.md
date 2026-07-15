@@ -8,7 +8,7 @@
 
 GitHub 代码仓库和 GitHub Container Registry 中的 `ghcr.io/limericko/pdf-drawing-approval` 容器包均已公开。云服务器无需 Registry 登录即可按不可变 digest 拉取镜像。
 
-当前 `main` 构建的不可变镜像为 `ghcr.io/limericko/pdf-drawing-approval@sha256:347aeafd1e9fcf54baab871efe8bee0d40191fad433141350ded2249934c47bb`。部署时使用完整 digest，不使用可变标签 `0.9.2-refactor`。2026-07-15 已通过匿名 GHCR token 验证：manifest 返回 HTTP 200，且 `Docker-Content-Digest` 与上述 digest 一致。
+当前 `main` 构建的不可变镜像为 `ghcr.io/limericko/pdf-drawing-approval@sha256:6fe7106cb6422d4d9e8b346a249e9551178134ce7046d67b8ef2ae8eeb582eda`。部署时使用完整 digest，不使用可变标签 `0.9.2-refactor`。2026-07-15 已通过匿名 GHCR token 验证：manifest 返回 HTTP 200，且 `Docker-Content-Digest` 与上述 digest 一致。
 
 ## 可移植性边界
 
