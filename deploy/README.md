@@ -1,6 +1,6 @@
 # 通用生产运行包
 
-只有一台 Linux 云服务器并希望降低维护复杂度时，使用 [单机完整版](single-node/README.md)。它内置 PostgreSQL、MinIO、Caddy、自动 migration、备份和统一运维命令。本文件描述的外部 PostgreSQL/S3 方案继续作为高可用和托管基础设施部署入口。
+只有一台 Linux 云服务器并希望降低维护复杂度时，使用 [单机完整版](single-node/README.md)。它内置 PostgreSQL、MinIO、自动 migration、备份和统一运维命令；Web 监听端口可配置，HTTPS 证书和反向代理由宝塔/Nginx 等现有入口管理。本文件描述的外部 PostgreSQL/S3 方案继续作为高可用和托管基础设施部署入口。
 
 本目录是 Phase 6 的云厂商无关部署入口，可运行在任何符合标准的 Linux Docker/OCI 容器环境，包括普通云服务器、托管容器平台和 Kubernetes。中国香港仍可作为首选部署区域，阿里云只是可选适配方案，不是应用依赖。
 

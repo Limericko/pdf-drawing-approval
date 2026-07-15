@@ -64,7 +64,7 @@ restore() {
   printf '%s' "恢复会覆盖当前数据，输入 RESTORE 继续: " >&2
   IFS= read -r confirmation
   [ "$confirmation" = "RESTORE" ] || fail "已取消恢复"
-  compose stop gateway web worker
+  compose stop web worker
   compose exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
     "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='pdf_approval' AND pid <> pg_backend_pid();"
   compose exec -T postgres dropdb -U postgres --if-exists pdf_approval
@@ -77,7 +77,7 @@ restore() {
     mc mirror --overwrite --remove /backup local/pdf-approval
   '
   compose --profile tools run --rm migration
-  compose up -d web worker gateway
+  compose up -d --remove-orphans web worker
   printf '%s\n' "恢复完成"
 }
 
@@ -86,10 +86,10 @@ update() {
   old_image="$(read_env PDF_APPROVAL_IMAGE)"
   backup
   write_env PDF_APPROVAL_IMAGE "$new_image"
-  if ! compose pull web || ! compose --profile tools run --rm migration || ! compose up -d web worker gateway; then
+  if ! compose pull web || ! compose --profile tools run --rm migration || ! compose up -d --remove-orphans web worker; then
     printf '%s\n' "升级失败，正在恢复旧镜像……" >&2
     write_env PDF_APPROVAL_IMAGE "$old_image"
-    compose up -d web worker gateway
+    compose up -d --remove-orphans web worker
     exit 1
   fi
   resolved_image="$(docker image inspect --format '{{index .RepoDigests 0}}' "$new_image" 2>/dev/null || true)"
@@ -103,7 +103,7 @@ update() {
   if [ "$attempts" -ge 30 ]; then
     printf '%s\n' "健康检查失败，正在恢复旧镜像……" >&2
     write_env PDF_APPROVAL_IMAGE "$old_image"
-    compose up -d web worker gateway
+    compose up -d --remove-orphans web worker
     exit 1
   fi
   printf '%s\n' "升级完成：$(read_env PDF_APPROVAL_IMAGE)"
@@ -115,9 +115,9 @@ case "$command_name" in
   status) compose ps ;;
   doctor) compose config --quiet; compose ps; compose exec -T web node deploy/healthcheck.mjs ;;
   logs) compose logs --tail=200 -f "${1:-web}" ;;
-  start) compose up -d web worker gateway ;;
+  start) compose up -d --remove-orphans web worker ;;
   stop) compose stop ;;
-  restart) compose restart web worker gateway ;;
+  restart) compose up -d --remove-orphans --force-recreate web worker ;;
   bootstrap) compose --profile tools run --rm bootstrap-admin ;;
   migrate) compose --profile tools run --rm migration ;;
   backup) backup ;;

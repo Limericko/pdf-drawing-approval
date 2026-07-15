@@ -90,7 +90,7 @@ fi
 
 printf '%s\n' "PDF 审批单机版安装向导"
 prompt_value PDF_APPROVAL_DOMAIN "公网域名（已解析到本机）" ""
-prompt_value PDF_APPROVAL_ACME_EMAIL "HTTPS 证书通知邮箱" ""
+prompt_value PDF_APPROVAL_HTTP_PORT "反向代理目标端口" "18080"
 prompt_value PDF_APPROVAL_SMTP_HOST "SMTP 服务器" ""
 prompt_value PDF_APPROVAL_SMTP_PORT "SMTP 端口" "465"
 prompt_value PDF_APPROVAL_SMTP_FROM "发件人邮箱" ""
@@ -102,6 +102,16 @@ case "$domain" in
 esac
 printf '%s' "$domain" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$' ||
   fail "域名只能填写主机名，例如 approval.example.com"
+
+bind_address="$(read_env PDF_APPROVAL_BIND_ADDRESS)"
+if [ -z "$bind_address" ]; then
+  bind_address="127.0.0.1"
+  write_env PDF_APPROVAL_BIND_ADDRESS "$bind_address"
+fi
+[ "$bind_address" = "127.0.0.1" ] || fail "单机版默认只允许绑定 127.0.0.1，请通过同机反向代理访问"
+http_port="$(read_env PDF_APPROVAL_HTTP_PORT)"
+case "$http_port" in *[!0-9]*|"") fail "反向代理目标端口必须是数字" ;; esac
+[ "$http_port" -ge 1024 ] && [ "$http_port" -le 65535 ] || fail "反向代理目标端口必须在 1024–65535 之间"
 
 smtp_port="$(read_env PDF_APPROVAL_SMTP_PORT)"
 case "$smtp_port" in *[!0-9]*|"") fail "SMTP 端口必须是数字" ;; esac
@@ -201,11 +211,12 @@ esac
 printf '%s\n' "正在初始化 PostgreSQL、MinIO 和数据库结构……"
 compose up -d postgres minio
 compose --profile tools run --rm migration
-compose up -d web worker gateway
+compose up -d --remove-orphans web worker
 
 printf '%s\n' "正在创建首位管理员。请准备身份验证器应用。"
 compose --profile tools run --rm bootstrap-admin
 
 compose ps
 printf '%s\n' "安装完成：https://$domain"
+printf '%s\n' "请把宝塔/Nginx 反向代理目标设置为：http://127.0.0.1:$http_port"
 printf '%s\n' "维护入口：sudo ./deploy/single-node/ops.sh status"

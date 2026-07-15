@@ -32,32 +32,6 @@ x-app-environment: &app-environment
   PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS: ${PDF_APPROVAL_WEBDAV_ALLOWED_HOSTS:-}
 
 services:
-  gateway:
-    image: caddy:2@sha256:af5fdcd76f2db5e4e974ee92f96ee8c0fc3edb55bd4ba5032547cbf3f65e486d
-    restart: unless-stopped
-    depends_on:
-      web:
-        condition: service_healthy
-    environment:
-      PDF_APPROVAL_DOMAIN: ${PDF_APPROVAL_DOMAIN:?set PDF_APPROVAL_DOMAIN}
-      PDF_APPROVAL_ACME_EMAIL: ${PDF_APPROVAL_ACME_EMAIL:?set PDF_APPROVAL_ACME_EMAIL}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    cap_drop: ["ALL"]
-    cap_add: ["NET_BIND_SERVICE"]
-    security_opt: ["no-new-privileges:true"]
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
-
   postgres:
     image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
     restart: unless-stopped
@@ -159,7 +133,8 @@ services:
       - ./runtime/secrets/web:/run/secrets/pdf-approval:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,uid=10001,gid=10001,mode=0700,size=512m
-    expose: ["8080"]
+    ports:
+      - "${PDF_APPROVAL_BIND_ADDRESS:-127.0.0.1}:${PDF_APPROVAL_HTTP_PORT:-18080}:8080"
     healthcheck:
       test: ["CMD", "node", "deploy/healthcheck.mjs"]
       interval: 15s
@@ -222,7 +197,3 @@ volumes:
     name: pdf-approval-single-node-postgres-data
   minio-data:
     name: pdf-approval-single-node-minio-data
-  caddy-data:
-    name: pdf-approval-single-node-caddy-data
-  caddy-config:
-    name: pdf-approval-single-node-caddy-config
