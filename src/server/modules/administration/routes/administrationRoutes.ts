@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { adminAuditQuerySchema, adminUserListQuerySchema, retryAdminJobRequestSchema,
   revokeAdminSessionsRequestSchema, setAdminUserStatusRequestSchema,
-  updateAdminMembershipRequestSchema } from "../../../../shared/contracts/administration.ts";
+  updateAdminMembershipRequestSchema, updateAdminSmtpSettingsRequestSchema } from "../../../../shared/contracts/administration.ts";
 import { uuidV7Schema } from "../../../../shared/contracts/common.ts";
 import { asyncRoute } from "../../../platform/http/asyncRoute.ts";
 import { HttpProblem } from "../../../platform/http/problemResponse.ts";
@@ -37,6 +37,13 @@ export function createAdministrationRoutes(options: {
     if (!query.success) throw invalid();
     response.status(200).json(await options.administration.listUsers({ actorUserId: actor(response.locals),
       ...query.data }));
+  }));
+  router.get("/settings/smtp", ...auth, asyncRoute(async (_request, response) => {
+    response.status(200).json(await options.administration.getSmtpSettings({ actorUserId: actor(response.locals) }));
+  }));
+  router.put("/settings/smtp", ...mutate, asyncRoute(async (request, response) => {
+    response.status(200).json(await options.administration.updateSmtpSettings({ actorUserId: actor(response.locals),
+      requestId: requestId(response.locals), update: parseBody(updateAdminSmtpSettingsRequestSchema, request.body) }));
   }));
   router.patch("/users/:userId/status", ...mutate, asyncRoute(async (request, response) => {
     const params = parse(userParams, request.params);

@@ -118,7 +118,7 @@ case "$command_name" in
   start) compose up -d --remove-orphans web worker ;;
   stop) compose stop ;;
   restart) compose up -d --remove-orphans --force-recreate web worker ;;
-  bootstrap) compose --profile tools run --rm bootstrap-admin ;;
+  bootstrap) compose --profile tools run --rm single-node-bootstrap ;;
   migrate) compose --profile tools run --rm migration ;;
   backup) backup ;;
   restore) restore "${1:-}" ;;

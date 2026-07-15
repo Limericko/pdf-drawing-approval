@@ -7,6 +7,7 @@ import {
   login,
   logout,
   prepareInvitation,
+  updateOwnAccount,
   type PlatformSessionContext
 } from "../../api/identityClient.ts";
 import { PlatformRequestError } from "../../api/platformRequest.ts";
@@ -20,6 +21,7 @@ import type { PlatformAccessContext } from "./PlatformAccessPage.tsx";
 import { PlatformWorkspace } from "../workspace/PlatformWorkspace.tsx";
 import { PlatformLoginPage } from "./PlatformLoginPage.tsx";
 import { RecoveryCodesPage } from "./RecoveryCodesPage.tsx";
+import { InitialAccountSetupPage } from "./InitialAccountSetupPage.tsx";
 import { focusPlatformError, focusPlatformHeading } from "./platformFocus.ts";
 import { createIdentityOperationRegistry, runOwnedIdentityRequest,
   type IdentityOperationLease } from "./identityOperations.ts";
@@ -162,6 +164,7 @@ export function PlatformIdentityApp() {
   const [state, setState] = useState<IdentityState>(initialIdentityState);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [qrCode, setQrCode] = useState<InvitationQrCode>({ status: "loading" });
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false);
   const [accessContext, setAccessContext] = useState<PlatformAccessContext>();
@@ -257,11 +260,33 @@ export function PlatformIdentityApp() {
     return identityOperations.current!.run("login", (lease) => {
       setBusy(true);
       setError("");
+      setNotice("");
       return runOwnedIdentityRequest(lease, (signal) => login(input, signal), {
-        onSuccess: (challenge) => {
-          dispatch({ type: "loginChallenge", challengeToken: challenge.challengeToken });
+        onSuccess: (result) => {
+          if (result.next === "mfa") {
+            dispatch({ type: "loginChallenge", challengeToken: result.challengeToken });
+            return;
+          }
+          setAccessContext(createPlatformAccessContext(result.session));
+          dispatch({ type: "loginSession", session: result.session });
         },
-        onFailure: () => setError("邮箱或密码无效，请重新输入。"),
+        onFailure: () => setError("用户名、邮箱或密码无效，请重新输入。"),
+        onSettled: () => setBusy(false)
+      });
+    });
+  }
+
+  async function submitInitialAccountSetup(input: Parameters<typeof updateOwnAccount>[0]) {
+    await identityOperations.current!.run("accountSetup", (lease) => {
+      setBusy(true); setError("");
+      return runOwnedIdentityRequest(lease, (signal) => updateOwnAccount(input, signal), {
+        onSuccess: () => {
+          clearMemory();
+          setAccessContext(undefined);
+          setNotice("安全设置已保存，请使用新密码重新登录。");
+          dispatch({ type: "loggedOut" });
+        },
+        onFailure: () => setError("保存失败。请确认当前密码正确、用户名和邮箱未被占用。"),
         onSettled: () => setBusy(false)
       });
     });
@@ -318,6 +343,10 @@ export function PlatformIdentityApp() {
   }
 
   if (state.status === "signedIn" && accessContext) {
+    if (state.user.passwordChangeRequired) {
+      return <PlatformFrame step={2} surfaceRef={surfaceRef}><InitialAccountSetupPage user={state.user}
+        busy={busy} error={error} onSubmit={submitInitialAccountSetup} /></PlatformFrame>;
+    }
     return <PlatformWorkspace user={state.user} context={accessContext} logoutBusy={busy}
       logoutError={error} onLogout={signOut} />;
   }
@@ -325,7 +354,8 @@ export function PlatformIdentityApp() {
   return <PlatformFrame step={stepForState(state)} surfaceRef={surfaceRef}>
     {state.status === "loading" ? <div className="platform-panel platform-panel--narrow" aria-busy="true">
       <p className="platform-kicker">安全入口</p><h1 tabIndex={-1}>正在确认身份</h1><p>请稍候，正在读取安全会话。</p></div> : null}
-    {state.status === "signedOut" ? <PlatformLoginPage busy={busy} error={error} onSubmit={submitLogin} /> : null}
+    {state.status === "signedOut" ? <PlatformLoginPage busy={busy} error={error} notice={notice}
+      onSubmit={submitLogin} /> : null}
     {state.status === "mfaChallenge" ? <MfaChallengePage busy={busy} error={error}
       onSubmit={submitMfa} onCancel={cancelSensitiveFlow} /> : null}
     {state.status === "acceptingInvitation" ? <InvitationAcceptancePage

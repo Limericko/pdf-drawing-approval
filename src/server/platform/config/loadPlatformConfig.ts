@@ -246,6 +246,10 @@ function parsePublicBaseUrl(env: NodeJS.ProcessEnv) {
 }
 
 function loadSmtpConfig(env: NodeJS.ProcessEnv): PlatformSmtpConfig {
+  const smtpFields = ["PDF_APPROVAL_SMTP_HOST", "PDF_APPROVAL_SMTP_PORT", "PDF_APPROVAL_SMTP_FROM",
+    "PDF_APPROVAL_SMTP_SECURE", "PDF_APPROVAL_SMTP_REQUIRE_TLS", "PDF_APPROVAL_SMTP_USER",
+    "PDF_APPROVAL_SMTP_PASSWORD"] as const;
+  if (smtpFields.every((field) => env[field] === undefined || env[field] === "")) return { enabled: false };
   const host = requiredTrimmed(env, "PDF_APPROVAL_SMTP_HOST");
   const port = boundedInteger(env, "PDF_APPROVAL_SMTP_PORT", 25, 1, 65535);
   const rawFrom = requiredRaw(env, "PDF_APPROVAL_SMTP_FROM");
@@ -410,6 +414,13 @@ function assertProductionWorker(
   env: NodeJS.ProcessEnv
 ) {
   if (config.environment !== "production") return;
+  if (config.smtp.enabled === false) {
+    if (!config.publicBaseUrl.startsWith("https://")) insecure("PDF_APPROVAL_PUBLIC_BASE_URL");
+    assertProductionDatabase(config.database, databaseFields.worker);
+    assertProductionStorage(config.storage, env);
+    assertProductionKeyrings([invitationHmac]);
+    return;
+  }
   const host = config.smtp.host.toLowerCase();
   if (["127.0.0.1", "localhost", "::1", "mailpit"].includes(host) || [1025, 51025, 8025, 58025].includes(config.smtp.port)) {
     insecure("PDF_APPROVAL_SMTP_HOST");

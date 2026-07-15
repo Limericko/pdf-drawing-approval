@@ -59,9 +59,14 @@ export function createSessionMiddleware(options: {
   });
 }
 
-export const requirePlatformAuth: RequestHandler = (_request, response, next) => {
-  if (!(response.locals as PlatformAuthLocals).platformAuth) {
+export const requirePlatformAuth: RequestHandler = (request, response, next) => {
+  const auth = (response.locals as PlatformAuthLocals).platformAuth;
+  if (!auth) {
     next(new HttpProblem(401, "AUTHENTICATION_REQUIRED", "Authentication required"));
+    return;
+  }
+  if (auth.user.passwordChangeRequired && !request.baseUrl.endsWith("/session")) {
+    next(new HttpProblem(403, "PASSWORD_CHANGE_REQUIRED", "Initial password change required"));
     return;
   }
   next();

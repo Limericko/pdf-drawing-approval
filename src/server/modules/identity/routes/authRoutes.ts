@@ -8,8 +8,9 @@ import { createOriginGuard } from "../../../platform/security/originGuard.ts";
 import { setSessionCookie, type SessionCookieConfig } from "../../../platform/security/sessionMiddleware.ts";
 
 type AuthenticationRoutesService = {
-  login(input: { email: string; password: string; sourceIpPrefix: string; requestId: string;
-    clientSummary?: string }): Promise<{ next: "mfa"; challengeToken: string }>;
+  login(input: { account?: string; email?: string; password: string; sourceIpPrefix: string; requestId: string;
+    clientSummary?: string }): Promise<{ next: "mfa"; challengeToken: string } |
+      { next: "session"; sessionToken: string; user: Record<string, unknown> }>;
   completeMfa(input: { challengeToken: string; factor: { method: "totp" | "recovery"; code: string };
     sourceIpPrefix: string; requestId: string; clientSummary?: string }): Promise<{
       sessionToken: string; user: Record<string, unknown>;
@@ -24,6 +25,11 @@ export function createAuthRoutes(options: { readonly authentication: Authenticat
     const body = parseBody(loginRequestSchema, request.body);
     const result = await options.authentication.login({ ...body, sourceIpPrefix: clientAddressPrefix(request),
       requestId: requestId(response.locals), ...clientSummary(request.get("user-agent")) });
+    if (result.next === "session") {
+      setSessionCookie(response, options.cookie, result.sessionToken);
+      response.status(200).json({ next: "session", user: result.user });
+      return;
+    }
     response.status(202).json(result);
   }));
   router.post("/mfa/complete", originGuard, asyncRoute(async (request, response) => {

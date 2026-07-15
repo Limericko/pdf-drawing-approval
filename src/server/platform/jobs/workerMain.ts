@@ -8,7 +8,8 @@ import { loadMigrationFiles } from "../database/migrationFiles.ts";
 import { createPlatformPool, type PlatformPool } from "../database/pool.ts";
 import { assertExpectedSchema } from "../database/schemaVersion.ts";
 import { withTransaction } from "../database/transaction.ts";
-import { createPlatformMailTransport } from "../mail/platformMailTransport.ts";
+import { createDynamicPlatformMailTransport } from "../mail/platformMailTransport.ts";
+import { loadSmtpRuntimeSetting } from "../settings/runtimeSettings.ts";
 import { createStorage } from "../storage/createStorage.ts";
 import type { StorageAdapter } from "../storage/storageAdapter.ts";
 import { CleanupIntentOutboxPublisher, PostgresOutboxPublisher } from "./outboxPublisher.ts";
@@ -88,7 +89,9 @@ async function runConfiguredWorkers(
   outerSignal?: AbortSignal
 ) {
   const controller = new AbortController();
-  const mail = createPlatformMailTransport({ config: config.smtp });
+  const mail = createDynamicPlatformMailTransport({
+    loadConfig: async () => await loadSmtpRuntimeSetting(pool, config.keyrings.invitationHmac) ?? config.smtp
+  });
   const smtpHealthCache = createDependencyHealthCache({
     probe: () => mail.checkHealth(),
     timeoutMs: SMTP_HEALTH_TIMEOUT_MS,

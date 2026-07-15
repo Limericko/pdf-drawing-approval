@@ -15,6 +15,7 @@ import { generateOpaqueToken, hashOpaqueToken, verifyOpaqueToken } from "../../p
 import { verifyTotp } from "../../platform/security/totp.ts";
 import { createSessionService } from "../../platform/security/sessionService.ts";
 import { normalizeEmail } from "./email.ts";
+import { isValidUsername, normalizeUsername } from "./username.ts";
 import type { PlatformUser } from "./models.ts";
 import { PostgresAuditRepository } from "./repositories/postgres/PostgresAuditRepository.ts";
 import { PostgresMfaRepository } from "./repositories/postgres/PostgresMfaRepository.ts";
@@ -87,18 +88,23 @@ export function createAuthenticationService(options: Options) {
 
   return Object.freeze({
     async login(input: {
-      readonly email: string;
+      readonly account?: string;
+      readonly email?: string;
       readonly password: string;
       readonly sourceIpPrefix: string;
       readonly requestId: string;
       readonly clientSummary?: string;
-    }): Promise<{ readonly next: "mfa"; readonly challengeToken: string }> {
+    }): Promise<{ readonly next: "mfa"; readonly challengeToken: string } |
+      { readonly next: "session"; readonly sessionToken: string; readonly user: AuthenticatedUser;
+        readonly challengeToken: string }> {
       const context = ownContext(input?.requestId, input?.clientSummary);
       await enforceIp(rateLimits, logger, context, "authentication.login", input?.sourceIpPrefix);
-      const normalizedEmail = ownEmailForLookup(input?.email);
+      const account = ownAccountForLookup(input?.account ?? input?.email);
       let user: PlatformUser | undefined;
       try {
-        user = normalizedEmail ? await new PostgresUserRepository(options.pool).findByEmail(normalizedEmail) : undefined;
+        const users = new PostgresUserRepository(options.pool);
+        user = account?.kind === "email" ? await users.findByEmail(account.value) :
+          account?.kind === "username" ? await users.findByUsername(account.value) : undefined;
       } catch (error) {
         throw dependencyUnavailable(logger, context, undefined, "AUTHENTICATION_USER_LOOKUP_UNAVAILABLE", error);
       }
@@ -115,9 +121,50 @@ export function createAuthenticationService(options: Options) {
       } catch (error) {
         throw dependencyUnavailable(logger, context, user?.id, "AUTHENTICATION_PASSWORD_VERIFIER_UNAVAILABLE", error);
       }
-      if (!matches || !isActiveMfaUser(user)) {
+      if (!matches || !isActiveLoginUser(user)) {
         await recordPasswordFailure(options.pool, logger, context, user, input.sourceIpPrefix);
         throw invalidCredentials();
+      }
+
+      if (isActivePasswordOnlyUser(user)) {
+        const sessionToken = makeToken();
+        const sessionHash = ownGeneratedToken(sessionToken);
+        try {
+          try {
+            const result = await withTransaction(options.pool, async (transaction) => {
+              const locked = await new PostgresUserRepository(transaction).lockById(user.id);
+              if (!locked || !isActivePasswordOnlyUser(locked) || locked.passwordHash !== user.passwordHash) {
+                throw invalidCredentials();
+              }
+              const session = await sessions.createInTransaction(transaction, {
+                userId: user.id,
+                tokenHash: sessionHash,
+                clientSummary: context.clientSummary
+              });
+              await new PostgresAuditRepository(transaction).append({
+                actorUserId: user.id,
+                actorType: "user",
+                action: "authentication.password",
+                targetType: "session",
+                targetId: session.id,
+                requestId: context.requestId,
+                result: "success",
+                metadata: auditMetadata(input.sourceIpPrefix, context.clientSummary, undefined,
+                  locked.passwordChangeRequired ? "initial-password-verified" : "password-verified")
+              });
+              return locked;
+            });
+            return Object.freeze({ next: "session" as const, sessionToken, user: publicUser(result), challengeToken: "" });
+          } catch (error) {
+            if (error instanceof AuthenticationServiceError && error.code === "AUTHENTICATION_INVALID_CREDENTIALS") {
+              await recordPasswordFailure(options.pool, logger, context, user, input.sourceIpPrefix);
+              throw error;
+            }
+            throw dependencyUnavailable(logger, context, user.id, "AUTHENTICATION_LOGIN_TRANSACTION_UNAVAILABLE", error);
+          }
+        } finally {
+          sessionHash.fill(0);
+        }
       }
 
       const challengeToken = makeToken();
@@ -335,6 +382,14 @@ function ownEmailForLookup(value: unknown) {
   return emailSchema.safeParse(normalized).success ? normalized : undefined;
 }
 
+function ownAccountForLookup(value: unknown): { kind: "email" | "username"; value: string } | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalizedEmail = ownEmailForLookup(value);
+  if (normalizedEmail) return { kind: "email", value: normalizedEmail };
+  const username = normalizeUsername(value);
+  return isValidUsername(username) ? { kind: "username", value: username } : undefined;
+}
+
 function ownLoginPassword(value: unknown) {
   return typeof value === "string" && Buffer.byteLength(value, "utf8") <= MAX_PASSWORD_BYTES && !value.includes("\0")
     ? value : undefined;
@@ -368,6 +423,15 @@ function knownFactorMethod(value: unknown): "totp" | "recovery" | undefined {
 
 function isActiveMfaUser(user: PlatformUser | undefined): user is PlatformUser {
   return Boolean(user && user.status === "active" && user.mfaStatus === "enabled" && user.mfaEnabledAt);
+}
+
+function isActivePasswordOnlyUser(user: PlatformUser | undefined) {
+  return Boolean(user && user.status === "active" && user.usernameNormalized && user.mfaStatus === "disabled" &&
+    user.mfaEnabledAt === null);
+}
+
+function isActiveLoginUser(user: PlatformUser | undefined): user is PlatformUser {
+  return isActiveMfaUser(user) || isActivePasswordOnlyUser(user);
 }
 
 async function recordPasswordFailure(pool: PlatformPool, logger: SecurityLogger, context: AuthenticationContext,

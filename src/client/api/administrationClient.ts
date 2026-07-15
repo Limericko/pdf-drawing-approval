@@ -3,8 +3,9 @@ import { adminAuditListResponseSchema, adminAuditQuerySchema, adminBackupListRes
   adminDiagnosticsResponseSchema, adminMutationResponseSchema, adminUserListQuerySchema,
   adminUserListResponseSchema, retryAdminJobRequestSchema, revokeAdminSessionsRequestSchema,
   setAdminUserStatusRequestSchema, updateAdminMembershipRequestSchema,
+  adminSmtpSettingsResponseSchema, updateAdminSmtpSettingsRequestSchema,
   type RetryAdminJobRequest, type RevokeAdminSessionsRequest, type SetAdminUserStatusRequest,
-  type UpdateAdminMembershipRequest } from "../../shared/contracts/administration.ts";
+  type UpdateAdminMembershipRequest, type UpdateAdminSmtpSettingsRequest } from "../../shared/contracts/administration.ts";
 import { uuidV7Schema } from "../../shared/contracts/common.ts";
 import { platformSessionRequest } from "./identityClient.ts";
 import { PlatformRequestError } from "./platformRequest.ts";
@@ -38,8 +39,16 @@ export function listAdminAudit(query: z.input<typeof adminAuditQuerySchema> = {}
   return platformSessionRequest(`/api/v2/administration/audit?${queryString(adminAuditQuerySchema, query)}`,
     { responseSchema: adminAuditListResponseSchema, signal });
 }
+export function getAdminSmtpSettings(signal?: AbortSignal) {
+  return platformSessionRequest("/api/v2/administration/settings/smtp",
+    { responseSchema: adminSmtpSettingsResponseSchema, signal });
+}
+export function updateAdminSmtpSettings(input: UpdateAdminSmtpSettingsRequest, signal?: AbortSignal) {
+  return platformSessionRequest("/api/v2/administration/settings/smtp", { method: "PUT",
+    json: parse(updateAdminSmtpSettingsRequestSchema, input), responseSchema: adminSmtpSettingsResponseSchema, signal });
+}
 
-function mutate<T extends z.ZodTypeAny>(target: string, method: "POST" | "PATCH", schema: T,
+function mutate<T extends z.ZodTypeAny>(target: string, method: "POST" | "PATCH" | "PUT", schema: T,
   input: z.input<T>, signal?: AbortSignal) {
   return platformSessionRequest(target, { method, json: parse(schema, input),
     responseSchema: adminMutationResponseSchema, signal });

@@ -14,6 +14,22 @@ export interface PlatformMailTransport {
   close(): void;
 }
 
+export function createDynamicPlatformMailTransport(options: {
+  readonly loadConfig: () => Promise<PlatformSmtpConfig>;
+}): PlatformMailTransport {
+  return Object.freeze({
+    async checkHealth() {
+      const transport = createPlatformMailTransport({ config: await options.loadConfig() });
+      try { await transport.checkHealth(); } finally { transport.close(); }
+    },
+    async sendInvitation(input: InvitationMail) {
+      const transport = createPlatformMailTransport({ config: await options.loadConfig() });
+      try { await transport.sendInvitation(input); } finally { transport.close(); }
+    },
+    close() { /* transports are scoped per operation */ }
+  });
+}
+
 type SendMail = (message: Mail.Options) => Promise<unknown>;
 type Verify = () => Promise<unknown>;
 
@@ -22,12 +38,18 @@ export function createPlatformMailTransport(options: {
   readonly sendMail?: SendMail;
   readonly verify?: Verify;
 }): PlatformMailTransport {
+  if (options.config.enabled === false) return Object.freeze({
+    async checkHealth() { throw new Error("PLATFORM_SMTP_NOT_CONFIGURED"); },
+    async sendInvitation() { throw new Error("PLATFORM_SMTP_NOT_CONFIGURED"); },
+    close() { /* no transport */ }
+  });
+  const config = options.config;
   const transport = options.sendMail ? undefined : nodemailer.createTransport({
-    host: options.config.host,
-    port: options.config.port,
-    secure: options.config.secure,
-    requireTLS: options.config.requireTls,
-    auth: options.config.username ? { user: options.config.username, pass: options.config.password } : undefined
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    requireTLS: config.requireTls,
+    auth: config.username ? { user: config.username, pass: config.password } : undefined
   });
   const sendMail = options.sendMail ?? transport!.sendMail.bind(transport);
   const verify = options.verify ?? transport?.verify.bind(transport);
@@ -40,7 +62,7 @@ export function createPlatformMailTransport(options: {
       assertMail(input);
       const escapedUrl = escapeHtml(input.activationUrl);
       await sendMail({
-        from: options.config.from,
+        from: config.from,
         to: input.recipient,
         subject: "PDF Approval invitation",
         messageId: `<invitation-${input.invitationId}@pdf-approval.local>`,

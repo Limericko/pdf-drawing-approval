@@ -1,12 +1,14 @@
 import type { QueryResultRow } from "pg";
 import { normalizeEmail } from "../../email.ts";
 import { createIdentityId } from "../../ids.ts";
+import { normalizeUsername } from "../../username.ts";
 import type { MfaStatus, PlatformRole, PlatformUser, UserStatus } from "../../models.ts";
 import type { QueryExecutor } from "../../../../platform/database/queryExecutor.ts";
 import type { CreateUserInput, UserRepository } from "../userRepository.ts";
 
 type UserRow = QueryResultRow & {
   id: string;
+  username_normalized: string | null;
   email_normalized: string;
   display_name: string;
   password_hash: string;
@@ -14,16 +16,18 @@ type UserRow = QueryResultRow & {
   status: UserStatus;
   mfa_status: MfaStatus;
   mfa_enabled_at: Date | null;
+  password_change_required: boolean;
   created_at: Date;
   updated_at: Date;
 };
 
-const USER_COLUMNS = `id, email_normalized, display_name, password_hash, platform_role, status,
-  mfa_status, mfa_enabled_at, created_at, updated_at`;
+const USER_COLUMNS = `id, username_normalized, email_normalized, display_name, password_hash, platform_role, status,
+  mfa_status, mfa_enabled_at, password_change_required, created_at, updated_at`;
 
 function mapUser(row: UserRow): PlatformUser {
   return {
     id: row.id,
+    usernameNormalized: row.username_normalized,
     emailNormalized: row.email_normalized,
     displayName: row.display_name,
     passwordHash: row.password_hash,
@@ -31,6 +35,7 @@ function mapUser(row: UserRow): PlatformUser {
     status: row.status,
     mfaStatus: row.mfa_status,
     mfaEnabledAt: row.mfa_enabled_at,
+    passwordChangeRequired: row.password_change_required,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -43,22 +48,24 @@ export class PostgresUserRepository implements UserRepository {
     const mfaEnabledAt = input.mfaEnabledAt === undefined ? null : new Date(input.mfaEnabledAt.getTime());
     if (mfaEnabledAt !== null && !Number.isFinite(mfaEnabledAt.getTime())) throw new Error("INVALID_USER_MFA_ENABLED_AT");
     const result = await this.executor.query<UserRow>(
-      `WITH times AS (SELECT COALESCE($7::timestamptz, clock_timestamp()) AS now)
+      `WITH times AS (SELECT COALESCE($8::timestamptz, clock_timestamp()) AS now)
        INSERT INTO platform.users
-        (id, email_normalized, display_name, password_hash, platform_role, status,
-         mfa_status, mfa_enabled_at, created_at, updated_at)
-       SELECT $1, $2, $3, $4, $5, $6,
-         CASE WHEN $7::timestamptz IS NULL THEN 'disabled' ELSE 'enabled' END,
-         $7, now, now FROM times
+        (id, username_normalized, email_normalized, display_name, password_hash, platform_role, status,
+         mfa_status, mfa_enabled_at, password_change_required, created_at, updated_at)
+       SELECT $1, $2, $3, $4, $5, $6, $7,
+         CASE WHEN $8::timestamptz IS NULL THEN 'disabled' ELSE 'enabled' END,
+         $8, $9, now, now FROM times
        RETURNING ${USER_COLUMNS}`,
       [
         createIdentityId(),
+        input.username === undefined ? null : normalizeUsername(input.username),
         normalizeEmail(input.email),
         input.displayName,
         input.passwordHash,
         input.platformRole,
         input.status,
-        mfaEnabledAt
+        mfaEnabledAt,
+        input.passwordChangeRequired ?? false
       ]
     );
     return mapUser(result.rows[0]!);
@@ -68,6 +75,14 @@ export class PostgresUserRepository implements UserRepository {
     const result = await this.executor.query<UserRow>(
       `SELECT ${USER_COLUMNS} FROM platform.users WHERE email_normalized = $1`,
       [normalizeEmail(email)]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
+
+  async findByUsername(username: string) {
+    const result = await this.executor.query<UserRow>(
+      `SELECT ${USER_COLUMNS} FROM platform.users WHERE username_normalized = $1`,
+      [normalizeUsername(username)]
     );
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }
@@ -105,6 +120,18 @@ export class PostgresUserRepository implements UserRepository {
        WHERE id = $1 AND status = 'active'
        RETURNING ${USER_COLUMNS}`,
       [id, passwordHash]
+    );
+    return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+  }
+
+  async updateAccount(input: { id: string; username: string; email: string; passwordHash: string;
+    passwordChangeRequired: boolean }) {
+    const result = await this.executor.query<UserRow>(
+      `UPDATE platform.users SET username_normalized=$2,email_normalized=$3,password_hash=$4,
+         password_change_required=$5,updated_at=GREATEST(updated_at,clock_timestamp())
+       WHERE id=$1 AND status='active' RETURNING ${USER_COLUMNS}`,
+      [input.id, normalizeUsername(input.username), normalizeEmail(input.email), input.passwordHash,
+        input.passwordChangeRequired]
     );
     return result.rows[0] ? mapUser(result.rows[0]) : undefined;
   }

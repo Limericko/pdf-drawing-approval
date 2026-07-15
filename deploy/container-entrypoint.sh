@@ -22,6 +22,9 @@ case "$target" in
   bootstrap-admin)
     exec node --import tsx src/server/commands/bootstrapAdmin.ts "$@"
     ;;
+  single-node-bootstrap)
+    exec node --import tsx src/server/commands/singleNodeBootstrap.ts "$@"
+    ;;
   *)
     printf '%s\n' 'INVALID_CONTAINER_PROCESS_TARGET' >&2
     exit 64

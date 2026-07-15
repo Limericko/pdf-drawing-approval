@@ -155,13 +155,6 @@ services:
     environment:
       <<: *app-environment
       PDF_APPROVAL_PLATFORM_WORKER_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
-      PDF_APPROVAL_SMTP_HOST: ${PDF_APPROVAL_SMTP_HOST:?set PDF_APPROVAL_SMTP_HOST}
-      PDF_APPROVAL_SMTP_PORT: ${PDF_APPROVAL_SMTP_PORT:-465}
-      PDF_APPROVAL_SMTP_FROM: ${PDF_APPROVAL_SMTP_FROM:?set PDF_APPROVAL_SMTP_FROM}
-      PDF_APPROVAL_SMTP_SECURE: ${PDF_APPROVAL_SMTP_SECURE:-true}
-      PDF_APPROVAL_SMTP_REQUIRE_TLS: ${PDF_APPROVAL_SMTP_REQUIRE_TLS:-false}
-      PDF_APPROVAL_SMTP_USER: ${PDF_APPROVAL_SMTP_USER:?set PDF_APPROVAL_SMTP_USER}
-      PDF_APPROVAL_SMTP_PASSWORD_FILE: /run/secrets/pdf-approval/smtp-password.secret
       PDF_APPROVAL_WEBDAV_CREDENTIALS_FILE: /run/secrets/pdf-approval/webdav-credentials.json
       PDF_APPROVAL_WEBDAV_STAGING_ROOT: /var/lib/pdf-approval/webdav-staging
       PDF_APPROVAL_PLATFORM_DB_POOL_MAX: ${PDF_APPROVAL_WORKER_DB_POOL_MAX:-8}
@@ -174,16 +167,17 @@ services:
     cpus: 2.0
     mem_limit: 3g
 
-  bootstrap-admin:
+  single-node-bootstrap:
     <<: *app-runtime
     profiles: ["tools"]
     restart: "no"
-    command: ["bootstrap-admin"]
+    command: ["single-node-bootstrap"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       NODE_ENV: production
+      PDF_APPROVAL_DEPLOYMENT_PROFILE: single-node
       PDF_APPROVAL_PLATFORM_BOOTSTRAP_DATABASE_URL_FILE: /run/secrets/pdf-approval/database-url.secret
       PDF_APPROVAL_TOTP_KEYRING_FILE: /run/secrets/pdf-approval/totp-keyring.secret
       PDF_APPROVAL_RECOVERY_HMAC_KEYRING_FILE: /run/secrets/pdf-approval/recovery-hmac-keyring.secret

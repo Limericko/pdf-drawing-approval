@@ -51,7 +51,8 @@ export type PlatformSessionConfig = {
   touchIntervalMs: number;
 };
 
-export type PlatformSmtpConfig = {
+export type PlatformSmtpConfig = { enabled: false } | {
+  enabled?: true;
   host: string;
   port: number;
   from: string;

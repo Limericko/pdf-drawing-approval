@@ -6,6 +6,7 @@ import { backupRunResponseSchema } from "./business.ts";
 
 export const adminUserResponseSchema = z.object({
   id: uuidV7Schema,
+  usernameNormalized: z.string().nullable().optional(),
   emailNormalized: z.string().email().max(254),
   displayName: z.string().min(1).max(240),
   platformRole: z.enum(["admin", "member"]),
@@ -94,7 +95,25 @@ export const adminAuditEventResponseSchema = z.object({
 export const adminAuditListResponseSchema = z.object({ items: z.array(adminAuditEventResponseSchema), page: pageInfoSchema }).strict();
 export const adminBackupListResponseSchema = z.object({ items: z.array(backupRunResponseSchema) }).strict();
 
+export const adminSmtpSettingsResponseSchema = z.discriminatedUnion("configured", [
+  z.object({ configured: z.literal(false), passwordConfigured: z.boolean() }).strict(),
+  z.object({ configured: z.literal(true), host: z.string().min(1).max(253), port: z.number().int().min(1).max(65535),
+    from: z.string().email().max(254), secure: z.boolean(), requireTls: z.boolean(),
+    username: z.string().max(254), passwordConfigured: z.boolean() }).strict()
+]);
+export const updateAdminSmtpSettingsRequestSchema = z.object({
+  host: z.string().trim().min(1).max(253),
+  port: z.number().int().min(1).max(65535),
+  from: z.string().email().max(254),
+  secure: z.boolean(),
+  requireTls: z.boolean(),
+  username: z.string().max(254).optional(),
+  password: z.string().min(1).max(1024).optional()
+}).strict().refine((value) => value.secure !== value.requireTls,
+  { message: "Choose either implicit TLS or required STARTTLS" });
+
 export type SetAdminUserStatusRequest = z.infer<typeof setAdminUserStatusRequestSchema>;
 export type UpdateAdminMembershipRequest = z.infer<typeof updateAdminMembershipRequestSchema>;
 export type RevokeAdminSessionsRequest = z.infer<typeof revokeAdminSessionsRequestSchema>;
 export type RetryAdminJobRequest = z.infer<typeof retryAdminJobRequestSchema>;
+export type UpdateAdminSmtpSettingsRequest = z.infer<typeof updateAdminSmtpSettingsRequestSchema>;

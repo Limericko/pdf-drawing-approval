@@ -8,18 +8,22 @@ import {
   revokeAdminSessionsRequestSchema,
   setAdminUserStatusRequestSchema,
   updateAdminMembershipRequestSchema,
+  updateAdminSmtpSettingsRequestSchema,
   type RetryAdminJobRequest,
   type RevokeAdminSessionsRequest,
   type SetAdminUserStatusRequest,
-  type UpdateAdminMembershipRequest
+  type UpdateAdminMembershipRequest,
+  type UpdateAdminSmtpSettingsRequest
 } from "../../../shared/contracts/administration.ts";
 import { uuidV7Schema } from "../../../shared/contracts/common.ts";
 import type { PlatformPool } from "../../platform/database/pool.ts";
+import type { VersionedKeyring } from "../../platform/config/types.ts";
 import type { QueryExecutor } from "../../platform/database/queryExecutor.ts";
 import { withTransaction } from "../../platform/database/transaction.ts";
+import { loadSmtpRuntimeSetting, publicSmtpSetting, saveSmtpRuntimeSetting } from "../../platform/settings/runtimeSettings.ts";
 import { PostgresAuditRepository } from "../identity/repositories/postgres/PostgresAuditRepository.ts";
 
-type UserRow = QueryResultRow & { id: string; email_normalized: string; display_name: string;
+type UserRow = QueryResultRow & { id: string; username_normalized: string | null; email_normalized: string; display_name: string;
   platform_role: "admin" | "member"; status: "active" | "disabled"; mfa_status: "disabled" | "enabled";
   active_session_count: number; created_at: Date; updated_at: Date };
 type MembershipRow = QueryResultRow & { id: string; project_id: string; user_id: string; role: string;
@@ -41,11 +45,42 @@ export class AdministrationServiceError extends Error {
 export function createAdministrationService(options: {
   readonly pool: PlatformPool;
   readonly storageHealth: () => Promise<void>;
+  readonly runtimeSettingsKeyring?: VersionedKeyring;
   readonly clock?: () => Date;
 }) {
   if (!options?.pool || typeof options.storageHealth !== "function") throw new Error("ADMIN_SERVICE_OPTIONS_REQUIRED");
   const clock = options.clock ?? (() => new Date());
   return Object.freeze({
+    async getSmtpSettings(input: { actorUserId: string }) {
+      const actorUserId = ownId(input?.actorUserId);
+      try {
+        await requireAdmin(options.pool, actorUserId);
+        if (!options.runtimeSettingsKeyring) throw dependency();
+        return publicSmtpSetting(await loadSmtpRuntimeSetting(options.pool, options.runtimeSettingsKeyring));
+      } catch (error) { throw owned(error); }
+    },
+
+    async updateSmtpSettings(input: { actorUserId: string; requestId: string;
+      update: UpdateAdminSmtpSettingsRequest }) {
+      const actorUserId = ownId(input?.actorUserId);
+      const requestId = ownRequestId(input?.requestId);
+      const parsed = updateAdminSmtpSettingsRequestSchema.safeParse(input?.update);
+      if (!parsed.success || !options.runtimeSettingsKeyring) throw invalid();
+      try {
+        return await withTransaction(options.pool, async (transaction) => {
+          await requireAdmin(transaction, actorUserId);
+          const current = await loadSmtpRuntimeSetting(transaction, options.runtimeSettingsKeyring!);
+          const password = parsed.data.password ?? (current && current.enabled !== false ? current.password : undefined);
+          await saveSmtpRuntimeSetting(transaction, options.runtimeSettingsKeyring!, actorUserId,
+            { ...parsed.data, ...(password ? { password } : {}), username: parsed.data.username || undefined });
+          await new PostgresAuditRepository(transaction).appendOnly({ actorUserId, actorType: "user",
+            action: "administration.smtp.update", targetType: "administration", targetId: actorUserId,
+            requestId, result: "success", metadata: { reason: "smtp-settings-updated" } });
+          return publicSmtpSetting(await loadSmtpRuntimeSetting(transaction, options.runtimeSettingsKeyring!));
+        });
+      } catch (error) { throw owned(error); }
+    },
+
     async listUsers(input: { actorUserId: string; page: number; pageSize: number; status?: string; keyword?: string }) {
       const actorUserId = ownId(input?.actorUserId);
       const parsed = adminUserListQuerySchema.safeParse({ page: input?.page, pageSize: input?.pageSize,
@@ -56,7 +91,8 @@ export function createAdministrationService(options: {
         const keyword = parsed.data.keyword ? `%${escapeLike(parsed.data.keyword)}%` : null;
         const values = [parsed.data.status ?? null, keyword];
         const where = `($1::text IS NULL OR user_account.status=$1) AND ($2::text IS NULL OR
-          user_account.email_normalized ILIKE $2 ESCAPE '\\' OR user_account.display_name ILIKE $2 ESCAPE '\\')`;
+          user_account.username_normalized ILIKE $2 ESCAPE '\\' OR user_account.email_normalized ILIKE $2 ESCAPE '\\'
+          OR user_account.display_name ILIKE $2 ESCAPE '\\')`;
         const count = await options.pool.query<{ total: number }>(
           `SELECT count(*)::int AS total FROM platform.users user_account WHERE ${where}`, values
         );
@@ -303,7 +339,7 @@ async function lockUser(executor: QueryExecutor, userId: string) {
 }
 
 function userSelect(suffix: string) {
-  return `SELECT user_account.id,user_account.email_normalized,user_account.display_name,user_account.platform_role,
+  return `SELECT user_account.id,user_account.username_normalized,user_account.email_normalized,user_account.display_name,user_account.platform_role,
     user_account.status,user_account.mfa_status,user_account.created_at,user_account.updated_at,
     (SELECT count(*)::int FROM platform.sessions session WHERE session.user_id=user_account.id
       AND session.revoked_at IS NULL AND session.idle_expires_at > clock_timestamp()
@@ -311,7 +347,8 @@ function userSelect(suffix: string) {
     FROM platform.users user_account WHERE ${suffix}`;
 }
 
-function mapUser(row: UserRow) { return { id: row.id, emailNormalized: row.email_normalized,
+function mapUser(row: UserRow) { return { id: row.id, usernameNormalized: row.username_normalized,
+  emailNormalized: row.email_normalized,
   displayName: row.display_name, platformRole: row.platform_role, status: row.status, mfaStatus: row.mfa_status,
   activeSessionCount: row.active_session_count, createdAt: new Date(row.created_at), updatedAt: new Date(row.updated_at) }; }
 function mapBackup(row: BackupRow) { return { id: row.id, provider: row.provider, status: row.status,

@@ -7,25 +7,28 @@ import { InlineAlert } from "../../ui/feedback/index.tsx";
 export function PlatformLoginPage({
   busy,
   error,
+  notice,
   onSubmit
 }: {
   readonly busy: boolean;
   readonly error: string;
+  readonly notice?: string;
   readonly onSubmit: (input: LoginRequest) => void | Promise<void>;
 }) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    void onSubmit({ email: String(data.get("email") ?? ""), password: String(data.get("password") ?? "") });
+    void onSubmit({ account: String(data.get("account") ?? ""), password: String(data.get("password") ?? "") });
   }
 
   return <div className="platform-panel platform-panel--narrow">
     <p className="platform-kicker">验证身份 · 01</p>
     <h1 tabIndex={-1}>登录审批平台</h1>
-    <p className="platform-lead">使用受邀账号登录，密码验证后还需完成双重验证。</p>
+    <p className="platform-lead">管理员可使用用户名登录，受邀成员也可继续使用邮箱登录。</p>
+    {notice ? <InlineAlert tone="success">{notice}</InlineAlert> : null}
     {error ? <InlineAlert tone="danger">{error}</InlineAlert> : null}
     <form className="platform-form" onSubmit={submit} aria-busy={busy}>
-      <TextInput id="platform-login-email" name="email" type="email" label="邮箱地址" autoComplete="username"
+      <TextInput id="platform-login-account" name="account" type="text" label="用户名或邮箱地址" autoComplete="username"
         maxLength={254} autoFocus required disabled={busy} />
       <PasswordInput id="platform-login-password" name="password" label="密码" autoComplete="current-password"
         maxLength={256} required disabled={busy} />

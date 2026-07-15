@@ -18,6 +18,7 @@ export type IdentityEvent =
   | { readonly type: "sessionLoaded"; readonly session: { readonly user: PlatformIdentityUser } }
   | { readonly type: "sessionMissing" }
   | { readonly type: "loginChallenge"; readonly challengeToken: string }
+  | { readonly type: "loginSession"; readonly session: { readonly user: PlatformIdentityUser } }
   | { readonly type: "mfaCompleted"; readonly session: { readonly user: PlatformIdentityUser } }
   | { readonly type: "invitationFound"; readonly invitationToken: string }
   | { readonly type: "invitationPrepared"; readonly enrollmentToken: string; readonly otpauthUri: string }
@@ -47,6 +48,7 @@ export function transitionIdentity(state: IdentityState, event: IdentityEvent): 
       if (event.type === "loginChallenge") {
         return Object.freeze({ status: "mfaChallenge", challengeToken: event.challengeToken });
       }
+      if (event.type === "loginSession") return signedIn(event.session.user);
       if (event.type === "invitationFound") return acceptingInvitation(event.invitationToken);
       if (event.type === "sessionLoaded") return signedIn(event.session.user);
       if (event.type === "refreshing") return initialIdentityState();

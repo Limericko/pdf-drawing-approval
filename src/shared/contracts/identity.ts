@@ -9,11 +9,12 @@ const boundedSecret = (minimumBytes: number, maximumBytes: number) => z.string()
 
 export const platformRoleSchema = z.enum(["admin", "member"]);
 export const projectMemberRoleSchema = z.enum(["manager", "designer", "supervisor", "process", "viewer"]);
+export const usernameSchema = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9._-]{2,31}$/);
 
-export const loginRequestSchema = z.object({
-  email: z.string().max(254).email(),
-  password: boundedSecret(1, 256)
-}).strict();
+export const loginRequestSchema = z.union([
+  z.object({ account: z.string().trim().min(3).max(254), password: boundedSecret(1, 256) }).strict(),
+  z.object({ email: z.string().max(254).email(), password: boundedSecret(1, 256) }).strict()
+]);
 
 export const mfaCompleteRequestSchema = z.object({
   challengeToken: boundedSecret(1, 256),
@@ -43,20 +44,35 @@ export const createProjectRequestSchema = z.object({
 
 export const projectIdParamsSchema = z.object({ projectId: uuidV7Schema }).strict();
 
-export const loginResponseSchema = z.object({ next: z.literal("mfa"), challengeToken: z.string().min(1) }).strict();
 export const globalCapabilitySchema = z.enum(["platform.security.manage", "projects.create"]);
 export const projectCapabilitySchema = z.enum(["project.read", "project.members.manage",
   "project.invitations.create", "drawings.submit", "drawings.review", "drawings.process"]);
 export const platformUserResponseSchema = z.object({
   id: uuidV7Schema,
+  usernameNormalized: usernameSchema.nullable().optional(),
   emailNormalized: z.string().email().max(254),
   displayName: z.string().min(1),
   platformRole: platformRoleSchema,
   status: z.enum(["active", "disabled"]),
   mfaStatus: z.enum(["disabled", "enabled"]),
   mfaEnabledAt: z.string().datetime().nullable(),
+  passwordChangeRequired: z.boolean().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime()
+}).strict();
+export const loginResponseSchema = z.discriminatedUnion("next", [
+  z.object({ next: z.literal("mfa"), challengeToken: z.string().min(1) }).strict(),
+  z.object({ next: z.literal("session"), user: platformUserResponseSchema }).strict()
+]);
+export const updateOwnAccountRequestSchema = z.object({
+  username: usernameSchema,
+  email: z.string().max(254).email(),
+  currentPassword: boundedSecret(1, 256),
+  newPassword: boundedSecret(12, 256).optional()
+}).strict();
+export const updateOwnAccountResponseSchema = z.object({
+  user: platformUserResponseSchema,
+  reauthenticationRequired: z.literal(true)
 }).strict();
 export const projectSummaryResponseSchema = z.object({
   id: uuidV7Schema,
@@ -98,6 +114,7 @@ export const projectAccessResponseSchema = z.object({ project: projectResponseSc
   members: z.array(projectMemberSummaryResponseSchema).default([]) }).strict();
 
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
+export type UpdateOwnAccountRequest = z.infer<typeof updateOwnAccountRequestSchema>;
 export type MfaCompleteRequest = z.infer<typeof mfaCompleteRequestSchema>;
 export type CreateInvitationRequest = z.infer<typeof createInvitationRequestSchema>;
 export type PrepareInvitationRequest = z.infer<typeof prepareInvitationRequestSchema>;

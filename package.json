@@ -24,6 +24,7 @@
     "platform:db:migrate": "node --env-file=infra/local/.env.example --import tsx src/server/platform/database/migrateCli.ts",
     "platform:worker": "node --env-file=infra/local/.env.example --import tsx src/server/platform/jobs/workerMain.ts",
     "platform:bootstrap-admin": "node --env-file=infra/local/.env.example --import tsx src/server/commands/bootstrapAdmin.ts",
+    "platform:single-node-bootstrap": "node --env-file=infra/local/.env.example --import tsx src/server/commands/singleNodeBootstrap.ts",
     "platform:jobs": "node --env-file=infra/local/.env.example --import tsx src/server/platform/jobs/jobDiagnosticsCli.ts",
     "migration:legacy:inventory": "node --import tsx scripts/migrate/legacyInventoryCli.ts",
     "migration:legacy:snapshot": "node --import tsx scripts/migrate/legacySnapshotCli.ts",

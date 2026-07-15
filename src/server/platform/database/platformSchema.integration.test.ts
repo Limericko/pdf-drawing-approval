@@ -46,6 +46,7 @@ const expectedTables = [
   "recovery_codes",
   "render_artifacts",
   "review_decisions",
+  "runtime_settings",
   "security_rate_limit_buckets",
   "sessions",
   "signature_assets",
@@ -65,7 +66,7 @@ type SqlStatement = readonly [sql: string, values?: unknown[]];
 async function withMigratedDatabase(run: (database: PlatformTestDatabase, migration: Pool) => Promise<void>) {
   await withPlatformTestDatabase(async (database) => {
     const migration = database.createPool("migration");
-    await expect(runMigrations(migration)).resolves.toEqual({ applied: 10, verified: 0, total: 10 });
+    await expect(runMigrations(migration)).resolves.toEqual({ applied: 11, verified: 0, total: 11 });
     await run(database, migration);
   });
 }
@@ -156,7 +157,7 @@ async function seedPermissionFixtures(migration: Pool) {
 describe("Phase 1 PostgreSQL platform schema", () => {
   it("applies all production migrations once and verifies the same history on a repeated run", async () => {
     await withMigratedDatabase(async (_database, migration) => {
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 10, total: 10 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 0, verified: 11, total: 11 });
       const history = await migration.query<{ version: number; file_name: string }>(
         "SELECT version, file_name FROM platform.schema_migrations ORDER BY version"
       );
@@ -170,7 +171,8 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         { version: 7, file_name: "0007_worker_health.sql" },
         { version: 8, file_name: "0008_business_approval_pdm_admin.sql" },
         { version: 9, file_name: "0009_webdav_controlled_sync.sql" },
-        { version: 10, file_name: "0010_legacy_migration_tracking.sql" }
+        { version: 10, file_name: "0010_legacy_migration_tracking.sql" },
+        { version: 11, file_name: "0011_single_node_bootstrap_settings.sql" }
       ]);
     });
   });
@@ -954,7 +956,7 @@ describe("Phase 1 PostgreSQL platform schema", () => {
         ["bootstrap", bootstrap]
       ] as const) {
         await expect(pool.query("SELECT version FROM platform.schema_migrations ORDER BY version")).resolves.toMatchObject({
-          rowCount: 10
+          rowCount: 11
         });
         await expectDenied(
           pool,

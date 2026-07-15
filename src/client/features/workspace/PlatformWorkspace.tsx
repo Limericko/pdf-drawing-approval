@@ -1,7 +1,7 @@
 import { Activity, ArrowUpRight, Circle, ClipboardCheck, Cloud, FileText, FolderKanban, MapPin,
   MousePointer2, PackageSearch, Pencil, PenLine, Settings, Square, TriangleAlert, Type, FolderSync } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { getProjectAccess, type PlatformSessionContext } from "../../api/identityClient.ts";
+import { getProjectAccess, updateOwnAccount, type PlatformSessionContext } from "../../api/identityClient.ts";
 import { decideApproval, getApproval, listApprovals, submitDrawingRevision, uploadDocumentDraft } from "../../api/approvalClient.ts";
 import { createIssue, forceCloseIssue, getIssue, listIssues, reviewIssue, startIssue, submitIssue } from "../../api/issueClient.ts";
 import { getPdmPart, listPdmParts, retryPdmPublish, updatePdmMetadata, voidPdmRevision,
@@ -10,10 +10,10 @@ import { getMySignature, uploadMySignature } from "../../api/signatureClient.ts"
 import { listPrintArchive, recordPrintArchive } from "../../api/printArchiveClient.ts";
 import { listMyTasks } from "../../api/taskClient.ts";
 import { getAdminDiagnostics, listAdminAudit, listAdminBackups, listAdminUsers, revokeAdminUserSessions,
-  retryAdminJob, setAdminUserStatus } from "../../api/administrationClient.ts";
+  retryAdminJob, setAdminUserStatus, getAdminSmtpSettings, updateAdminSmtpSettings } from "../../api/administrationClient.ts";
 import { Button, ButtonGroup, ButtonLink } from "../../ui/actions/index.tsx";
 import { EmptyState, ErrorState, InlineAlert, Skeleton } from "../../ui/feedback/index.tsx";
-import { FileDropzone, FormActions, Select, TextArea, TextInput } from "../../ui/forms/index.tsx";
+import { FileDropzone, FormActions, PasswordInput, Select, TextArea, TextInput } from "../../ui/forms/index.tsx";
 import { AppNavigation } from "../../ui/navigation/index.tsx";
 import { AppShell } from "../../patterns/AppShell/index.tsx";
 import { PageHeader } from "../../patterns/PageHeader/index.tsx";
@@ -91,7 +91,7 @@ export function PlatformWorkspace({ user, context, logoutBusy, logoutError, onLo
       {logoutError ? <InlineAlert tone="danger">{logoutError}</InlineAlert> : null}
       {route.name === "projects" ? <PlatformAccessPage user={user} context={context} embedded
         logoutBusy={logoutBusy} logoutError={logoutError} onLogout={onLogout} /> : null}
-      {route.name === "administration" && admin ? <AdministrationPage /> : null}
+      {route.name === "administration" && admin ? <AdministrationPage user={user} /> : null}
       {route.name === "sync" && admin ? <Suspense fallback={<Skeleton lines={8} label="正在加载同步中心" />}>
         <SyncCenterPage projects={context.projects} currentProjectId={projectId} />
       </Suspense> : null}
@@ -497,12 +497,13 @@ function SignaturePage() {
   </div>;
 }
 
-function AdministrationPage() {
+function AdministrationPage({ user }: { user: PlatformSessionContext["user"] }) {
   const [refresh, setRefresh] = useState(0);
   const diagnostics = useResource(() => getAdminDiagnostics(), [refresh]);
   const users = useResource(() => listAdminUsers({ page: 1, pageSize: 50 }), [refresh]);
   const backups = useResource(() => listAdminBackups(), [refresh]);
   const audit = useResource(() => listAdminAudit({ page: 1, pageSize: 50 }), [refresh]);
+  const smtp = useResource(() => getAdminSmtpSettings(), [refresh]);
   const [reason, setReason] = useState(""); const [busyTarget, setBusyTarget] = useState("");
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   async function mutateUser(target: Awaited<ReturnType<typeof listAdminUsers>>["items"][number],
@@ -530,8 +531,58 @@ function AdministrationPage() {
     } catch { setError("任务重试失败。请确认任务仍处于失败状态。"); }
     finally { setBusyTarget(""); }
   }
+  async function saveAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setMessage(""); setError(""); setBusyTarget("account");
+    const data = new FormData(event.currentTarget); const newPassword = String(data.get("newPassword") ?? "");
+    try {
+      await updateOwnAccount({ username: String(data.get("username") ?? ""), email: String(data.get("email") ?? ""),
+        currentPassword: String(data.get("currentPassword") ?? ""), ...(newPassword ? { newPassword } : {}) });
+      location.reload();
+    } catch { setError("账号设置保存失败。请确认当前密码正确，且用户名或邮箱未被占用。"); setBusyTarget(""); }
+  }
+  async function saveSmtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setMessage(""); setError(""); setBusyTarget("smtp"); const data = new FormData(event.currentTarget);
+    const mode = String(data.get("security") ?? "ssl"); const password = String(data.get("password") ?? "");
+    try {
+      await updateAdminSmtpSettings({ host: String(data.get("host") ?? ""), port: Number(data.get("port")),
+        from: String(data.get("from") ?? ""), username: String(data.get("smtpUsername") ?? "") || undefined,
+        ...(password ? { password } : {}), secure: mode === "ssl", requireTls: mode === "starttls" });
+      setMessage("邮件服务器设置已保存，Worker 将自动使用新配置。"); setRefresh((value) => value + 1);
+    } catch { setError("邮件服务器设置保存失败，请检查地址、端口和邮箱格式。"); }
+    finally { setBusyTarget(""); }
+  }
   return <div className={styles.stack}><PageHeader eyebrow="PLATFORM OPERATIONS" title="系统管理"
     description="云端健康、用户安全、队列与备份状态集中呈现。" />
+    <section className={styles.adminSection}><h2>管理员账号</h2>
+      <form className={styles.signatureForm} onSubmit={(event) => void saveAccount(event)}>
+        <TextInput id="admin-account-username" name="username" label="登录用户名"
+          defaultValue={user.usernameNormalized ?? ""} minLength={3} maxLength={32} required />
+        <TextInput id="admin-account-email" name="email" type="email" label="邮箱"
+          defaultValue={user.emailNormalized} maxLength={254} required />
+        <PasswordInput id="admin-account-current-password" name="currentPassword" label="当前密码"
+          autoComplete="current-password" maxLength={256} required />
+        <PasswordInput id="admin-account-new-password" name="newPassword" label="新密码（不修改可留空）"
+          autoComplete="new-password" minLength={12} maxLength={256} />
+        <Button type="submit" loading={busyTarget === "account"}>保存账号设置</Button>
+      </form><p>保存后会撤销当前会话，请使用新账号信息重新登录。</p></section>
+    <section className={styles.adminSection}><h2>邮件服务器</h2><ResourceView resource={smtp}>{(settings) =>
+      <form key={settings.configured ? `${settings.host}:${settings.port}` : "smtp-empty"}
+        className={styles.signatureForm} onSubmit={(event) => void saveSmtp(event)}>
+        <TextInput id="smtp-host" name="host" label="SMTP 服务器" defaultValue={settings.configured ? settings.host : ""} required />
+        <TextInput id="smtp-port" name="port" type="number" label="端口"
+          defaultValue={settings.configured ? String(settings.port) : "465"} min={1} max={65535} required />
+        <TextInput id="smtp-from" name="from" type="email" label="发件人邮箱"
+          defaultValue={settings.configured ? settings.from : ""} required />
+        <TextInput id="smtp-username" name="smtpUsername" label="SMTP 用户名"
+          defaultValue={settings.configured ? settings.username : ""} />
+        <PasswordInput id="smtp-password" name="password"
+          label={settings.passwordConfigured ? "SMTP 密码（留空则保留现有密码）" : "SMTP 密码"} maxLength={1024} />
+        <Select id="smtp-security" name="security" label="连接加密"
+          defaultValue={settings.configured ? settings.secure ? "ssl" : "starttls" : "ssl"}
+          options={[{ value: "ssl", label: "SSL/TLS（通常为 465）" },
+            { value: "starttls", label: "STARTTLS（通常为 587）" }]} />
+        <Button type="submit" loading={busyTarget === "smtp"}>保存邮件设置</Button>
+      </form>}</ResourceView></section>
     <section className={styles.adminActionBar}><TextInput id="admin-action-reason" label="管理操作原因" value={reason}
       onChange={(event) => setReason(event.target.value)} placeholder="例如：员工离职，撤销账号及会话" />
       <p>停用账号、撤销会话等危险操作必须提供原因，并记录到不可变审计日志。</p></section>

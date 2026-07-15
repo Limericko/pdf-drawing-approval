@@ -40,7 +40,7 @@ describe("Phase 4 PostgreSQL business schema", () => {
   it("creates the approval, PDM and administration relations with restricted web access", async () => {
     await withPlatformTestDatabase(async (database) => {
       const migration = database.createPool("migration");
-      await expect(runMigrations(migration)).resolves.toEqual({ applied: 10, verified: 0, total: 10 });
+      await expect(runMigrations(migration)).resolves.toEqual({ applied: 11, verified: 0, total: 11 });
 
       const tables = await migration.query<{ table_name: string }>(
         `SELECT table_name FROM information_schema.tables

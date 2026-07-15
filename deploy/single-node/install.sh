@@ -91,10 +91,6 @@ fi
 printf '%s\n' "PDF 审批单机版安装向导"
 prompt_value PDF_APPROVAL_DOMAIN "公网域名（已解析到本机）" ""
 prompt_value PDF_APPROVAL_HTTP_PORT "反向代理目标端口" "18080"
-prompt_value PDF_APPROVAL_SMTP_HOST "SMTP 服务器" ""
-prompt_value PDF_APPROVAL_SMTP_PORT "SMTP 端口" "465"
-prompt_value PDF_APPROVAL_SMTP_FROM "发件人邮箱" ""
-prompt_value PDF_APPROVAL_SMTP_USER "SMTP 用户名" ""
 
 domain="$(read_env PDF_APPROVAL_DOMAIN)"
 case "$domain" in
@@ -112,14 +108,6 @@ fi
 http_port="$(read_env PDF_APPROVAL_HTTP_PORT)"
 case "$http_port" in *[!0-9]*|"") fail "反向代理目标端口必须是数字" ;; esac
 [ "$http_port" -ge 1024 ] && [ "$http_port" -le 65535 ] || fail "反向代理目标端口必须在 1024–65535 之间"
-
-smtp_port="$(read_env PDF_APPROVAL_SMTP_PORT)"
-case "$smtp_port" in *[!0-9]*|"") fail "SMTP 端口必须是数字" ;; esac
-[ "$smtp_port" -ge 1 ] && [ "$smtp_port" -le 65535 ] || fail "SMTP 端口超出范围"
-case "$smtp_port" in
-  465) write_env PDF_APPROVAL_SMTP_SECURE true; write_env PDF_APPROVAL_SMTP_REQUIRE_TLS false ;;
-  *) write_env PDF_APPROVAL_SMTP_SECURE false; write_env PDF_APPROVAL_SMTP_REQUIRE_TLS true ;;
-esac
 
 install -d -m 0750 "$ROOT/runtime" "$ROOT/backups"
 
@@ -164,17 +152,6 @@ if [ ! -f "$SECRETS_ROOT/postgres/postgres-password.secret" ]; then
   write_secret worker webdav-credentials.json '{}' 10001
 fi
 
-printf '%s' "SMTP 密码（输入时不显示）: " >&2
-trap 'stty echo 2>/dev/null || true' EXIT HUP INT TERM
-stty -echo
-IFS= read -r smtp_password
-stty echo
-trap - EXIT HUP INT TERM
-printf '\n' >&2
-[ -n "$smtp_password" ] || fail "SMTP 密码不能为空"
-write_secret worker smtp-password.secret "$smtp_password" 10001
-unset smtp_password
-
 for required_secret in \
   postgres/postgres-password.secret \
   postgres/migration-password.secret \
@@ -186,8 +163,7 @@ for required_secret in \
   web/database-url.secret \
   worker/database-url.secret \
   migration/database-url.secret \
-  bootstrap/database-url.secret \
-  worker/smtp-password.secret
+  bootstrap/database-url.secret
 do
   [ -s "$SECRETS_ROOT/$required_secret" ] || fail "密钥目录不完整：$required_secret"
 done
@@ -211,12 +187,11 @@ esac
 printf '%s\n' "正在初始化 PostgreSQL、MinIO 和数据库结构……"
 compose up -d postgres minio
 compose --profile tools run --rm migration
+compose --profile tools run --rm single-node-bootstrap
 compose up -d --remove-orphans web worker
-
-printf '%s\n' "正在创建首位管理员。请准备身份验证器应用。"
-compose --profile tools run --rm bootstrap-admin
 
 compose ps
 printf '%s\n' "安装完成：https://$domain"
 printf '%s\n' "请把宝塔/Nginx 反向代理目标设置为：http://127.0.0.1:$http_port"
+printf '%s\n' "初始管理员：admin / admin123（首次登录必须立即修改密码）"
 printf '%s\n' "维护入口：sudo ./deploy/single-node/ops.sh status"

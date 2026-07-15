@@ -4,6 +4,7 @@ export type IdentityOperationKey =
   | "mfa"
   | "invitationPrepare"
   | "invitationComplete"
+  | "accountSetup"
   | "logout";
 
 export type IdentityOperationLease = Readonly<{

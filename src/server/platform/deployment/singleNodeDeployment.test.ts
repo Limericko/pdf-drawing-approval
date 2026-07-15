@@ -33,6 +33,7 @@ describe("single-node deployment package", () => {
     expect(environment).toContain("PDF_APPROVAL_BIND_ADDRESS=127.0.0.1");
     expect(environment).toContain("PDF_APPROVAL_HTTP_PORT=18080");
     expect(environment).not.toContain("PDF_APPROVAL_ACME_EMAIL");
+    expect(environment).not.toContain("PDF_APPROVAL_SMTP_");
     expect(environment).toContain("PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval:");
   });
 
@@ -41,10 +42,12 @@ describe("single-node deployment package", () => {
     const operations = await source("deploy/single-node/ops.sh");
     expect(installer).toContain("openssl rand");
     expect(installer).toContain("compose --profile tools run --rm migration");
-    expect(installer).toContain("compose --profile tools run --rm bootstrap-admin");
+    expect(installer).toContain("compose --profile tools run --rm single-node-bootstrap");
     expect(installer).toContain("compose up -d --remove-orphans web worker");
     expect(installer).not.toContain("gateway");
     expect(installer).toContain("反向代理目标端口");
+    expect(installer).not.toContain("SMTP 密码");
+    expect(installer).toContain("初始管理员：admin / admin123");
     expect(operations).toContain("pg_dump");
     expect(operations).toContain("mc mirror");
     expect(operations).toContain("升级失败，正在恢复旧镜像");

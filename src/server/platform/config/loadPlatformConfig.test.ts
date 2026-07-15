@@ -455,6 +455,14 @@ describe("web security validation", () => {
 });
 
 describe("SMTP validation", () => {
+  it("allows production workers to start before SMTP is configured", () => {
+    const env = productionWorkerEnv();
+    for (const field of ["PDF_APPROVAL_SMTP_HOST", "PDF_APPROVAL_SMTP_PORT", "PDF_APPROVAL_SMTP_FROM",
+      "PDF_APPROVAL_SMTP_SECURE", "PDF_APPROVAL_SMTP_REQUIRE_TLS", "PDF_APPROVAL_SMTP_USER",
+      "PDF_APPROVAL_SMTP_PASSWORD"]) delete env[field];
+    expect(loadPlatformConfig(env, "worker").smtp).toEqual({ enabled: false });
+  });
+
   it.each([
     "not-an-email",
     "missing-domain@",

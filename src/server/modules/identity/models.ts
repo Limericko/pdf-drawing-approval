@@ -7,6 +7,7 @@ export type ProjectMemberStatus = "active" | "disabled";
 
 export type PlatformUser = {
   readonly id: string;
+  readonly usernameNormalized: string | null;
   readonly emailNormalized: string;
   readonly displayName: string;
   readonly passwordHash: string;
@@ -14,6 +15,7 @@ export type PlatformUser = {
   readonly status: UserStatus;
   readonly mfaStatus: MfaStatus;
   readonly mfaEnabledAt: Date | null;
+  readonly passwordChangeRequired: boolean;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 };

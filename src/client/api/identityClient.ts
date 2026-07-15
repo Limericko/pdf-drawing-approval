@@ -15,12 +15,15 @@ import {
   projectIdParamsSchema,
   projectListResponseSchema,
   sessionResponseSchema,
+  updateOwnAccountRequestSchema,
+  updateOwnAccountResponseSchema,
   type CompleteInvitationRequest,
   type CreateInvitationRequest,
   type CreateProjectRequest,
   type LoginRequest,
   type MfaCompleteRequest,
-  type PrepareInvitationRequest
+  type PrepareInvitationRequest,
+  type UpdateOwnAccountRequest
 } from "../../shared/contracts/identity.ts";
 import type { z } from "zod";
 import { PlatformRequestAbortError, PlatformRequestError, platformRequest,
@@ -34,12 +37,14 @@ let csrfEpoch = 0;
 
 export async function login(input: LoginRequest, signal?: AbortSignal) {
   clearCsrf();
-  return request("/api/v2/auth/login", {
+  const result = await request("/api/v2/auth/login", {
     method: "POST",
     json: parseInput(loginRequestSchema, input),
     responseSchema: loginResponseSchema,
     signal
   });
+  if (result.next === "session") return { next: "session" as const, session: await getSession(signal) };
+  return result;
 }
 
 export async function completeMfa(input: MfaCompleteRequest, signal?: AbortSignal): Promise<PlatformSessionContext> {
@@ -68,6 +73,14 @@ export async function logout(signal?: AbortSignal) {
   const ownedEpoch = csrfEpoch;
   await request("/api/v2/session", { method: "DELETE", json: {}, csrfToken: ownedCsrf, signal }, ownedEpoch);
   clearCsrfIfUnchanged(ownedEpoch);
+}
+
+export async function updateOwnAccount(input: UpdateOwnAccountRequest, signal?: AbortSignal) {
+  const result = await request("/api/v2/session/account", { method: "PATCH",
+    json: parseInput(updateOwnAccountRequestSchema, input), csrfToken: requireCsrf(),
+    responseSchema: updateOwnAccountResponseSchema, signal });
+  clearCsrf();
+  return result;
 }
 
 export function prepareInvitation(input: PrepareInvitationRequest, signal?: AbortSignal) {

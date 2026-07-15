@@ -14,6 +14,7 @@ export function createIdentityRoutes(options: {
   readonly services: {
     readonly authentication: Parameters<typeof createAuthRoutes>[0]["authentication"];
     readonly sessions: Parameters<typeof createSessionRoutes>[0]["sessions"];
+    readonly account?: Parameters<typeof createSessionRoutes>[0]["account"];
     readonly invitations: Parameters<typeof createInvitationRoutes>[0]["invitations"];
     readonly authorization: Parameters<typeof createProjectAccessRoutes>[0]["authorization"] &
       Parameters<typeof createSessionRoutes>[0]["authorization"];
@@ -28,7 +29,10 @@ export function createIdentityRoutes(options: {
   router.use("/auth", createAuthRoutes({ authentication: options.services.authentication,
     publicBaseUrl: options.config.publicBaseUrl, cookie }));
   router.use("/session", createSessionRoutes({ sessions: options.services.sessions,
-    authorization: options.services.authorization, publicBaseUrl: options.config.publicBaseUrl, cookie, csrf }));
+    authorization: options.services.authorization, account: options.services.account ?? {
+      updateOwnAccount: async () => { throw new Error("ACCOUNT_SERVICE_UNAVAILABLE"); }
+    },
+    publicBaseUrl: options.config.publicBaseUrl, cookie, csrf }));
   router.use("/invitations", createInvitationRoutes({ invitations: options.services.invitations,
     sessions: options.services.sessions, publicBaseUrl: options.config.publicBaseUrl, cookie, csrf }));
   router.use("/projects", createProjectAccessRoutes({ authorization: options.services.authorization,

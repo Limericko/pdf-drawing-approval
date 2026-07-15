@@ -4,6 +4,7 @@ import type { Express } from "express";
 import type { QueryConfig, QueryResultRow } from "pg";
 import { v7 as uuidv7 } from "uuid";
 import { createAuthenticationService } from "../modules/identity/authenticationService.ts";
+import { createAccountService } from "../modules/identity/accountService.ts";
 import { createAuthorizationService } from "../modules/identity/authorizationService.ts";
 import { createInvitationService } from "../modules/identity/invitationService.ts";
 import { createApprovalService } from "../modules/approvals/approvalService.ts";
@@ -177,7 +178,8 @@ function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: P
     pdm: createPdmService({ pool }),
     signatures: createSignatureService({ pool }),
     issues: createIssueService({ pool }),
-    administration: createAdministrationService({ pool, storageHealth: () => storage.checkHealth() }),
+    administration: createAdministrationService({ pool, storageHealth: () => storage.checkHealth(),
+      runtimeSettingsKeyring: config.keyrings.invitationHmac }),
     printArchive: createPrintArchiveService({ pool }),
     webDavSync: createWebDavSyncService({ pool,
       publisher: new PostgresOutboxPublisher({ createId: uuidv7, clock: () => new Date() }),
@@ -192,6 +194,7 @@ function createServices(config: WebPlatformConfig, pool: PlatformPool, logger: P
       session: config.session,
       logger
     }),
+    account: createAccountService({ pool, passwordHashOptions }),
     sessions: createSessionService({ pool, passwordHashOptions, session: config.session }),
     invitations: createInvitationService({
       pool,

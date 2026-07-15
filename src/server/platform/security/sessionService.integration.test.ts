@@ -93,10 +93,10 @@ describe("SessionService", () => {
     expect(session.idleExpiresAt.getTime() - session.createdAt.getTime()).toBe(nonDefaultSessionConfig.idleTtlMs);
 
     await migration.query(`UPDATE platform.sessions
-      SET created_at=clock_timestamp()-interval '1 minute',
-          last_activity_at=clock_timestamp()-interval '31 seconds',
-          last_touch_at=clock_timestamp()-interval '31 seconds'
-      WHERE id=$1`, [session.id]);
+      SET created_at=seed.now-interval '1 minute',
+          last_activity_at=seed.now-interval '31 seconds',
+          last_touch_at=seed.now-interval '31 seconds'
+      FROM (SELECT clock_timestamp() AS now) seed WHERE id=$1`, [session.id]);
     const before = await sessionTimes(session.id);
     await service.authenticate({ sessionToken: rawToken });
     const after = await sessionTimes(session.id);
