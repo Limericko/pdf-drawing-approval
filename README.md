@@ -40,13 +40,13 @@ cd pdf-drawing-approval
 GHCR 容器包已公开，无需登录即可拉取。生产部署固定使用本次公开构建返回的不可变 digest：
 
 ```bash
-docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:acb300ef17b1ea0a70b1249ae4db4e07573405229bce9e9d3a2b461cd97419b9
+docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:3b8bf7ecb5376aa67a6e486ebac20464bf59369e70088d9627d1fd917e3820c0
 ```
 
 生产环境使用不可变 digest：
 
 ```text
-PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:acb300ef17b1ea0a70b1249ae4db4e07573405229bce9e9d3a2b461cd97419b9
+PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:3b8bf7ecb5376aa67a6e486ebac20464bf59369e70088d9627d1fd917e3820c0
 ```
 
 镜像由 [GitHub Actions 发布流程](https://github.com/Limericko/pdf-drawing-approval/actions/workflows/publish-container.yml) 构建，并附带 SBOM 与 provenance。2026-07-15 已使用匿名 GHCR token 验证该 digest，Registry 返回 HTTP 200 且 `Docker-Content-Digest` 完全一致。
