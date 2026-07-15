@@ -6,6 +6,8 @@
 
 GitHub 代码仓库已经公开，可匿名克隆；GitHub Container Registry 中的 `ghcr.io/limericko/pdf-drawing-approval` 当前仍是私有容器包。云服务器拉取镜像前必须使用具有 `read:packages` 权限且能访问该包的令牌登录。代码仓库与容器包的可见性相互独立，未验证匿名拉取成功前不得省略 Registry 登录步骤。
 
+当前 `main` 构建的不可变镜像为 `ghcr.io/limericko/pdf-drawing-approval@sha256:ae9720dc222d2a56d7ced35e92fceda95bbbc91973732200a3426669902fd455`。部署时使用完整 digest，不使用可变标签 `0.9.2-refactor`。
+
 ## 可移植性边界
 
 运行环境只需提供：

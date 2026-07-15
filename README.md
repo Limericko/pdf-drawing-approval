@@ -42,13 +42,13 @@ cd pdf-drawing-approval
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u Limericko --password-stdin
 
-docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:70844d80005dd1360e8db4f655e45c36d24b9d4d6b22541a208f5b435a6cf1b4
+docker pull ghcr.io/limericko/pdf-drawing-approval@sha256:ae9720dc222d2a56d7ced35e92fceda95bbbc91973732200a3426669902fd455
 ```
 
 生产环境使用不可变 digest：
 
 ```text
-PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:70844d80005dd1360e8db4f655e45c36d24b9d4d6b22541a208f5b435a6cf1b4
+PDF_APPROVAL_IMAGE=ghcr.io/limericko/pdf-drawing-approval@sha256:ae9720dc222d2a56d7ced35e92fceda95bbbc91973732200a3426669902fd455
 ```
 
 镜像由 [GitHub Actions 发布流程](https://github.com/Limericko/pdf-drawing-approval/actions/workflows/publish-container.yml) 构建，并附带 SBOM 与 provenance。
